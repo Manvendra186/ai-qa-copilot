@@ -6,19 +6,28 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation
-- **Step:** S0.2 in progress — `docker-compose.yml` committed; Docker Desktop installed; **BLOCKED on BIOS**
-- **In-progress note:** Docker engine can't start — **Intel VT-x disabled in firmware** (ASUS ROG Strix
-  SCAR 18, Core Ultra 9 275HX). User must enable VT-x in UEFI (F2 at boot → Advanced → CPU
-  Configuration → Intel Virtualization Technology = Enabled), reboot, then start Docker Desktop.
+- **Step:** S0.1 ✓ · S0.2 ✓ · **S0.3 ✓ — next: S0.4** (domain package: pydantic entities + enums)
 
 ## 2. Just completed
 
-- 2026-08-26 · **S0.2 (cont.) — Docker Desktop installed + engine blocker diagnosed**:
-  Docker 29.7.2 (per-user install, `%LocalAppData%\Programs\DockerDesktop`; CLI+Compose v5.4.0
-  on the **USER** PATH — pre-existing terminals don't see it). Engine will not start:
-  `docker info` → 500 on pipe `dockerDesktopLinuxEngine`. **Root cause:
-  `VirtualizationFirmwareEnabled = False`** (Intel VT-x off in UEFI) → WSL2 and Hyper-V
-  backends both impossible until enabled in BIOS. WSL2 kernel also not installed yet.
+- 2026-08-26 · **S0.3 — FastAPI skeleton** (commit `cbd623d`): `create_app(settings)`
+  factory + module `app` (`apps/api/src/qa_copilot_api/main.py`); `Settings`
+  (pydantic-settings; reads `.env`: `LLM_*`, `DATABASE_URL`, `REDIS_URL`,
+  `APP_UNDER_TEST`; `QA_COPILOT_ENV`/`QA_COPILOT_LOG_LEVEL` with `ENV`/`LOG_LEVEL`
+  fallbacks); stdlib-only **JSON structured logging** (`logging_config.py`, build
+  bible §31.5) with uvicorn routed through it; `GET /health` → **200 verified live**
+  + JSON server logs confirmed; deps added to `apps/api` (fastapi 0.141.1,
+  pydantic-settings 2.15, uvicorn 0.52.4, httpx 0.28.1, pydantic 2.13.4); `py.typed`
+  added to api package; mypy config → `files`+`mypy_path` pattern (see §7).
+  **14 tests green · ruff ✓ · mypy strict ✓.**
+- 2026-08-26 · **S0.2 — compose infra up, exit criterion verified** (commit `4446f1a`):
+  VT-x enabled in UEFI (user) → Docker engine 29.7.2 running. **User decision: keep
+  native PG16 on 5432** → `.env` (gitignored) sets `POSTGRES_PORT=5433` +
+  `DATABASE_URL` on 5433; `.env.example` documents the override. Both containers
+  **healthy**: `qa-copilot-db` (pgvector/pgvector:pg16, 0.0.0.0:5433→5432),
+  `qa-copilot-redis` (redis:7, :6379). Verified: `SELECT 1` → 1 · `redis-cli ping`
+  → PONG · pgvector **0.8.6** available (extension enabled in S0.5) · native PG16
+  still up on 5432.
 - 2026-08-26 · **S0.2 (partial) — `docker-compose.yml` committed**: `pgvector/pgvector:pg16`
   (db) + `redis:7`, healthchecks, named volumes, env-overridable ports
   (`${POSTGRES_PORT:-5432}`, `${REDIS_PORT:-6379}`); credentials qa/qa @ qa_copilot

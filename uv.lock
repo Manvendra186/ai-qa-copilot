@@ -808,6 +808,12 @@ requires-dist = [
 name = "qa-copilot-domain"
 version = "0.1.0"
 source = { editable = "packages/domain" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
 
 [[package]]
 name = "qa-copilot-execution"
