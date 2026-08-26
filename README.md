@@ -1,0 +1,23 @@
+# AI QA Copilot
+
+AI QA Copilot for Playwright-based QA teams:
+requirement → test design → automation → execution → failure analysis → fix.
+
+## Start here (for humans and for every new AI session)
+
+1. **`agent-memory/STATE.md`** — where the project is right now, the next step, environment facts.
+   *(Every new AI session reads this file FIRST. Protocol: build bible §32.)*
+2. **`docs/AI_QA_Copilot_Build_Bible_v1.1.md`** — master build reference: vision, architecture,
+   step plan (§19), decisions (§29), Phase 0 decisions (§31).
+3. **`agent-memory/SESSION_LOG.md`** — what past sessions did.
+
+## Rules of work (short version)
+
+- One step at a time (build bible §19); verify the step's exit criterion; commit `step S#.x: ...`.
+- Update `agent-memory/STATE.md` at the end of every session (or when context runs low mid-step).
+- Local LLM via llama server; hard context budgets (build bible §31.1). No cloud LLMs.
+- Human approval for every code change the product proposes — and for our own big steps.
+
+## Quickstart
+
+Not yet — lands with steps S0.2–S0.3 (Docker Compose + FastAPI skeleton).
