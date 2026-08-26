@@ -6,11 +6,28 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation
-- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · **S0.5 ✓ — next: S0.6** (AI gateway: local
-  llama server, streaming, token accounting → `ai_actions`, redaction, prompt-registry loader)
+- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · **S0.6 ✓ — next: S0.7**
+  (React shell — **blocked on Node LTS install**, see §7)
 
 ## 2. Just completed
 
+- 2026-08-26 · **S0.6 — AI gateway** (commit this session): `qa_copilot_ai` — `gateway.py`
+  (async `LLMGateway` over OpenAI-compatible `/chat/completions`: `chat()` +
+  `chat_stream()` NDJSON/SSE, `usage` from server w/ char-count estimate fallback,
+  120 s timeout, one retry on transport errors only, hard `LLMError` w/ status
+  otherwise — no silent model-swap; per-call `ai_call` log record with
+  `agent/model/tokens_in/tokens_out/latency_ms/retries/redactions/input_hash`),
+  `redaction.py` (bearer/GitHub/OpenAI/AWS/JWT/DSN-password/key-value patterns →
+  `***REDACTED***`, idempotent, applied to wire + logs; §31.7 leaks=0), `prompts.py`
+  (`PromptSpec`, `PromptStore` protocol, `InMemoryPromptStore`, strict `{{var}}`
+  rendering — missing var raises). Repository: `prompts.load_prompt()` (DB-backed
+  registry, §31.6) + `audit.record_ai_action()/record_ai_call()` → `ai_actions`.
+  Runtime fixed: **LM Studio :8080, Qwen3.8-27B Q4_K_M** (27.3B params, n_ctx 100,096,
+  completion-only) → `.env` + §31.1 note. Verified: **60 tests green** (fake-server
+  unit tests + 3 live DB), `scripts/llm_live_check.py` → 2 live `ai_call` records
+  (`usage_source: "reported"`, reply "QA copilot S0.6 live check OK") · ruff ✓ ·
+  mypy strict ✓ (27 files).
+  Open: `VECTOR_DIM = 1536` still provisional (no embedding model served locally yet).
 - 2026-08-26 · **S0.5 — SQLAlchemy + Alembic + seed** (commit this session):
   `qa_copilot_repository` — `models.py` (18 §10 core tables + `prompt_versions`, typed
   `sa.Uuid(as_uuid=False)` → `str` ids, `metadata_` attr / `metadata` col, enums as
@@ -41,14 +58,12 @@
 
 ## 3. NEXT STEP (start here)
 
-**S0.6 — AI gateway** (build bible §19): local llama server (OpenAI-compatible): streaming,
-token accounting → `ai_actions`, redaction hook, prompt-registry loader
-- **Exit criterion:** unit tests green with a fake server; one live call logs `tokens_in/out`.
-- Notes:
-  1. Confirm exact `LLM_BASE_URL` + model name/size first — tune §31.1 context budgets with it.
-  2. `prompt_versions` table already exists (seeded with `requirement-analyst@1` placeholder).
-  3. `ai_sessions`/`ai_actions` tables exist — the gateway writes to them (token/latency rows).
-  4. `VECTOR_DIM` may be finalized here (embedding model choice).
+**S0.7 — React shell** (build bible §19): React 18 + Vite + TypeScript + Tailwind,
+pnpm, ESLint + Prettier — **blocked: Node LTS (20+) not installed on this machine**
+(user action; also unblocks the S0.1 web-half linting).
+- **Exit criterion:** `pnpm dev` serves the shell; `pnpm lint` + `pnpm build` clean.
+- **If Node is still missing:** next doable work is S0.8 auth prep or the S0.9 jobs
+  layer (202 + SSE) against the existing API — check with the user which to take.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -61,8 +76,10 @@ token accounting → `ai_actions`, redaction hook, prompt-registry loader
 - Native PG16 service `postgresql-x64-16` running on 5432 (user decision; no pgvector)
 - **Node/npm/pnpm: NOT installed** → S0.7 (React shell) needs Node 20+
 - Toolchain in `.venv`: ruff 0.16.4 · mypy 2.3.1 · pytest 9.1.1 · pre-commit 4.6.2
-- LLM: **local model via llama server** (user-run). Confirm exact `LLM_BASE_URL` + model
-  name/size before S0.6 (needed to tune §31.1 budgets). Assume OpenAI-compatible.
+- LLM (verified S0.6): **LM Studio (llama.cpp) `http://localhost:8080/v1`** · model id
+  `.\Models\lmstudio-community\Qwen3.8-27B-GGUF\Qwen3.8-27B-Q4_K_M.gguf` · 27.3B params ·
+  n_ctx 100,096 · completion-only (no local embedding model → `VECTOR_DIM` stays 1536
+  placeholder) · §31.1 budgets hold.
 - python-docx ✗ — Markdown is the doc source of truth
 
 ## 5. Key decisions (full list: build bible §29)
@@ -79,6 +96,10 @@ token accounting → `ai_actions`, redaction hook, prompt-registry loader
   Alembic URL centralized in `qa_copilot_repository.db` (never hardcoded in `alembic.ini`) ·
   pgvector enabled in migration, **not dropped on downgrade** · seed idempotent by
   natural-key lookups + deterministic `uuid5` ids
+- S0.6 AI: gateway is the **only** LLM call site (§31.1) · one retry on transport errors
+  only, hard `LLMError` otherwise (no silent model-swap) · redaction before wire + logs
+  (§31.7) · `usage` from server with char-estimate fallback · prompt rendering fails
+  loudly on missing variables · `ai_actions` payload = the `ai_call` log record
 
 ## 6. Pointers (paths only — no code here)
 
@@ -90,6 +111,8 @@ token accounting → `ai_actions`, redaction hook, prompt-registry loader
 - ORM models: `packages/repository/src/qa_copilot_repository/models.py` (18 core tables)
 - Migrations: `infra/migrations/` (initial: `60fa1027d8d2_initial_core_schema.py`)
 - DB URL: `packages/repository/src/qa_copilot_repository/db.py` (env → `.env` → default)
+- AI gateway: `packages/ai/src/qa_copilot_ai/{gateway,prompts,redaction}.py` · live check:
+  `scripts/llm_live_check.py` · `ai_actions` writer: `qa_copilot_repository.audit`
 
 ## 7. Open questions / gotchas
 
@@ -97,7 +120,6 @@ token accounting → `ai_actions`, redaction hook, prompt-registry loader
   install don't see it; refresh `$env:Path` from Machine+User (or open a new shell).
 - **S0.1 web half pending:** pnpm workspace + ESLint + Prettier + `pnpm lint` — blocked on
   Node LTS (also needed for S0.7 React shell).
-- Exact llama-server URL + model(s) (small vs coder class) — needed at S0.6.
 - **pydantic v2:** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg (mypy strict
   rejects it) — use `Annotated[str, StringConstraints(...)]` (learned in S0.4).
 - **ruff isort:** `qa_copilot_*` packages are NOT detected as first-party (src-layout workspace) —

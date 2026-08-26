@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 import sqlalchemy as sa
-from qa_copilot_repository import db, models
+from qa_copilot_ai import AICallResult, PromptNotFound, TokenUsage
+from qa_copilot_repository import audit, db, models, prompts
 
 # --- URL resolution ---------------------------------------------------------
 
@@ -128,5 +129,73 @@ def test_db_smoke_vector_roundtrip() -> None:
                 sa.text("SELECT vector_dims(vector) FROM embeddings LIMIT 1")
             ).scalar_one_or_none()
         assert row == models.VECTOR_DIM
+    finally:
+        engine.dispose()
+
+
+# --- S0.6: prompt registry + ai_actions (build bible §31.1, §31.6) ------------
+
+
+def test_load_prompt_seeded_requirement_analyst() -> None:
+    engine = _engine_or_skip()
+    if engine is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    try:
+        with db.session_scope(engine) as session:
+            spec = prompts.load_prompt(session, "requirement-analyst")
+        assert spec.version >= 1
+        assert spec.body
+        assert spec.ref.startswith("requirement-analyst@")
+    finally:
+        engine.dispose()
+
+
+def test_load_prompt_missing_raises_prompt_not_found() -> None:
+    engine = _engine_or_skip()
+    if engine is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    try:
+        with db.session_scope(engine) as session:
+            with pytest.raises(PromptNotFound):
+                prompts.load_prompt(session, "no-such-prompt")
+    finally:
+        engine.dispose()
+
+
+def test_record_ai_call_writes_action_row() -> None:
+    """Token accounting → ``ai_actions`` (build bible §31.1)."""
+    engine = _engine_or_skip()
+    if engine is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    try:
+        with db.session_scope(engine) as session:
+            project = session.scalars(
+                sa.select(models.Project).where(models.Project.name == "Demo App")
+            ).first()
+            assert project is not None
+            session_row = models.AISession(project_id=project.id, task_type="requirement_analysis")
+            session.add(session_row)
+            session.flush()
+            result = AICallResult(
+                agent="unit-test",
+                model="fake-model",
+                text="ok",
+                usage=TokenUsage(tokens_in=10, tokens_out=5),
+                latency_ms=42,
+                redactions=0,
+                retries=0,
+                input_hash="0" * 64,
+            )
+            action = audit.record_ai_call(session, session_id=session_row.id, result=result)
+        with db.session_scope(engine) as session:
+            row = session.scalars(
+                sa.select(models.AIAction).where(models.AIAction.id == action.id)
+            ).first()
+            assert row is not None
+            assert row.tokens_in == 10
+            assert row.tokens_out == 5
+            assert row.latency_ms == 42
+            assert row.agent == "unit-test"
+            assert row.model == "fake-model"
     finally:
         engine.dispose()

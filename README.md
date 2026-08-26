@@ -40,3 +40,13 @@ requirement → test design → automation → execution → failure analysis �
    uv run uvicorn qa_copilot_api.main:app --port 8000
    curl http://127.0.0.1:8000/health   # → {"status":"ok","service":"qa-copilot-api",...}
    ```
+4. **AI gateway (S0.6)** — local LLM (LM Studio / llama.cpp, OpenAI-compatible):
+   ```powershell
+   # .env: LLM_BASE_URL + LLM_MODEL (model id from GET {LLM_BASE_URL}/models)
+   uv run python scripts/llm_live_check.py   # live call → logs ai_call w/ tokens_in/out
+   uv run pytest tests/unit/test_ai_gateway.py -q   # fake-server unit tests
+   ```
+   Every model call goes through `qa_copilot_ai.LLMGateway` (build bible §31.1):
+   streaming, per-call timeout, one retry, secret redaction, and a structured
+   `ai_call` log record (`agent, model, tokens_in, tokens_out, latency_ms, …`) —
+   the exact payload an `ai_actions` row stores (`qa_copilot_repository.audit`).

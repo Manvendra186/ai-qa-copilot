@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Data access (SQLAlchemy models/sessions) + Git, AST, and file indexing"
 requires-python = ">=3.11"
 dependencies = [
+    "qa-copilot-ai>=0.1.0",
     "qa-copilot-domain>=0.1.0",
     "SQLAlchemy>=2.0",
     "psycopg[binary]>=3.1",
@@ -11,6 +12,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+qa-copilot-ai = { workspace = true }
 qa-copilot-domain = { workspace = true }
 
 [build-system]

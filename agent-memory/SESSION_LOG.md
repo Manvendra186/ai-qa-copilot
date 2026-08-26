@@ -227,3 +227,59 @@
   (S0.6 / Phase 5); changing it requires a new migration.
 - **Next session start:** S0.6 (AI gateway: local llama server, streaming, token
   accounting → `ai_actions`, redaction hook, prompt-registry loader) — see `STATE.md` §3.
+
+## 2026-08-26 — S0.6 — AI gateway (LM Studio / Qwen3.8-27B)
+
+- **Goal:** S0.6 — OpenAI-compatible LLM gateway (streaming, token accounting →
+  `ai_actions`), secret redaction, DB-backed prompt registry. Exit criterion: unit tests
+  green with a fake server; one live call logs `tokens_in/out`.
+- **Runtime discovery (user-confirmed):** LM Studio (llama.cpp) at
+  `http://localhost:8080/v1` serving `Qwen3.8-27B-Q4_K_M.gguf` (27.3B params, n_ctx
+  100,096, completion-only — no local embedding model, so `VECTOR_DIM = 1536` stays
+  provisional). Model id is the full file path — verified against `GET /models`.
+- **Did:**
+  - `packages/ai/src/qa_copilot_ai/` (new package, deps `httpx` + `pydantic>=2.9`):
+    - `gateway.py` — async `LLMGateway` over `/chat/completions`: `chat()` (JSON) and
+      `chat_stream()` (NDJSON/SSE `data:` lines, `[DONE]` sentinel), `usage` from the
+      server (`stream_options.include_usage`) with a char-count estimate fallback,
+      120 s per-call timeout, one retry on transport errors only (timeouts/HTTP errors
+      → hard `LLMError` with status — no silent model-swap), per-call structured
+      `ai_call` log record (`agent, model, tokens_in, tokens_out, usage_source,
+      latency_ms, redactions, retries, input_hash, stream`) — the exact payload an
+      `ai_actions` row stores.
+    - `redaction.py` — bearer/GitHub/OpenAI/AWS/JWT tokens, DSN passwords,
+      `api_key`/`password` key-value pairs → `***REDACTED***` (idempotent); applied
+      before the wire and to logged content (bible §31.7, leaks=0).
+    - `prompts.py` — `PromptSpec`, `PromptStore` protocol, `InMemoryPromptStore`,
+      `render_prompt(**variables)`: strict `{{var}}` substitution, missing variable
+      raises `PromptRenderError`.
+  - `packages/repository` (now depends on `qa_copilot_ai`):
+    - `prompts.py` — `load_prompt(session, name, version)` from `prompt_versions`
+      (bible §31.6 registry) → `PromptSpec`; `PromptVersionNotFound`.
+    - `audit.py` — `record_ai_action(session, ...)` → `ai_actions`;
+      `record_ai_call(session, *, session_id, call: AICallResult)` convenience wrapper.
+  - `scripts/llm_live_check.py` — live exit-criterion check: non-streaming + streaming
+    call, prints `ai_call` payload + model reply.
+  - `.env`/`.env.example` — `LLM_BASE_URL=http://localhost:8080/v1`, `LLM_MODEL` =
+    exact model id; build bible §31.1 note updated.
+  - Tests: `tests/unit/test_ai_gateway.py` (14 tests: redaction, prompt store/rendering,
+    non-streaming, streaming assembly, estimated usage, retry, timeout/4xx errors) +
+    3 new DB-backed tests in `test_repository.py` (prompt load, 404, `record_ai_call`
+    → `ai_actions` row).
+- **Verified (exit criterion):**
+  - `uv run pytest -q` → **60 passed** (incl. live-DB tests).
+  - `ruff check` ✓ · `ruff format --check` ✓ · `mypy` strict ✓ (27 source files).
+  - **Live check passed:** `scripts/llm_live_check.py` → 2× `ai_call` records,
+    `usage_source: "reported"` (LM Studio reports usage on both paths), tokens_in=80,
+    tokens_out=104/93, latencies 8.9 s / 2.8 s; model replied
+    "QA copilot S0.6 live check OK." on both paths.
+- **Decisions / gotchas:**
+  - `httpx.MockTransport` is sync-only → tests for `AsyncClient` need a custom
+    `httpx.AsyncBaseTransport` + an async byte stream for SSE-style bodies.
+  - Gateway `transport` param typed `httpx.AsyncBaseTransport` (mypy).
+  - mypy: closures returning chunk/usage fields need concrete return types + local
+    binding (`final = chunks[-1]; assert final.usage is not None`).
+  - LM Studio reports `usage` on streaming too (last chunk) — estimate path is a
+    fallback, not the norm.
+- **Next session start:** S0.7 React shell — **blocked on Node LTS install** (see
+  `STATE.md` §3/§7).

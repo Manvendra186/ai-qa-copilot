@@ -493,6 +493,7 @@ LLM capability + QA reasoning + repository structure + business rules + test his
   | Code generation | 12,000 | 6,000 |
   | Failure analysis | 16,000 | 3,000 |
   | Fix proposal | 12,000 | 4,000 |
+- **S0.6 (2026-08-26):** first runtime fixed — LM Studio (llama.cpp) at `http://localhost:8080/v1`, model **Qwen3.8-27B Q4_K_M** (27.3B params, n_ctx 100,096, completion-only). Budgets above hold (far inside the context window; the constraint stays **latency**, not memory). No local embedding model is served yet, so `VECTOR_DIM` remains provisional.
 - **Context assembly rules:** system prompt + output schema first; retrieved chunks ranked, deduplicated, hard-truncated to fit the budget; never include a whole file > 200 lines; top-k ≤ 5 chunks, chunk ≤ 600 tokens.
 - **Reliability:** stream responses; per-call timeout (default 120 s); one retry; on failure the job fails with a clear error (no silent model-swap).
 - **Why budgets:** with a local model the constraint is **context window + latency**, not money.
