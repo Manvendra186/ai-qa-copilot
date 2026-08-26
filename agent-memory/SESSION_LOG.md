@@ -48,3 +48,33 @@
 - **Next session start:** S0.2 (docker-compose: PostgreSQL+pgvector, Redis) — see
   `STATE.md` §3. Blocker: Docker absent → user must choose Docker Desktop (A) vs local
   PostgreSQL/Redis on Windows (B) before S0.2.
+
+## 2026-08-26 — S0.2 (in progress) infra decision + docker-compose.yml
+
+- **Goal:** S0.2 — docker-compose: PostgreSQL+pgvector, Redis (build bible §19, Phase 0).
+- **Decision (user, recorded):** **Option A — Docker Desktop** (standard build-bible path:
+  pgvector prebuilt in image, portable compose artifact). User installing; WSL2 not yet
+  installed (Docker Desktop installer offers it, or `wsl --install`).
+- **Environment probe (new facts):** **PostgreSQL 16 installed + RUNNING** natively
+  (service `postgresql-x64-16`, `C:\Program Files\PostgreSQL\16`, port 5432,
+  scram-sha-256 auth, **no pgvector**) → port-conflict risk at bring-up; Redis absent;
+  Docker absent; WSL absent; no MSVC (pgvector cannot be built locally → another reason
+  the Docker path is correct for this machine).
+- **Did:**
+  - Wrote `docker-compose.yml` (repo root, build bible tree L120): service `db` =
+    `pgvector/pgvector:pg16` (qa/qa @ qa_copilot, named volume, pg_isready healthcheck,
+    `CREATE EXTENSION vector` deferred to S0.5 per comment) + service `redis` = `redis:7`
+    (named volume, redis-cli ping healthcheck); ports env-overridable
+    (`${POSTGRES_PORT:-5432}`, `${REDIS_PORT:-6379}`); header comment documents the
+    native-PG16 port conflict and the S0.2 exit-criterion commands.
+  - `.env.example` verified: `DATABASE_URL=postgresql+psycopg://qa:qa@localhost:5432/qa_copilot`
+    and `REDIS_URL=redis://localhost:6379/0` match compose defaults ✓ (S0.2 work item).
+  - Updated `STATE.md` (position, decisions, §3 next-step checklist, §4 env facts, §7).
+- **Verified:** `docker-compose.yml` parses as valid YAML (pyyaml) · `ruff check` +
+  `ruff format --check` · `mypy strict` · `pytest -q` all green (scaffold untouched).
+- **Pending (next session):** `docker --version` OK → resolve 5432 conflict (stop
+  `postgresql-x64-16` or `POSTGRES_PORT=5433` in `.env` + update DATABASE_URL) →
+  `docker compose up -d` → **exit criterion:** `docker compose exec db psql -U qa -d
+  qa_copilot -c 'SELECT 1'` → `1` and `docker compose exec redis redis-cli ping` → `PONG`
+  → commit `step S0.2: compose infra up (pgvector/pg16 + redis7)` → start **S0.3**
+  (FastAPI skeleton, `GET /health` → 200).

@@ -1,0 +1,50 @@
+# AI QA Copilot — local infrastructure (build bible §19 S0.2, §31.11)
+#
+#   docker compose up -d            # start db + redis
+#   docker compose exec db psql -U qa -d qa_copilot -c 'SELECT 1'   # exit criterion
+#   docker compose exec redis redis-cli ping                        # exit criterion (PONG)
+#
+# Credentials/ports match `.env.example` (qa/qa @ qa_copilot:5432, redis:6379).
+#
+# NOTE (this machine): a Windows-native PostgreSQL 16 (service `postgresql-x64-16`)
+# is also listening on 5432. If the port is taken, stop that service before
+# `docker compose up -d`, or set POSTGRES_PORT=5433 in `.env` and update DATABASE_URL.
+
+name: ai-qa-copilot
+
+services:
+  db:
+    image: pgvector/pgvector:pg16  # Postgres 16 with pgvector prebuilt (§8: vector search)
+    container_name: qa-copilot-db
+    environment:
+      POSTGRES_USER: qa
+      POSTGRES_PASSWORD: qa
+      POSTGRES_DB: qa_copilot
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - qa_copilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qa -d qa_copilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # pgvector ships prebuilt in this image; the extension is enabled per-database
+    # in S0.5 (Alembic): CREATE EXTENSION IF NOT EXISTS vector;
+
+  redis:
+    image: redis:7  # caching + async job support (§8)
+    container_name: qa-copilot-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - qa_copilot_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  qa_copilot_pgdata:
+  qa_copilot_redisdata:
