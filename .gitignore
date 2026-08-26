@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+build/
+dist/
+
+# Node / web (S0.1 web half — pending Node LTS + pnpm)
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Execution artifacts (build bible §31.11)
+runs/
+test-results/
+playwright-report/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

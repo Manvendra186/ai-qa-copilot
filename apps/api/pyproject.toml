@@ -1,0 +1,28 @@
+[project]
+name = "qa-copilot-api"
+version = "0.1.0"
+description = "AI QA Copilot FastAPI application (skeleton lands at S0.3)"
+requires-python = ">=3.11"
+dependencies = [
+    "qa-copilot-ai",
+    "qa-copilot-domain",
+    "qa-copilot-execution",
+    "qa-copilot-integrations",
+    "qa-copilot-knowledge",
+    "qa-copilot-repository",
+]
+
+[tool.uv.sources]
+qa-copilot-ai = { workspace = true }
+qa-copilot-domain = { workspace = true }
+qa-copilot-execution = { workspace = true }
+qa-copilot-integrations = { workspace = true }
+qa-copilot-knowledge = { workspace = true }
+qa-copilot-repository = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qa_copilot_api"]

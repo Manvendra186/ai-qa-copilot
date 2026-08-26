@@ -1,0 +1,13 @@
+[project]
+name = "qa-copilot-execution"
+version = "0.1.0"
+description = "Playwright execution and artifacts (build bible §31.11)"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qa_copilot_execution"]

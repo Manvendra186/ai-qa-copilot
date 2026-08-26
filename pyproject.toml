@@ -1,0 +1,67 @@
+# AI QA Copilot — uv workspace root (build bible §31.9)
+# Virtual root (not a package): members live in apps/ and packages/.
+
+[project]
+name = "ai-qa-copilot"
+version = "0.1.0"
+description = "AI QA Copilot — requirement → test design → automation → execution → failure analysis → fix"
+requires-python = ">=3.11"
+dependencies = [
+    "qa-copilot-api",
+    "qa-copilot-ai",
+    "qa-copilot-domain",
+    "qa-copilot-execution",
+    "qa-copilot-integrations",
+    "qa-copilot-knowledge",
+    "qa-copilot-repository",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "ruff>=0.11",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+qa-copilot-api = { workspace = true }
+qa-copilot-ai = { workspace = true }
+qa-copilot-domain = { workspace = true }
+qa-copilot-execution = { workspace = true }
+qa-copilot-integrations = { workspace = true }
+qa-copilot-knowledge = { workspace = true }
+qa-copilot-repository = { workspace = true }
+
+[tool.uv.workspace]
+members = [
+    "apps/api",
+    "packages/ai",
+    "packages/domain",
+    "packages/execution",
+    "packages/integrations",
+    "packages/knowledge",
+    "packages/repository",
+]
+
+# --- ruff (lint + format) ---------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP", "W"]
+
+# --- mypy (type check) -------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+explicit_package_bases = true
+namespace_packages = true
+
+# --- pytest ------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
