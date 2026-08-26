@@ -59,8 +59,8 @@
 ## 3. NEXT STEP (start here)
 
 **S0.7 — React shell** (build bible §19): React 18 + Vite + TypeScript + Tailwind,
-pnpm, ESLint + Prettier — **blocked: Node LTS (20+) not installed on this machine**
-(user action; also unblocks the S0.1 web-half linting).
+pnpm, ESLint + Prettier — **Node is installed now** (see §4); also unblocks S0.1 web
+linting.
 - **Exit criterion:** `pnpm dev` serves the shell; `pnpm lint` + `pnpm build` clean.
 - **If Node is still missing:** next doable work is S0.8 auth prep or the S0.9 jobs
   layer (202 + SSE) against the existing API — check with the user which to take.
@@ -74,7 +74,9 @@ pnpm, ESLint + Prettier — **blocked: Node LTS (20+) not installed on this mach
 - **Infra up:** `qa-copilot-db` pgvector/pg16 **0.0.0.0:5433→5432** (qa/qa @ qa_copilot) ·
   `qa-copilot-redis` :6379 · named volumes
 - Native PG16 service `postgresql-x64-16` running on 5432 (user decision; no pgvector)
-- **Node/npm/pnpm: NOT installed** → S0.7 (React shell) needs Node 20+
+- **Node (installed 2026-08-26):** `node v22.23.2` (LTS; `%LOCALAPPDATA%\hermes\node`,
+  first on user PATH) + backup `v24.19.0` (winget `OpenJS.NodeJS.LTS`, user scope) ·
+  `npm 12.0.2` · `pnpm 11.24.0` (npm -g, prefix = hermes node dir)
 - Toolchain in `.venv`: ruff 0.16.4 · mypy 2.3.1 · pytest 9.1.1 · pre-commit 4.6.2
 - LLM (verified S0.6): **LM Studio (llama.cpp) `http://localhost:8080/v1`** · model id
   `.\Models\lmstudio-community\Qwen3.8-27B-GGUF\Qwen3.8-27B-Q4_K_M.gguf` · 27.3B params ·
@@ -118,8 +120,8 @@ pnpm, ESLint + Prettier — **blocked: Node LTS (20+) not installed on this mach
 
 - **PATH gotcha:** docker CLI lives on the USER PATH (per-user install) — terminals opened before
   install don't see it; refresh `$env:Path` from Machine+User (or open a new shell).
-- **S0.1 web half pending:** pnpm workspace + ESLint + Prettier + `pnpm lint` — blocked on
-  Node LTS (also needed for S0.7 React shell).
+- **S0.1 web half pending:** pnpm workspace + ESLint + Prettier + `pnpm lint` (Node is
+  now installed — ready when S0.7 scaffolds the web workspace).
 - **pydantic v2:** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg (mypy strict
   rejects it) — use `Annotated[str, StringConstraints(...)]` (learned in S0.4).
 - **ruff isort:** `qa_copilot_*` packages are NOT detected as first-party (src-layout workspace) —
