@@ -78,3 +78,26 @@
   qa_copilot -c 'SELECT 1'` → `1` and `docker compose exec redis redis-cli ping` → `PONG`
   → commit `step S0.2: compose infra up (pgvector/pg16 + redis7)` → start **S0.3**
   (FastAPI skeleton, `GET /health` → 200).
+
+## 2026-08-26 — S0.2 (cont.) Docker Desktop installed; engine blocker diagnosed (BIOS)
+
+- **Goal:** finish S0.2 — user installed Docker Desktop; bring up compose infra.
+- **Did / found:**
+  - Docker Desktop installed **per-user** (`C:\Users\manve\AppData\Local\Programs\DockerDesktop`)
+    — CLI v29.7.2 + Compose v5.4.0 work; they're on the **USER PATH**, so pre-existing
+    terminal sessions don't resolve `docker` (refresh `$env:Path` from Machine+User, or new shell).
+  - Docker Desktop app IS running (processes `Docker Desktop`, `com.docker.backend`),
+    but the Linux engine returns **500** on every API call
+    (`http://%2F%2F.%2Fpipe%2FdockerDesktopLinuxEngine/...`) → engine not up.
+  - **Diagnosed root cause:** `Win32_Processor.VirtualizationFirmwareEnabled = **False**`
+    → hardware virtualization (Intel VT-x) is **disabled in UEFI**. WSL2 and Hyper-V
+    backends both need it, so the engine cannot start until the user enables it in BIOS.
+  - Hardware: Intel Core Ultra 9 275HX · ASUS ROG Strix SCAR 18 (G835LX) → BIOS entry key F2.
+  - WSL2 kernel still not installed; Docker Desktop first-start may offer to set it up
+    (or `wsl --install` as admin + reboot).
+- **Verified:** CLI/Compose versions · engine 500 reproducible across `version`/`info`/`ps` ·
+  virtualization flag False via CIM.
+- **Blocked on (user action):** shut down → power on → **F2** → Advanced → CPU Configuration →
+  **Intel Virtualization Technology = Enabled** (VT-d optional) → F10 save → boot → start
+  Docker Desktop → engine up. Then resume at STATE.md §3 steps 3–6 (5432 conflict decision,
+  `docker compose up -d`, exit criterion, commit, S0.3).
