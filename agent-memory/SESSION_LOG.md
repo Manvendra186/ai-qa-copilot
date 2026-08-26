@@ -23,3 +23,28 @@
 - **Decisions:** Markdown = canonical doc (skip .docx) · local LLM + hard budgets ·
   async jobs mandatory · text-first failure analysis · one-step-per-session protocol.
 - **Next session start:** S0.1 (monorepo skeleton) — see `STATE.md` §3.
+
+## 2026-08-26 — S0.1 Monorepo skeleton (python half)
+
+- **Goal:** build the §19 S0.1 monorepo skeleton; scoped to the python half per user
+  direction ("use python here") because Node/npm/pnpm are not installed.
+- **Did:**
+  - uv workspace: virtual root `pyproject.toml` (`tool.uv.package = false`) with
+    `[tool.uv.sources]` `workspace = true` for each member; members = `apps/api` +
+    `packages/{domain,ai,repository,execution,knowledge,integrations}`, each a hatchling
+    src-layout package (`qa-copilot-*`, `src/qa_copilot_*/__init__.py` + `py.typed`).
+  - Tooling config in root `pyproject.toml`: ruff (B,E,F,I,UP,W; line-length 100; py311),
+    mypy (strict, explicit_package_bases, namespace_packages), pytest (testpaths=tests).
+  - `.pre-commit-config.yaml` (ruff + ruff-format, mypy, gitleaks, pre-commit-hooks),
+    `.gitignore`, `.env.example` (LLM_BASE_URL, LLM_MODEL, DATABASE_URL, REDIS_URL,
+    APP_UNDER_TEST), `scripts/.gitkeep`, `apps/web/README.md` placeholder.
+  - `tests/unit/test_scaffold.py` — asserts all 7 packages import with `__version__`.
+  - `uv sync` → `uv.lock` + `.venv` (ruff 0.16.4, mypy 2.3.1, pytest 9.1.1, pre-commit 4.6.2).
+- **Verified:** `uv run ruff check .` ✓ · `uv run ruff format --check .` ✓ (13 files) ·
+  `uv run mypy apps packages` ✓ (strict, 7 source files) · `uv run pytest -q` ✓ (2 passed).
+- **Commit:** `ed6dcaf step S0.1: monorepo skeleton (python half; web tooling pending Node)`.
+- **Decisions:** S0.1 scoped to python half (no Node on this machine). §29 decision
+  React + TypeScript for the frontend is KEPT — web tooling is deferred, not dropped.
+- **Next session start:** S0.2 (docker-compose: PostgreSQL+pgvector, Redis) — see
+  `STATE.md` §3. Blocker: Docker absent → user must choose Docker Desktop (A) vs local
+  PostgreSQL/Redis on Windows (B) before S0.2.
