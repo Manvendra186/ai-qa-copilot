@@ -56,11 +56,23 @@ target-version = "py311"
 select = ["B", "E", "F", "I", "UP", "W"]
 
 # --- mypy (type check) -------------------------------------------------------
+# Per-member `src` dirs as files + mypy_path (same pattern as WheelDesk):
+# module names resolve against the `src` roots, which avoids mypy 2.x
+# "source file found twice" collisions from passing bare `apps`/`packages`.
 [tool.mypy]
 python_version = "3.11"
 strict = true
-explicit_package_bases = true
-namespace_packages = true
+files = [
+    "apps/api/src",
+    "packages/ai/src",
+    "packages/domain/src",
+    "packages/execution/src",
+    "packages/integrations/src",
+    "packages/knowledge/src",
+    "packages/repository/src",
+    "tests",
+]
+mypy_path = "apps/api/src:packages/ai/src:packages/domain/src:packages/execution/src:packages/integrations/src:packages/knowledge/src:packages/repository/src:tests"
 
 # --- pytest ------------------------------------------------------------------
 [tool.pytest.ini_options]

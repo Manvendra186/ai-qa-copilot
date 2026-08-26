@@ -20,4 +20,17 @@ requirement → test design → automation → execution → failure analysis �
 
 ## Quickstart
 
-Not yet — lands with steps S0.2–S0.3 (Docker Compose + FastAPI skeleton).
+1. **Infra (S0.2)** — PostgreSQL+pgvector + Redis:
+   ```powershell
+   docker compose up -d
+   docker compose exec db psql -U qa -d qa_copilot -c 'SELECT 1'   # → 1
+   docker compose exec redis redis-cli ping                        # → PONG
+   ```
+   *(This machine: native PG16 holds 5432 → `.env` sets `POSTGRES_PORT=5433`
+   and `DATABASE_URL` on 5433.)*
+2. **API (S0.3)** — FastAPI skeleton:
+   ```powershell
+   uv sync
+   uv run uvicorn qa_copilot_api.main:app --port 8000
+   curl http://127.0.0.1:8000/health   # → {"status":"ok","service":"qa-copilot-api",...}
+   ```
