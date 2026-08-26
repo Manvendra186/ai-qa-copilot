@@ -176,3 +176,54 @@
   - Naming: `Project.repository_id` (bible §10 says `repo_id`) — kept the clearer name.
 - **Next session start:** S0.5 (SQLAlchemy + Alembic: §10 core tables + `jobs` +
   `requirement_test_cases` + `prompt_versions`) — see `STATE.md` §3.
+
+## 2026-08-26 — S0.5 — SQLAlchemy + Alembic + idempotent seed
+
+- **Goal:** S0.5 — define the SQLAlchemy core data model, apply Alembic migrations,
+  verify with an idempotent seed. Exit criterion: `alembic upgrade head` on the compose
+  DB; seed script runs.
+- **Did:**
+  - `packages/repository/src/qa_copilot_repository/`:
+    - `models.py` — all 18 §10 core tables + `prompt_versions` as SQLAlchemy 2.0 typed
+      ORM (`Mapped`/`mapped_column`): organizations, users, repositories, projects, files,
+      requirements, test_cases, requirement_test_cases (M:N), test_runs, test_results,
+      failures, artifacts, knowledge_documents, embeddings (`vector` column via
+      `pgvector.sqlalchemy.VECTOR(VECTOR_DIM)`), ai_sessions, ai_actions, jobs.
+    - `db.py` — `get_database_url()` (env `DATABASE_URL` → `.env` via `python-dotenv` →
+      safe default), `make_engine()` (psycopg 3.2, `pool_pre_ping`), `session_scope()`.
+  - `infra/migrations/` — `alembic init` (root `alembic.ini`), `env.py` rewired to
+    `qa_copilot_repository.db.get_database_url()` + `models.Base.metadata`; autogenerate
+    initial revision `60fa1027d8d2_initial_core_schema` (pgvector import added manually —
+    generated migrations reference `pgvector.sqlalchemy` by attribute only).
+  - `scripts/seed.py` — idempotent dev fixtures: 1 org/user/repo/project, 2 requirements,
+    2 test cases (linked), 1 knowledge doc + 1 placeholder embedding (zero vector),
+    1 prompt version (`requirement-analyst@1`), 1 job (`requirement_analysis`, pending),
+    1 run (1 passed / 1 failed with diagnosis + artifact).
+- **Verified (exit criterion):**
+  - `alembic upgrade head` on compose DB (5433) ✓ · `alembic current` → `60fa1027d8d2 (head)`.
+  - `vector` extension enabled; `embeddings.vector` is a real pgvector column (ops work).
+  - Seed run **twice** — second run created no duplicates (natural-key lookups +
+    deterministic `uuid5` ids).
+  - `tests/unit/test_repository.py` — 10 tests: URL resolution (env wins / default
+    fallback / engine URL), 18-table registration, mapper `configure()` (relationship
+    wiring), `metadata` column / `metadata_` attribute, plain-VARCHAR enum columns,
+    pgvector column type, **2 live DB smoke tests** (seed rows + `vector_dims = 1536`).
+  - `uv run pytest -q` → **41 passed** · `ruff check` ✓ · `ruff format --check` ✓ ·
+    `mypy strict` ✓ (21 files).
+- **Decisions / gotchas (recorded in STATE.md §5, §7):**
+  - SQLAlchemy `metadata` is reserved on DeclarativeBase → JSONB metadata columns use the
+    `metadata_` Python attribute (DB column name stays `metadata`).
+  - Domain enums stored as plain `VARCHAR(32)` wire strings — `qa_copilot_domain` stays
+    the single source of truth (no DB-side vocabulary duplication).
+  - Alembic URL resolution centralized in `qa_copilot_repository.db`, never hardcoded in
+    `alembic.ini` (bible §7).
+  - Migration enables pgvector but **does not drop it on downgrade** (extension is
+    infrastructure, not schema state).
+  - ruff B023: factory lambdas in loops must bind loop vars
+    (`lambda title=title, i=i: ...`) — hit in the seed script.
+  - mypy strict: `_enum_column(enum_cls: type[StrEnum]) -> sa.Enum` (not `type[str]` /
+    `sa.Enum[Any]`).
+- **Open item:** `VECTOR_DIM = 1536` is provisional until the embedding model is chosen
+  (S0.6 / Phase 5); changing it requires a new migration.
+- **Next session start:** S0.6 (AI gateway: local llama server, streaming, token
+  accounting → `ai_actions`, redaction hook, prompt-registry loader) — see `STATE.md` §3.

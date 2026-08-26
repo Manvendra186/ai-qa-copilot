@@ -1,9 +1,17 @@
 [project]
 name = "qa-copilot-repository"
 version = "0.1.0"
-description = "Git, AST, and file indexing"
+description = "Data access (SQLAlchemy models/sessions) + Git, AST, and file indexing"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "qa-copilot-domain>=0.1.0",
+    "SQLAlchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "pgvector>=0.3",
+]
+
+[tool.uv.sources]
+qa-copilot-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

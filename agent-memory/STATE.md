@@ -6,11 +6,22 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation
-- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · **S0.4 ✓ — next: S0.5** (SQLAlchemy + Alembic: §10 core
-  tables + `jobs` + `requirement_test_cases` + `prompt_versions`)
+- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · **S0.5 ✓ — next: S0.6** (AI gateway: local
+  llama server, streaming, token accounting → `ai_actions`, redaction, prompt-registry loader)
 
 ## 2. Just completed
 
+- 2026-08-26 · **S0.5 — SQLAlchemy + Alembic + seed** (commit this session):
+  `qa_copilot_repository` — `models.py` (18 §10 core tables + `prompt_versions`, typed
+  `sa.Uuid(as_uuid=False)` → `str` ids, `metadata_` attr / `metadata` col, enums as
+  plain `VARCHAR(32)` of domain wire values), `db.py` (`get_database_url()` → env/.env
+  fallback, `make_engine()`, `session_scope()`); `infra/migrations` (Alembic, `env.py`
+  reads URL via `db.get_database_url()`); initial migration `60fa1027d8d2` enables pgvector
+  (`CREATE EXTENSION IF NOT EXISTS vector`) — **not dropped on downgrade**; `scripts/seed.py`
+  idempotent (natural-key lookups; deterministic `uuid5` ids). Verified: `alembic upgrade head`
+  ✓, `alembic current` → head, seed ×2 no duplicates, live vector ops ✓, **41 tests green**
+  (incl. 2 DB smoke tests) · ruff ✓ · mypy strict ✓.
+  Open: `VECTOR_DIM = 1536` provisional until the embedding model is chosen (S0.6).
 - 2026-08-26 · **S0.4 — domain package** (commit `f2fccea`): `qa_copilot_domain` now holds the
   §10 core model as pydantic v2 — `enums.py` (TestType, Priority, RiskLevel, JobType, JobStatus,
   FailureCategory (§16), ArtifactType; all `StrEnum`, snake_case wire values matching §12) +
@@ -30,17 +41,14 @@
 
 ## 3. NEXT STEP (start here)
 
-**S0.5 — SQLAlchemy + Alembic** (build bible §19): §10 core tables + `jobs` +
-`requirement_test_cases` + `prompt_versions`
-- **Exit criterion:** `alembic upgrade head` on the compose DB; seed script runs.
+**S0.6 — AI gateway** (build bible §19): local llama server (OpenAI-compatible): streaming,
+token accounting → `ai_actions`, redaction hook, prompt-registry loader
+- **Exit criterion:** unit tests green with a fake server; one live call logs `tokens_in/out`.
 - Notes:
-  1. DB is on **5433** (native PG16 stays on 5432 — user decision); `DATABASE_URL` in `.env` points there.
-  2. Enable in a migration: `CREATE EXTENSION IF NOT EXISTS vector` (pgvector 0.8.6 in the image).
-  3. Shape ORM columns from the S0.4 domain entities (`qa_copilot_domain`); enum wire values =
-     stored strings (keep parity; no double-sourcing of vocabularies).
-  4. Home for models/migrations: `packages/repository` (data access) + `infra/migrations` (bible §7) —
-     confirm at S0.5 start.
-  5. §10 also lists `knowledge_documents` + `embeddings` (vector col) — include so S0.5 is one-shot.
+  1. Confirm exact `LLM_BASE_URL` + model name/size first — tune §31.1 context budgets with it.
+  2. `prompt_versions` table already exists (seeded with `requirement-analyst@1` placeholder).
+  3. `ai_sessions`/`ai_actions` tables exist — the gateway writes to them (token/latency rows).
+  4. `VECTOR_DIM` may be finalized here (embedding model choice).
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -66,6 +74,11 @@
 - Keep native PG16 on 5432; compose db on 5433 (S0.2, user decision)
 - S0.4 domain: pydantic v2 · `StrEnum` wire strings · `extra="forbid"` · ids `str | None`
   (server-assigned) · `Project.repository_id` (bible §10 says `repo_id` — clearer name kept)
+- S0.5 repo: SQLAlchemy 2.0 typed ORM · ids `sa.Uuid(as_uuid=False)` → `str` (matches domain) ·
+  enums stored as plain `VARCHAR(32)` of the domain wire strings (no DB-side vocab duplication) ·
+  Alembic URL centralized in `qa_copilot_repository.db` (never hardcoded in `alembic.ini`) ·
+  pgvector enabled in migration, **not dropped on downgrade** · seed idempotent by
+  natural-key lookups + deterministic `uuid5` ids
 
 ## 6. Pointers (paths only — no code here)
 
@@ -74,6 +87,9 @@
 - v1.0 original (PDF, historical): `c:\Users\manve\Desktop\AI_QA_Copilot_Build_Bible.pdf`
 - Demo app (later, S0.10): separate repo `ai-qa-copilot-demo-app`
 - Domain entities: `packages/domain/src/qa_copilot_domain/{base,enums,entities}.py`
+- ORM models: `packages/repository/src/qa_copilot_repository/models.py` (18 core tables)
+- Migrations: `infra/migrations/` (initial: `60fa1027d8d2_initial_core_schema.py`)
+- DB URL: `packages/repository/src/qa_copilot_repository/db.py` (env → `.env` → default)
 
 ## 7. Open questions / gotchas
 
@@ -88,3 +104,9 @@
   they sort in the third-party block, no blank line between `pydantic`/`pytest` and them.
 - **mypy strict + pydantic:** wire-string/negative cases must go through `model_validate` — typed
   constructors are arg-checked (`status="completed"` → arg-type error).
+- **SQLAlchemy:** `metadata` is reserved on DeclarativeBase — JSONB `metadata` columns use the
+  `metadata_` Python attribute (learned in S0.5).
+- **ruff B023:** factory lambdas in loops must bind the loop vars
+  (`lambda title=title, i=i: ...`) — hit in S0.5 seed.
+- **Alembic + pgvector:** generated migrations import `pgvector.sqlalchemy` by *attribute* — add
+  `import pgvector.sqlalchemy` at the top of the migration or import fails on apply (learned S0.5).

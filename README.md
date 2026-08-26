@@ -28,7 +28,13 @@ requirement → test design → automation → execution → failure analysis �
    ```
    *(This machine: native PG16 holds 5432 → `.env` sets `POSTGRES_PORT=5433`
    and `DATABASE_URL` on 5433.)*
-2. **API (S0.3)** — FastAPI skeleton:
+2. **Database (S0.5)** — schema + seed:
+    ```powershell
+    uv run alembic upgrade head    # apply migrations (pgvector extension + §10 tables)
+    uv run python scripts/seed.py  # idempotent dev fixtures (safe to run twice)
+    docker compose exec db psql -U qa -d qa_copilot -c '\dt'   # 18 core tables
+    ```
+3. **API (S0.3)** — FastAPI skeleton:
    ```powershell
    uv sync
    uv run uvicorn qa_copilot_api.main:app --port 8000
