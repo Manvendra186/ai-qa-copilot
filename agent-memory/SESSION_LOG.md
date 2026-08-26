@@ -101,3 +101,78 @@
   **Intel Virtualization Technology = Enabled** (VT-d optional) → F10 save → boot → start
   Docker Desktop → engine up. Then resume at STATE.md §3 steps 3–6 (5432 conflict decision,
   `docker compose up -d`, exit criterion, commit, S0.3).
+
+## 2026-08-26 — S0.2 (completed) — compose infra up, exit criterion verified
+
+- **Goal:** finish S0.2 — bring up compose infra + verify exit criterion (unblocked from BIOS).
+- **Did:**
+  - User enabled **Intel VT-x in UEFI** → Docker Desktop engine up (29.7.2).
+  - **User decision:** keep native PG16 on 5432 → `.env` (gitignored) sets `POSTGRES_PORT=5433`
+    + `DATABASE_URL=postgresql+psycopg://qa:qa@localhost:5433/qa_copilot`; `.env.example` documents
+    the override.
+  - `docker compose up -d` → both containers **healthy**: `qa-copilot-db`
+    (pgvector/pgvector:pg16, 0.0.0.0:5433→5432, qa/qa @ qa_copilot) + `qa-copilot-redis` (redis:7, :6379).
+- **Verified (exit criterion):** `psql SELECT 1` → `1` · `redis-cli ping` → `PONG` ·
+  pgvector **0.8.6** available (extension enabled at S0.5) · native PG16 still up on 5432.
+- **Commit:** `4446f1a step S0.2: compose infra up (pgvector/pg16 + redis7), exit criterion verified`.
+
+## 2026-08-26 — S0.3 — FastAPI skeleton
+
+- **Goal:** S0.3 — FastAPI skeleton: app factory, pydantic-settings, JSON structured logging,
+  `GET /health` → 200 (build bible §19).
+- **Did:**
+  - `apps/api/src/qa_copilot_api/main.py` — `create_app(settings)` factory + module-level `app`;
+    `GET /health` → `HealthResponse` (`schemas.py`).
+  - `config.py` — `Settings` (pydantic-settings): `LLM_BASE_URL`, `LLM_MODEL`, `DATABASE_URL`,
+    `REDIS_URL`, `APP_UNDER_TEST`; `QA_COPILOT_ENV`/`QA_COPILOT_LOG_LEVEL` with `ENV`/`LOG_LEVEL`
+    fallbacks; reads `.env`.
+  - `logging_config.py` — stdlib-only **JSON structured logging** (bible §31.5): `JsonFormatter`,
+    `configure_logging`; uvicorn loggers routed through it.
+  - deps added to `apps/api`: fastapi 0.141.1 · pydantic-settings 2.15 · uvicorn 0.52.4 ·
+    httpx 0.28.1 · pydantic 2.13.4; `py.typed` added.
+  - mypy config → `files` + `mypy_path` pattern (root pyproject) to avoid mypy 2.x
+    "source file found twice" collisions from passing bare `apps`/`packages`.
+  - tests: `tests/unit/test_health.py` (in-process via httpx ASGITransport — no port binding),
+    `tests/unit/test_logging.py`.
+- **Verified:** `GET /health` → **200 live** (uvicorn + curl) + JSON server logs confirmed ·
+  `uv run pytest -q` → **14 passed** · `ruff check` ✓ · `ruff format --check` ✓ · `mypy strict` ✓.
+- **Commit:** `cbd623d step S0.3: FastAPI skeleton (app factory, pydantic-settings, JSON logging, GET /health)`.
+- **Note:** that session ended with the STATE.md update uncommitted and no SESSION_LOG entry —
+  backfilled here during the S0.4 session (memory now committed per protocol).
+
+## 2026-08-26 — S0.4 — domain package (pydantic entities + enums)
+
+- **Goal:** S0.4 — domain package: pydantic entities + enums (project, requirement, test_case,
+  failure, artifact, job). Exit criterion: schema unit tests green.
+- **Did:**
+  - `packages/domain/src/qa_copilot_domain/`:
+    - `enums.py` — 7 `StrEnum`s with snake_case wire values: `TestType`
+      (functional/negative/boundary/risk/accessibility/security), `Priority`, `RiskLevel`,
+      `JobType` (7 §11 AI endpoints), `JobStatus`, `FailureCategory` (§16 taxonomy),
+      `ArtifactType` (§15 kinds).
+    - `base.py` — `DomainModel`: `extra="forbid"` (strict AI outputs) + `from_attributes=True`
+      (S0.5 ORM mapping).
+    - `entities.py` — `Project`, `Requirement`, `TestCase` (`requirement_refs` mirrors the §10
+      M:N join), `Failure` (defaults unknown / `confidence=None` / `needs_human_approval=True`),
+      `Artifact`, `Job` (defaults pending / progress 0.0). `NonBlankStr` =
+      `Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]`; `confidence`/
+      `progress` bounded 0.0–1.0.
+    - `__init__.py` — public re-exports + `__all__`.
+  - `packages/domain/pyproject.toml` — `pydantic>=2.9` added to deps.
+  - `tests/unit/test_domain.py` — 17 schema tests: enum coverage vs bible §3/§16, §12 example
+    payloads (test case + failure analysis), JSON round-trip, bounds, `extra="forbid"`,
+    non-blank text, wire-string enum serialization.
+  - `TestCase`/`TestType` carry `__test__ = False` (stops pytest collection warnings).
+- **Verified (exit criterion):** `uv run pytest -q` → **31 passed** (14 prior + 17 new) ·
+  `ruff check` ✓ · `ruff format --check` ✓ (23 files) · `mypy strict` ✓ (18 source files).
+- **Commit:** `f2fccea step S0.4: domain package (pydantic entities + enums), schema tests green`.
+- **Learnings (recorded in STATE.md §7):**
+  - `strip_whitespace` as a `Field(...)` kwarg is pydantic v1 / **deprecated in v2** (mypy strict
+    rejects it) — v2-correct: `Annotated[str, StringConstraints(...)]`.
+  - Negative/wire-format test cases go through `model_validate` — typed constructors are
+    arg-checked by mypy strict (`status="completed"` → arg-type error).
+  - ruff isort treats `qa_copilot_*` as third-party (src-layout workspace) — import block: no
+    blank line between `pydantic` and `qa_copilot_*`.
+  - Naming: `Project.repository_id` (bible §10 says `repo_id`) — kept the clearer name.
+- **Next session start:** S0.5 (SQLAlchemy + Alembic: §10 core tables + `jobs` +
+  `requirement_test_cases` + `prompt_versions`) — see `STATE.md` §3.
