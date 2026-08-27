@@ -1,0 +1,11 @@
+# pnpm workspace (build bible §31.9 — uv for Python, pnpm for web).
+# Python members live in apps/ + packages/ (see root pyproject.toml);
+# web members are JS/TS directories under apps/.
+packages:
+  - "apps/*"
+
+# pnpm 11: postinstall build scripts must be approved (esbuild needs it for Vite).
+onlyBuiltDependencies:
+  - esbuild
+allowBuilds:
+  esbuild: set this to true or false

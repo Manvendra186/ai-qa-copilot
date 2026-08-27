@@ -1,0 +1,18 @@
+{
+  "name": "ai-qa-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI QA Copilot — pnpm workspace for web apps (build bible §31.9: uv + pnpm workspaces)",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "pnpm --filter qa-copilot-web dev",
+    "build": "pnpm --filter qa-copilot-web build",
+    "preview": "pnpm --filter qa-copilot-web preview",
+    "lint": "pnpm --filter qa-copilot-web lint",
+    "format": "pnpm --filter qa-copilot-web format",
+    "format:check": "pnpm --filter qa-copilot-web format:check"
+  }
+}

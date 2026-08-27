@@ -50,3 +50,10 @@ requirement → test design → automation → execution → failure analysis �
    streaming, per-call timeout, one retry, secret redaction, and a structured
    `ai_call` log record (`agent, model, tokens_in, tokens_out, latency_ms, …`) —
    the exact payload an `ai_actions` row stores (`qa_copilot_repository.audit`).
+5. **Web (S0.7)** — React shell (pnpm workspace, root `package.json`):
+   ```powershell
+   pnpm install          # once (installs workspace deps, writes pnpm-lock.yaml)
+   pnpm dev              # → http://127.0.0.1:5173 (pipeline view + mocked SSE)
+   pnpm lint             # clean
+   pnpm build            # type-check + production build, clean
+   ```
