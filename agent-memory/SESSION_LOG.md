@@ -551,3 +551,61 @@
 - **Next session start:** S1.2 (Test Design Agent — functional/negative/boundary/risk/
   a11y/security; exit: step coverage ≥ 85% vs oracle on 10 requirements) — see
   `STATE.md` §3.
+
+## 2026-08-27 — S1.2 Test Design Agent
+
+- **Goal:** Test Design Agent (build bible §19 Phase 1): generate functional/negative/
+  boundary/risk/a11y/security test cases from a requirement (plus the optional S1.1
+  `RequirementAnalysis`) through the S0.6 gateway; run inside the S0.9 job pipeline
+  behind a new endpoint. Exit: step coverage ≥ 85% vs oracle on 10 requirements.
+- **Did:**
+  - `packages/ai/src/qa_copilot_ai/agents/test_design.py` (new): `TestCase` /
+    `TestSuite` — the §12 schema in strict pydantic (`TC-###` ids, unique; fixed
+    type/priority/risk vocabularies; non-empty steps and expected results;
+    `min_length=1` test cases); `TestDesignInput` (requirement + optional analysis);
+    `TestDesignAgent.generate()` — loads `test-designer@1` from the registry,
+    renders with title/content/acceptance_criteria/analysis, calls the gateway,
+    tolerates markdown fences, `model_validate_json` → loud `ValueError` on schema
+    violations (same contract as the S1.1 agent; no re-prompt loop — §31.6).
+  - `packages/ai/prompts/test-designer.v1.md` (new): v1 test-designer prompt
+    (input variables: title/content/acceptance_criteria/analysis; JSON output
+    contract mirroring §12).
+  - `apps/api/src/qa_copilot_api/jobs.py`: `TestDesignJobAgent` implements the S0.9
+    `JobAgent` protocol (`stages = ("test_design",)`); `run()` builds the
+    `Requirement` from the job input, runs the real agent, returns the suite JSON as
+    `output_ref`, and records the `ai_actions` audit row against the job's
+    `ai_sessions` anchor (same pattern as `RequirementJobAgent`).
+  - `main.py`: `_build_test_design_jobs_agent()` — `TestDesignJobAgent` when
+    `llm_base_url` + `llm_model` are set, `StubAgent` otherwise (logs which one is
+    wired); exposed as `app.state.jobs_test_design_agent`.
+  - `routes.py` + `schemas.py`: `POST /api/v1/requirements/test-cases` → 202 +
+    `{job_id}` with `Location` — same 202/SSE contract as S0.9; RBAC member+;
+    ghost project → 403; `TestDesignRequest` body (title/content/acceptance_criteria).
+    The route only enqueues a `JobType.TEST_CASE_GENERATION` job — no LLM inline.
+  - `tests/unit/test_test_design_agent.py` (new, 20 tests): **exit criterion — 10
+    fixture requirements → schema-valid suites + per-requirement step coverage ≥ 85%
+    vs the hand-authored oracle** (fake OpenAI-compatible httpx transport; prompt
+    pulled from the registry; optional-analysis passthrough; invalid JSON / missing
+    `test_cases` / empty steps / unknown type / duplicate ids rejected; markdown
+    fences tolerated).
+  - `tests/unit/test_jobs.py`: +5 tests — 202+Location+`completed` with
+    `stub-output/test_case_generation`, auth 401 / non-member 403 / ghost-project 403,
+    422 validation, `ai_sessions` row with `task_type=test_case_generation`.
+  - `packages/ai/src/qa_copilot_ai/__init__.py`: export `TestDesignAgent`,
+    `TestDesignInput`, `TestCase`, `TestSuite` (kept alphabetical for ruff I001).
+- **Verified (exit criterion):** `uv run pytest -q` → **127 passed** (25 new) ·
+  `uv run mypy` → **no issues in 39 source files** · `ruff check .` ✓ ·
+  `ruff format --check .` ✓.
+- **Decisions / gotchas (also in STATE.md §7):**
+  - **Oracle vs output:** the "Order history" oracle carries 8 ground-truth steps
+    (auth, sorting, pagination, status after shipping, CSV export, …) — a competent
+    designer covers them, so the fake model output was extended (TC-004/TC-005)
+    rather than trimming the oracle. The oracle stays the independent reference.
+  - **pytest collection:** `Test*`-named non-test classes need `__test__ = False`
+    (otherwise PytestCollectionWarning).
+  - **ruff B905:** `zip(FIXTURES, suites, strict=True)` in the coverage gate test.
+- **Commit:** `bb5bb2f step S1.2: test design agent (schema-validated test suites,
+  >=85% oracle step coverage on 10 fixtures, POST /api/v1/requirements/test-cases
+  job; mypy/ruff/pytest green)`.
+- **Next session start:** S1.3 (UI flow: requirement → structured test cases,
+  persisted; exit: manual E2E through the UI) — see `STATE.md` §3.

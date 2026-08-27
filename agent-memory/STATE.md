@@ -6,26 +6,27 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design (in progress)
-- **Step:** S0.1–S1.1 ✓ · **S1.2 next**
+- **Step:** S0.1–S1.2 ✓ · **S1.3 next**
 
 ## 2. Just completed
 
-- 2026-08-27 · **S1.1 — Requirement Agent** (commit `6a1bf88`, details: SESSION_LOG.md):
-  prompt registry v1 (`PromptSpec`/`InMemoryPromptStore`/`FilePromptStore`,
-  `packages/ai/prompts/requirement-analyst.v1.md`) + `RequirementAgent` —
-  schema-validated `RequirementAnalysis` (strict pydantic; `suggested_test_types`
-  validated against `SUGGESTED_TEST_TYPES` = domain `TestType`) through the S0.6
-  gateway. `RequirementJobAgent` implements the S0.9 `JobAgent` protocol — real
-  analysis + `ai_actions` audit row inside the job pipeline; `StubAgent` stays the
-  fallback when no LLM is configured. **Exit: 10 fixture requirements → 10/10
-  schema-valid ✓.** 103 tests · mypy strict clean (37 files) · ruff ✓.
+- 2026-08-27 · **S1.2 — Test Design Agent** (commit `bb5bb2f`, details: SESSION_LOG.md):
+  `TestDesignAgent` + §12 `TestCase`/`TestSuite` schema (functional/negative/boundary/
+  risk/a11y/security; unique `TC-###` ids; non-empty steps + expectations) through the
+  gateway with the `test-designer@1` prompt; optional S1.1 `RequirementAnalysis` input.
+  `TestDesignJobAgent` on the S0.9 `JobAgent` seam +
+  `POST /api/v1/requirements/test-cases` (202 + job, `TEST_CASE_GENERATION`;
+  `StubAgent` fallback when no LLM). **Exit: 10 fixtures → schema-valid + step
+  coverage ≥ 85% vs oracle ✓.** 127 tests · mypy strict clean (39 files) · ruff ✓.
+- 2026-08-27 · **S1.1 — Requirement Agent** (commit `6a1bf88`): prompt registry v1 +
+  `RequirementAgent` → schema-validated `RequirementAnalysis` through the S0.6 gateway;
+  `RequirementJobAgent` on the S0.9 `JobAgent` seam; `StubAgent` fallback.
+  **Exit: 10 fixtures → 10/10 schema-valid ✓.**
 - 2026-08-27 · **S0.9 — jobs API** (commit `2051749`): `POST .../analyze` → 202 ·
-  `GET /jobs/{id}` · `GET /events` SSE (`job.started`/`stage.*`/`progress`/
-  `job.completed`, 15s heartbeat) · `JobAgent`/`StubAgent` seam (S1.1 filled the
-  real agent) · queued→running→completed|failed + `reap_orphans`.
-- 2026-08-27 · **S0.10 — demo app v0** (separate repo `ai-qa-copilot-demo-app`,
-  commit `43739a5`): Express 4 + `better-sqlite3` + React 18/Vite 6; `/login
-  /products /cart /checkout`; demo user `qa`/`qa1234`; defect flags 1:1 §16.
+  `GET /jobs/{id}` · `GET /events` SSE (15s heartbeat) · `JobAgent`/`StubAgent` seam ·
+  queued→running→completed|failed + `reap_orphans`.
+- 2026-08-27 · **S0.10 — demo app v0** (repo `ai-qa-copilot-demo-app`, `43739a5`):
+  Express 4 + `better-sqlite3` + React 18/Vite 6; user `qa`/`qa1234`; defect flags §16.
   **Smoke 11/11 · defect-check 7/7 · build ✓.**
 - 2026-08-26/27 · **S0.1–S0.8**: monorepo skeleton (uv+pnpm) · compose infra
   (PG16+pgvector :5433, Redis) · FastAPI skeleton · domain package ·
@@ -34,11 +35,12 @@
 
 ## 3. NEXT STEP (start here)
 
-**S1.2 — Test Design Agent** (build bible §19 Phase 1): generate functional/negative/
-boundary/risk/a11y/security test cases from the S1.1 `RequirementAnalysis`; persist
-test cases through the same job-pipeline `JobAgent` seam (prompt registry §31.6).
-- **Exit criterion:** step coverage ≥ 85% vs oracle on 10 requirements.
-- Queued follow-ups (not S1.2 blockers): web shell still consumes the mock SSE
+**S1.3 — UI flow: requirement → structured test cases (persisted)** (build bible §19
+Phase 1): the S1.2 agent is pure (suite JSON is the job `output_ref`) — S1.3 persists
+the suite (requirement/test-case rows + the §10 M:N join), drives the web shell's
+analyze → test-cases flow against the real API, and renders the structured cases.
+- **Exit criterion:** manual E2E through the UI.
+- Queued follow-ups (not S1.3 blockers): web shell still consumes the mock SSE
   (`/mock/events`) — point `useJobEvents` at `GET /events` with a fetch-based reader
   (EventSource can't set `Authorization`; JWT landed S0.8) · SSE bus is in-process —
   multi-worker deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1).
@@ -122,13 +124,19 @@ test cases through the same job-pipeline `JobAgent` seam (prompt registry §31.6
   (v1 prompt) · `jobs.py` (`RequirementJobAgent` — real agent in the S0.9 pipeline;
   `StubAgent` fallback when no LLM) · `main.py` (`_build_jobs_agent`) ·
   `tests/unit/test_requirement_agent.py`
+- Test design agent (S1.2): `packages/ai/src/qa_copilot_ai/agents/test_design.py`
+  (`TestDesignAgent`/`TestSuite`/`TestCase`/`TestDesignInput`) ·
+  `packages/ai/prompts/test-designer.v1.md` (v1 prompt) · `jobs.py`
+  (`TestDesignJobAgent`) · `main.py` (`_build_test_design_jobs_agent`,
+  `app.state.jobs_test_design_agent`) · `routes.py`
+  (`POST /api/v1/requirements/test-cases`) · `schemas.py` (`TestDesignRequest`) ·
+  `tests/unit/test_test_design_agent.py` (oracle step-coverage gate)
 
 ## 7. Open questions / gotchas
 
-- **Env leak → wrong agent (S1.1):** `qa_copilot_repository.db.get_database_url()` → `_load_dotenv()` writes
-  repo `.env` keys (incl. `LLM_BASE_URL`/`LLM_MODEL`) into `os.environ`; alembic's `env.py` calls it in test
-  fixtures, and pydantic-settings reads env vars even with `_env_file=None` → the app silently used
-  `RequirementJobAgent` (real LM Studio call; 8 job tests hung). Stub-contract tests must pass
+- **Env leak → wrong agent (S1.1):** `get_database_url()` → `_load_dotenv()` injects `.env` LLM keys
+  into `os.environ` even in tests (pydantic-settings reads env vars) → app silently wires the
+  real agent; job tests hang on LM Studio. Stub-contract tests must pass
   `llm_base_url=None, llm_model=None` explicitly (init kwargs beat env vars).
 - **mypy strict + `dict[str, object]` (S1.1):** `audit_dict()` values are `object` — `int(audit["x"])` fails; use `cast(int, ...)`.
 - **node:sqlite (S0.10):** experimental on Node 22 — demo app uses `better-sqlite3` (approve in `pnpm-workspace.yaml` `onlyBuiltDependencies`/`allowBuilds`).
@@ -139,13 +147,16 @@ test cases through the same job-pipeline `JobAgent` seam (prompt registry §31.6
 - **Vite dev binds `[::1]:5173`:** `curl http://127.0.0.1:5173` refused — use `http://localhost:5173`.
 - **pydantic v2 (S0.4):** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg — use `Annotated[str, StringConstraints(...)]`.
 - **ruff isort (S1.1):** `qa_copilot_*` is NOT first-party (src-layout workspace) — sorts in the third-party block.
-- **mypy strict + pydantic:** wire-string/negative cases must go through `model_validate` — typed
+- **pytest collection (S1.2):** non-test classes named `Test*` (`TestCase`, `TestSuite`,
+  `TestDesignInput`) need `__test__ = False` or pytest warns it cannot collect them.
+- **oracle gate (S1.2):** the oracle is the independent reference — when a fixture
+  missed the 85% step-coverage gate, extend the fake model output (it stands in for a
+  competent LLM), never trim the oracle to fit the output.
+- **mypy strict + pydantic:** wire-string/negative cases go through `model_validate` — typed
   constructors are arg-checked (`status="completed"` → arg-type error).
-- **pydantic-settings + mypy (S0.9):** the private `_env_file` init kwarg is invisible to mypy →
-  test calls carry `# type: ignore[call-arg]`; drop when stubs improve.
-- **SQLAlchemy (S0.5/8):** `metadata` is reserved on DeclarativeBase — use the `metadata_` attribute ·
-  `db.delete(parent)` with composite-PK children NULLs the PK instead of cascading — delete children first ·
-  `engine.dispose()` (ALL engines) before `DROP DATABASE` or it fails `ObjectInUse`.
+- **pydantic-settings + mypy (S0.9):** private `_env_file` kwarg invisible to mypy → tests carry `# type: ignore[call-arg]`.
+- **SQLAlchemy (S0.5/8):** `metadata_` not `metadata` (reserved) · delete children before `db.delete(parent)`
+  (composite-PK children NULL the PK) · `engine.dispose()` (ALL engines) before `DROP DATABASE`.
 - **ruff B023 (S0.5):** factory lambdas in loops must bind loop vars (`lambda title=title, i=i: ...`).
 - **Alembic + pgvector (S0.5):** migrations import `pgvector.sqlalchemy` by *attribute* — add `import pgvector.sqlalchemy` at top.
 - **Postgres UUID columns (S0.8):** fixtures must seed real UUIDs (`uuid5`) — string ids → `invalid input syntax for type uuid`.
