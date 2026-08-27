@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
@@ -77,6 +78,40 @@ class InMemoryPromptStore:
             raise PromptNotFound(f"{name}@{wanted}") from None
 
 
+class FilePromptStore:
+    """Prompt store that loads versioned prompt files from a directory (§31.6).
+
+    Each ``.md`` file in *directory* is a versioned prompt (front-matter +
+    body). The store resolves ``name@version`` by matching the file's
+    front-matter ``name`` and ``version``.
+    """
+
+    def __init__(self, directory: str | Path) -> None:
+        self._directory = Path(directory)
+        self._by_name: dict[str, dict[int, PromptSpec]] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if not self._directory.is_dir():
+            return
+        for path in sorted(self._directory.glob("*.md")):
+            try:
+                spec = load_prompt_file(path)
+            except PromptError:
+                continue
+            self._by_name.setdefault(spec.name, {})[spec.version] = spec
+
+    def get(self, name: str, version: int | None = None) -> PromptSpec:
+        versions = self._by_name.get(name)
+        if not versions:
+            raise PromptNotFound(f"{name}@{version if version is not None else 'latest'}")
+        wanted = max(versions) if version is None else version
+        try:
+            return versions[wanted]
+        except KeyError:
+            raise PromptNotFound(f"{name}@{wanted}") from None
+
+
 def render_prompt(spec: PromptSpec, **variables: str) -> str:
     """Substitute ``{{name}}`` placeholders in *spec* with *variables*.
 
@@ -91,12 +126,66 @@ def render_prompt(spec: PromptSpec, **variables: str) -> str:
     return _PLACEHOLDER.sub(lambda match: supplied[match.group(1)], spec.body)
 
 
+def load_prompt_file(path: str | Path) -> PromptSpec:
+    """Load a versioned prompt file (§31.6) into a :class:`PromptSpec`.
+
+    The file has a ``---`` delimited front-matter block (``key: value`` lines)
+    followed by the prompt body. The front-matter carries the registry
+    metadata (``name``, ``version``, ``model_class``, ``input_budget``,
+    ``output_budget``, ``schema_ref``, ``temperature``); the body is the
+    prompt template (``{{variable}}`` placeholders).
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        raise PromptError(f"prompt file {path} has no front-matter")
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        raise PromptError(f"prompt file {path} has malformed front-matter")
+    meta_text, body = parts[1], parts[2].lstrip("\n")
+    meta: dict[str, str] = {}
+    for line in meta_text.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            raise PromptError(f"prompt file {path} has malformed front-matter line: {line!r}")
+        key, _, value = line.partition(":")
+        meta[key.strip()] = value.strip()
+    name = meta.get("name")
+    if not name:
+        raise PromptError(f"prompt file {path} front-matter is missing 'name'")
+    return PromptSpec(
+        name=name,
+        version=int(meta.get("version", "1")),
+        body=body,
+        model_class=meta.get("model_class", "coder"),
+        input_budget=_int_or_none(meta.get("input_budget")),
+        output_budget=_int_or_none(meta.get("output_budget")),
+        schema_ref=meta.get("schema_ref"),
+        temperature=_float_or_none(meta.get("temperature")),
+    )
+
+
+def _int_or_none(value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def _float_or_none(value: str | None) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
 __all__ = [
+    "FilePromptStore",
     "InMemoryPromptStore",
     "PromptError",
     "PromptNotFound",
     "PromptRenderError",
     "PromptSpec",
     "PromptStore",
+    "load_prompt_file",
     "render_prompt",
 ]

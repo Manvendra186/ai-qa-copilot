@@ -166,6 +166,13 @@ def env() -> Iterator[dict[str, Any]]:
             database_url=url,
             auth_token_secret=SECRET,
             job_tick_delay_s=0.01,  # fast stub pacing
+            # S1.1: pin the stub agent explicitly. These tests assert the
+            # S0.9 stub contract and must stay hermetic: init kwargs beat
+            # process env vars (pydantic-settings), so a real LLM in the
+            # environment (or the repo `.env` leaked into os.environ by
+            # alembic's `_load_dotenv`) can never pull in the real agent.
+            llm_base_url=None,
+            llm_model=None,
             _env_file=None,  # type: ignore[call-arg]  # pydantic private kwarg; invisible to mypy
         )
     )

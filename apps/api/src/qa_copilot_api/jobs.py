@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
+from qa_copilot_ai.agents import RequirementAgent, RequirementAgentResult, RequirementInput
 from qa_copilot_domain.enums import JobStatus, JobType
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import models
@@ -58,6 +59,7 @@ __all__ = [
     "JobContext",
     "JobRunner",
     "JobSnapshot",
+    "RequirementJobAgent",
     "StubAgent",
     "TERMINAL_EVENTS",
     "format_sse",
@@ -117,6 +119,10 @@ class JobContext:
     ``input`` is the job's inline input payload (e.g. the requirement text);
     ``emit`` publishes a progress event to the bus (and persists progress for
     ``progress`` events) — agents never touch the database directly.
+
+    ``ai_session_id`` is the job's ``ai_sessions`` audit anchor (created by the
+    runner before the agent runs); S1.x agents record their ``ai_actions`` rows
+    against it.
     """
 
     job_id: str
@@ -124,6 +130,7 @@ class JobContext:
     job_type: JobType
     input: dict[str, Any]
     emit: Callable[[str, dict[str, Any]], Awaitable[None]]
+    ai_session_id: str | None = None
 
 
 class JobAgent(Protocol):
@@ -250,6 +257,61 @@ class StubAgent:
             await ctx.emit("stage.completed", {"stage": stage})
         await asyncio.sleep(self._tick_delay)
         return f"stub-output/{ctx.job_type.value}"
+
+
+class RequirementJobAgent:
+    """S1.1 requirement agent: real LLM-backed analysis on the :class:`JobAgent` protocol.
+
+    Replaces :class:`StubAgent` for ``requirement_analysis`` jobs. Runs the
+    pure :class:`qa_copilot_ai.agents.RequirementAgent` (prompt registry +
+    gateway, §31.6/§31.1), records the ``ai_actions`` audit row against the
+    job's ``ai_sessions`` anchor (§31.5), and returns the analysis JSON as the
+    ``output_ref``.
+    """
+
+    stages: tuple[str, ...] = ("requirement",)
+
+    def __init__(self, agent: RequirementAgent, engine: Engine) -> None:
+        self._agent = agent
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        """Analyze the requirement; return the analysis JSON as ``output_ref``."""
+        input_data = ctx.input
+        requirement = RequirementInput(
+            title=input_data.get("title", ""),
+            content=input_data.get("content", ""),
+            acceptance_criteria=tuple(input_data.get("acceptance_criteria", [])),
+        )
+        await ctx.emit("stage.started", {"stage": "requirement"})
+        await ctx.emit("progress", {"stage": "requirement", "value": 0.5})
+        result = await self._agent.run(requirement)
+        analysis_json = json.dumps(result.analysis.model_dump(), separators=(",", ":"))
+        await ctx.emit("progress", {"stage": "requirement", "value": 1.0})
+        await ctx.emit("stage.completed", {"stage": "requirement"})
+        self._record_action(ctx, result, analysis_json)
+        return analysis_json[:1024]
+
+    def _record_action(
+        self, ctx: JobContext, result: RequirementAgentResult, analysis_json: str
+    ) -> None:
+        """Record the ``ai_actions`` audit row against the job's session anchor."""
+        if ctx.ai_session_id is None:
+            return
+        audit = result.call.audit_dict()
+        with repo_db.session_scope(self._engine) as session:
+            session.add(
+                models.AIAction(
+                    session_id=ctx.ai_session_id,
+                    agent=str(audit["agent"]),
+                    model=str(audit["model"]),
+                    tokens_in=cast(int, audit["tokens_in"]),
+                    tokens_out=cast(int, audit["tokens_out"]),
+                    latency_ms=cast(int, audit["latency_ms"]),
+                    input_hash=audit.get("input_hash"),
+                    output_ref=analysis_json[:1024],
+                )
+            )
 
 
 def _payload(job_id: str, project_id: str | None, **fields: Any) -> dict[str, Any]:
@@ -416,6 +478,7 @@ class JobRunner:
                 job_type=job.type,
                 input=job_input,
                 emit=emit,
+                ai_session_id=ai_session.id if ai_session is not None else None,
             )
             output_ref = await agent.run(ctx)
 
