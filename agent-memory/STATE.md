@@ -5,56 +5,50 @@
 
 ## 1. Current position
 
-- **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design (in progress)
-- **Step:** S0.1–S1.2 ✓ · S1.3 persistence ✓ · **S1.3 UI flow next**
+- **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design → Eval (in progress)
+- **Step:** S0.1–S1.3 ✓ (S1.3 = persistence + UI flow + read-back) · **S1.4 next**
 
 ## 2. Just completed
 
-- 2026-08-27 · **S1.3 (persistence) — persist the AI suite as §10 rows** (commit `022fb6b`): `persist_requirement_with_suite(...)` in
-  `qa_copilot_repository.requirements` (keeps dependency direction — the repo package,
-  not the API layer) writes one `requirements` row + N `test_cases` rows + the §10 M:N
-  `requirement_test_cases` join; AI `TestType`/`Priority`/`RiskLevel` strings → domain
-  enums; `TestDesignJobAgent.run()` now returns the persisted requirement id as the job
-  `output_ref` (suite JSON kept as the `ai_actions` audit payload). **55 tests ✓ — incl.
-  `test_persist_requirement_with_suite_writes_rows_and_join` and a `TestDesignJobAgent`
-  end-to-end test (rows + join + output_ref + audit) · mypy strict clean (40 files) ·
-  ruff ✓.**
+- 2026-08-27 · **S1.3 (UI flow) — web shell on the real API** (commit `8c0ed5b`):
+  `GET /api/v1/requirements/{id}` read-back (auth + project role; non-member → 403, no
+  existence leak; 6 tests) · web: `lib/api.ts` (Bearer fetch client; SSE via fetch
+  streaming reader — `EventSource` can't set `Authorization`) · `useAuth` ·
+  `useJobEvents.start(jobId)` → real `/events?job_id=…` · `LoginForm`/`RequirementForm`/
+  `TestCaseList` + `App` gates · mock SSE plugin removed · **test-designer prompt
+  capped (≤6 cases, compact fields) — Qwen-27B was truncating JSON at the 4000-token
+  output budget** · **exit: live E2E green** (`scripts/e2e_s13.py`: login → 202 → SSE →
+  read-back 4 persisted cases → job row consistent; bad login 401 · unauth SSE 401 ·
+  unknown id 404) · **131 tests ✓ · mypy strict (40) ✓ · ruff ✓ · tsc/eslint/build ✓.**
+- 2026-08-27 · **S1.3 (persistence) — persist the AI suite as §10 rows** (commit
+  `022fb6b`): `persist_requirement_with_suite(...)` in `qa_copilot_repository.requirements`
+  writes one `requirements` row + N `test_cases` rows + the §10 M:N join; AI strings →
+  domain enums; `TestDesignJobAgent.run()` returns the persisted requirement id as
+  `output_ref` (suite JSON kept as the `ai_actions` audit payload).
 - 2026-08-27 · **S1.2 — Test Design Agent** (commit `bb5bb2f`, details: SESSION_LOG.md):
-  `TestDesignAgent` + §12 `TestCase`/`TestSuite` schema (functional/negative/boundary/
-  risk/a11y/security; unique `TC-###` ids; non-empty steps + expectations) through the
-  gateway with the `test-designer@1` prompt; optional S1.1 `RequirementAnalysis` input.
-  `TestDesignJobAgent` on the S0.9 `JobAgent` seam +
-  `POST /api/v1/requirements/test-cases` (202 + job, `TEST_CASE_GENERATION`;
-  `StubAgent` fallback when no LLM). **Exit: 10 fixtures → schema-valid + step
-  coverage ≥ 85% vs oracle ✓.** 127 tests · mypy strict clean (39 files) · ruff ✓.
-- 2026-08-27 · **S1.1 — Requirement Agent** (commit `6a1bf88`): prompt registry v1 +
-  `RequirementAgent` → schema-validated `RequirementAnalysis` through the S0.6 gateway;
-  `RequirementJobAgent` on the S0.9 `JobAgent` seam; `StubAgent` fallback.
-  **Exit: 10 fixtures → 10/10 schema-valid ✓.**
-- 2026-08-27 · **S0.9 — jobs API** (commit `2051749`): `POST .../analyze` → 202 ·
-  `GET /jobs/{id}` · `GET /events` SSE (15s heartbeat) · `JobAgent`/`StubAgent` seam ·
-  queued→running→completed|failed + `reap_orphans`.
+  `TestDesignAgent` + §12 `TestSuite` schema through the gateway (`test-designer@1`);
+  `TestDesignJobAgent` on the S0.9 seam + `POST /api/v1/requirements/test-cases`
+  (202 + job; `StubAgent` fallback). **Exit: 10 fixtures → schema-valid + step coverage
+  ≥ 85% vs oracle ✓.**
+- 2026-08-27 · **S1.1 — Requirement Agent** (commit `6a1bf88`): `RequirementAgent` +
+  schema-validated `RequirementAnalysis` on the S0.9 seam. **Exit: 10/10 schema-valid ✓.**
+- 2026-08-27 · **S0.9 — jobs API** (commit `2051749`): 202 + `GET /jobs/{id}` + SSE
+  `/events` (15s heartbeat) + `JobAgent`/`StubAgent` seam + state machine + reaper.
 - 2026-08-27 · **S0.10 — demo app v0** (repo `ai-qa-copilot-demo-app`, `43739a5`):
-  Express 4 + `better-sqlite3` + React 18/Vite 6; user `qa`/`qa1234`; defect flags §16.
-  **Smoke 11/11 · defect-check 7/7 · build ✓.**
-- 2026-08-26/27 · **S0.1–S0.8**: monorepo skeleton (uv+pnpm) · compose infra
-  (PG16+pgvector :5433, Redis) · FastAPI skeleton · domain package ·
-  SQLAlchemy+Alembic+seed · AI gateway (LM Studio live ✓) · React shell (mock SSE) ·
-  auth baseline (JWT + project RBAC).
+  Express + better-sqlite3 + React; user `qa`/`qa1234`; **smoke 11/11 · defects 7/7 ✓.**
+- 2026-08-26/27 · **S0.1–S0.8**: monorepo (uv+pnpm) · compose infra (PG16+pgvector
+  :5433, Redis) · FastAPI · domain · SQLAlchemy+Alembic+seed · AI gateway (LM Studio
+  live) · React shell · auth baseline (JWT + project RBAC).
 
 ## 3. NEXT STEP (start here)
 
-**S1.3 (remainder) — UI flow: analyze → test-cases against the real API + render**
-(build bible §19 Phase 1). **Persistence is DONE** (see "Just completed"): the suite
-now lands in `requirements`/`test_cases`/the §10 M:N join and the job `output_ref` is
-the persisted requirement id. Remaining: drive the web shell's analyze → test-cases
-flow against the real API (replace the mock SSE) and render the structured cases from
-the persisted rows.
-- **Exit criterion:** manual E2E through the UI.
-- Queued follow-ups (not S1.3 blockers): web shell still consumes the mock SSE
-  (`/mock/events`) — point `useJobEvents` at `GET /events` with a fetch-based reader
-  (EventSource can't set `Authorization`; JWT landed S0.8) · SSE bus is in-process —
-  multi-worker deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1).
+**S1.4 — Eval runner CLI + golden set v1** (build bible §19 Phase 1, §22): an `eval`
+CLI runs the agents (S1.1/S1.2) over the golden fixture set and emits a JSON report
+vs the §31.7 targets (schema validity, step coverage, token/latency budgets) —
+reusable regression gate for prompt/model changes (e.g. the S1.3 output-budget fix).
+- **Exit criterion:** `eval run` emits a JSON report vs §31.7 targets.
+- Queued follow-ups (not S1.4 blockers): SSE bus is in-process — multi-worker deploy
+  needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1).
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -120,8 +114,10 @@ the persisted rows.
 - DB URL: `packages/repository/src/qa_copilot_repository/db.py` (env → `.env` → default)
 - AI gateway: `packages/ai/src/qa_copilot_ai/{gateway,prompts,redaction}.py` · live check:
   `scripts/llm_live_check.py` · `ai_actions` writer: `qa_copilot_repository.audit`
-- Web shell: `apps/web/` (React 18 + Vite 6 + TS + Tailwind 4; mock SSE:
-  `vite.config.ts` → `GET /mock/events`; pipeline contract: `src/lib/pipeline.ts`)
+- Web shell (S0.7/S1.3): `apps/web/` (React 18 + Vite 6 + TS + Tailwind 4) ·
+  `src/lib/api.ts` (Bearer fetch client + fetch-streaming SSE reader) ·
+  `src/hooks/{useAuth,useJobEvents}.ts` · pipeline contract `src/lib/pipeline.ts` ·
+  `/api` dev proxy → :8000 · `scripts/e2e_s13.py` (API-level E2E of the S1.3 chain)
 - Auth (S0.8): `apps/api/src/qa_copilot_api/auth.py` (hash/JWT/deps) · `routes.py`
   (login/me/projects) · `config.py` (`auth_token_secret`) · membership lookups:
   `packages/repository/src/qa_copilot_repository/membership.py` · migration
@@ -163,6 +159,10 @@ the persisted rows.
 - **oracle gate (S1.2):** the oracle is the independent reference — when a fixture
   missed the 85% step-coverage gate, extend the fake model output (it stands in for a
   competent LLM), never trim the oracle to fit the output.
+- **Local-model output budget (S1.3):** LM Studio silently truncates at the requested
+  `max_tokens` → mid-JSON `EOF` → loud schema failure. Qwen-27B needed >4000 tokens for
+  the old uncapped prompt; `test-designer.v1.md` now caps ≤6 cases + compact fields.
+  Re-run `scripts/e2e_s13.py` after any prompt/budget/model change.
 - **mypy strict + pydantic:** wire-string/negative cases go through `model_validate` — typed
   constructors are arg-checked (`status="completed"` → arg-type error).
 - **pydantic-settings + mypy (S0.9):** private `_env_file` kwarg invisible to mypy → tests carry `# type: ignore[call-arg]`.

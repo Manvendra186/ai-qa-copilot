@@ -609,3 +609,61 @@
   job; mypy/ruff/pytest green)`.
 - **Next session start:** S1.3 (UI flow: requirement → structured test cases,
   persisted; exit: manual E2E through the UI) — see `STATE.md` §3.
+
+## 2026-08-27 — S1.3 Persisted UI flow (persistence + web shell on the real API)
+
+- **Goal:** finish S1.3 (build bible §19 Phase 1): the web shell drives requirement →
+  test-cases against the **real** API (202 + SSE) and renders the suite from the
+  **persisted** rows. Exit: manual E2E through the UI.
+- **Did (persistence half, previous session — commit `022fb6b`):**
+  - `qa_copilot_repository.requirements.persist_requirement_with_suite(...)`: one
+    `requirements` row + N `test_cases` rows + §10 M:N `requirement_test_cases` join;
+    AI strings → domain enums.
+  - `TestDesignJobAgent.run()` returns the persisted requirement id as `output_ref`
+    (suite JSON kept as the `ai_actions` audit payload).
+- **Did (UI-flow half, this session — commit `8c0ed5b`):**
+  - **Backend:** `GET /api/v1/requirements/{requirement_id}` (auth + project role
+    check; non-member → 403, no existence leak) with `RequirementOut`/`TestCaseOut`
+    schemas; +6 unit tests (success, unauthenticated, viewer, non-member, unknown
+    UUID, malformed id).
+  - **Web client (`apps/web`):** `src/lib/api.ts` (Bearer-token fetch client:
+    `login`/`me`/`createTestCaseJob`/`getRequirement` + `streamJobEvents` — SSE via
+    `fetch` + streaming reader because `EventSource` cannot set `Authorization`);
+    `src/hooks/useAuth.ts` (token boot via `/me`, login/logout, strongest project);
+    `src/hooks/useJobEvents.ts` — `start(jobId)` streams real
+    `GET /api/v1/events?job_id=…`, tracks outcome/output_ref/error/stages/log;
+    `LoginForm`/`RequirementForm`/`TestCaseList` (new) + `App.tsx` gates
+    (booting / unauthenticated / authenticated-without-project / main flow);
+    `Header` shows user/project/live-SSE status; mock-SSE plugin removed from
+    `vite.config.ts` (`/api` proxy to :8000 kept).
+  - **Prompt fix (E2E-driven):** `packages/ai/prompts/test-designer.v1.md` — Qwen-27B
+    (LM Studio) truncated its JSON at the 4000-token `output_budget` on 2 live runs
+    (schema `EOF` failure). Now: "at most six test cases", ≤2 preconditions,
+    ≤3 expected results, one short sentence per step. Fits the budget with margin.
+  - **E2E harness:** `scripts/e2e_s13.py` — API-level walk of the whole chain
+    (login → 202 → SSE until terminal → read-back → job-row consistency).
+- **Verified (exit criterion):** live E2E **green** — login `dev@local.dev` (owner,
+  Demo App) → job `1a23dacf…` 202 → SSE `job.started → stage.started → progress
+  0.5 → 1.0 → stage.completed → job.completed(output_ref)` → read-back
+  "Order history" with 4 persisted cases (functional/negative/security/a11y) → job
+  row `completed` with matching `output_ref`. Failure paths: bad login **401** ·
+  SSE without auth **401** · unknown requirement **404**.
+  `pytest -q` → **131 passed** · `mypy` → **no issues in 40 source files** ·
+  `ruff check/format` ✓ · web `tsc` (both configs) ✓ · `eslint .` ✓ · `pnpm build` ✓.
+- **Decisions / gotchas (also in STATE.md §7):**
+  - **Local-model output budget:** silent truncation at `output_budget` is the
+    failure mode for local inference — prompt must cap case count + field lengths;
+    re-run `scripts/e2e_s13.py` whenever prompt/budget/model changes.
+  - **SSE + auth:** `EventSource` cannot send headers → fetch-streaming reader with
+    manual SSE-frame parsing (comment keepalives skipped, terminal event ends loop;
+    server also closes the stream after the terminal event).
+  - `output_ref` on completed `test_case_generation` is the **persisted requirement
+    id** — the UI reads the suite from `GET /requirements/{id}`, never from the SSE
+    payload.
+- **Commit:** `8c0ed5b step S1.3: web shell on the real API (login, 202 job
+  creation, fetch-based SSE with Bearer, persisted test-case read-back) +
+  GET /requirements/{id} endpoint + test-designer prompt compactness fix
+  (local model fit); live E2E green, 131 tests, mypy strict + ruff green`
+  (persistence half: `022fb6b`).
+- **Next session start:** S1.4 (Eval runner CLI + golden set v1, §22; exit:
+  `eval run` emits JSON report vs §31.7 targets) — see `STATE.md` §3.
