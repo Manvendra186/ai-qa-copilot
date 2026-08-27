@@ -1,0 +1,1205 @@
+{
+  "schema_version": 1,
+  "name": "AI QA Copilot golden set",
+  "version": "v1",
+  "description": "Build Bible \u00a722 evaluation dataset, v1: 12 synthetic SaaS requirements spanning all seven \u00a722 workflow categories (auth, search, checkout, payments, permissions, profile, upload). Each fixture carries a hand-authored QA oracle (the independent expected behavior, \u00a719 S1.2) and a golden test suite \u2014 a competent model's reference output, validated by the \u00a712 TestSuite schema. Pinned prompt: test-designer@1 (\u00a731.6). Targets per \u00a731.7. Consumed by the S1.4 eval runner and the S1.2 unit tests.",
+  "source": {
+    "build_bible": "docs/AI_QA_Copilot_Build_Bible_v1.1.md",
+    "dataset_section": "22",
+    "targets_section": "31.7",
+    "prompt": "test-designer@1"
+  },
+  "targets": {
+    "schema_valid_min": 0.99,
+    "oracle_step_coverage_min": 0.85
+  },
+  "categories": [
+    "auth",
+    "checkout",
+    "payments",
+    "permissions",
+    "profile",
+    "search",
+    "upload"
+  ],
+  "fixtures": [
+    {
+      "id": "REQ-001",
+      "title": "Login with email and password",
+      "content": "Users can log in with their email and password.",
+      "category": "auth",
+      "acceptance_criteria": [
+        "Valid credentials return a session",
+        "Invalid credentials show an error"
+      ],
+      "oracle_steps": [
+        "Enter valid credentials (the registered email and password)",
+        "Submit the login form",
+        "Verify a session is returned",
+        "Enter invalid credentials",
+        "Verify an error message is shown",
+        "Verify the error is identical for an unregistered email",
+        "Verify the password is masked in the login form",
+        "Verify the error does not reveal which email is registered"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Log in with valid credentials",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [
+              "A registered user account exists"
+            ],
+            "steps": [
+              "Open the login page",
+              "Enter valid credentials: the registered email and the correct password",
+              "Submit the login form",
+              "Verify a session is returned and the user is signed in"
+            ],
+            "expected_results": [
+              "The signed-in home screen is shown"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Login with email and password"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "Log in with invalid credentials",
+            "type": "negative",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Open the login page",
+              "Enter invalid credentials: a registered email and a wrong password",
+              "Submit the login form",
+              "Verify an error message is shown and no session is returned"
+            ],
+            "expected_results": [
+              "The login form remains visible with the error"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Login with email and password"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "Login errors do not reveal registered emails",
+            "type": "security",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Attempt login with an unregistered email and any password",
+              "Attempt login with a registered email and a wrong password",
+              "Compare the two error messages"
+            ],
+            "expected_results": [
+              "Both attempts return the same generic error message"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Login with email and password"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-002",
+      "title": "Password reset via email",
+      "content": "Users can reset their password via a link emailed to them.",
+      "category": "auth",
+      "acceptance_criteria": [
+        "Link expires after 30 minutes",
+        "New password must be at least 8 characters"
+      ],
+      "oracle_steps": [
+        "Request a password reset by email",
+        "Open the reset link from the email",
+        "Set a new password of at least 8 characters",
+        "Verify login works with the new password",
+        "Verify the reset link expires after 30 minutes",
+        "Verify a short password is rejected",
+        "Verify a used reset link cannot be reused",
+        "Verify the reset email is not sent to unregistered emails"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Reset the password with a fresh email link",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [
+              "A registered user account exists"
+            ],
+            "steps": [
+              "Request a password reset for the registered email",
+              "Open the reset link from the received email",
+              "Enter a new password of at least 8 characters",
+              "Confirm the new password",
+              "Verify the password is changed and login works with the new password"
+            ],
+            "expected_results": [
+              "Login succeeds with the new password"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Password reset via email"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "An expired reset link is rejected",
+            "type": "boundary",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Request a password reset",
+              "Wait past the 30 minute expiry of the reset link",
+              "Open the reset link",
+              "Verify the expired link is rejected"
+            ],
+            "expected_results": [
+              "The link is refused as expired"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Password reset via email"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "The new password must meet the 8 character minimum",
+            "type": "boundary",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the reset link",
+              "Enter a 7 character new password",
+              "Verify the 7 character password is rejected",
+              "Enter an 8 character new password",
+              "Verify the 8 character password is accepted"
+            ],
+            "expected_results": [
+              "Only the 8 character password is accepted"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Password reset via email"
+            ]
+          },
+          {
+            "id": "TC-004",
+            "title": "A used reset link cannot be reused",
+            "type": "security",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Complete a reset with the reset link",
+              "Open the same reset link again",
+              "Verify the used link is rejected"
+            ],
+            "expected_results": [
+              "The second use is refused"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Password reset via email"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-003",
+      "title": "Search products by name",
+      "content": "Users can search products by name.",
+      "category": "search",
+      "acceptance_criteria": [
+        "Results are sorted by relevance",
+        "Empty search shows a message"
+      ],
+      "oracle_steps": [
+        "Enter a product name in the search box",
+        "Submit the search",
+        "Verify the results are sorted by relevance",
+        "Submit an empty search",
+        "Verify a message is shown for the empty search",
+        "Submit a single character search",
+        "Verify the search box is keyboard accessible",
+        "Verify a very long search term does not break the layout"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Search by product name returns relevant results",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Open the product catalog",
+              "Enter a product name in the search box",
+              "Submit the search",
+              "Verify the results are listed",
+              "Verify the results are sorted by relevance"
+            ],
+            "expected_results": [
+              "The matching products appear in the result list"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Search products by name"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "An empty search shows a friendly message",
+            "type": "negative",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Clear the search box",
+              "Submit an empty search",
+              "Verify a no-results message is shown"
+            ],
+            "expected_results": [
+              "The no-results message is shown instead of an error"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Search products by name"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "A single character search does not fail",
+            "type": "boundary",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Enter a single character in the search box",
+              "Submit the search",
+              "Verify results or a no-results message are shown without an error"
+            ],
+            "expected_results": [
+              "The search completes without an error"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Search products by name"
+            ]
+          },
+          {
+            "id": "TC-004",
+            "title": "The search box is usable from the keyboard",
+            "type": "accessibility",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Focus the search box using only the keyboard",
+              "Type a product name",
+              "Press Enter to submit the search",
+              "Verify the search box has a visible label for screen readers"
+            ],
+            "expected_results": [
+              "The search submits and the label is announced"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Search products by name"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-004",
+      "title": "Add item to cart",
+      "content": "Users can add items to their cart.",
+      "category": "checkout",
+      "acceptance_criteria": [
+        "Cart count updates",
+        "Item quantity can be changed"
+      ],
+      "oracle_steps": [
+        "Add an item to the cart",
+        "Verify the cart count updates",
+        "Increase the item quantity",
+        "Decrease the item quantity",
+        "Verify the item quantity is updated",
+        "Verify the quantity cannot drop below one",
+        "Verify the cart is reachable from the product page",
+        "Verify the cart contents persist on the server side"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Add an item to the cart",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Open the product page",
+              "Select a quantity for the item",
+              "Add the item to the cart",
+              "Verify the cart count updates"
+            ],
+            "expected_results": [
+              "The cart count shows the new total"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Add item to cart"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "The item quantity can be changed in the cart",
+            "type": "functional",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the cart",
+              "Increase the item quantity",
+              "Decrease the item quantity",
+              "Verify the item quantity is updated"
+            ],
+            "expected_results": [
+              "The displayed quantity matches the last change"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Add item to cart"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "Quantity cannot drop below one",
+            "type": "boundary",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Set the item quantity to the minimum",
+              "Attempt to decrease the quantity below one",
+              "Verify the quantity stays at one"
+            ],
+            "expected_results": [
+              "The quantity remains at one"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Add item to cart"
+            ]
+          },
+          {
+            "id": "TC-004",
+            "title": "The cart is reachable with the keyboard",
+            "type": "accessibility",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the product page",
+              "Navigate to the cart using the keyboard",
+              "Verify the cart link is labeled and focusable"
+            ],
+            "expected_results": [
+              "The cart link announces its name and receives focus"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Add item to cart"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-005",
+      "title": "Checkout with saved card",
+      "content": "Users can check out with a saved payment card.",
+      "category": "payments",
+      "acceptance_criteria": [
+        "Card details are not re-entered",
+        "Payment is processed"
+      ],
+      "oracle_steps": [
+        "Select the saved card at checkout",
+        "Place the order without re-entering card details",
+        "Verify the payment is processed",
+        "Verify the saved card is masked",
+        "Verify a checkout without a saved card prompts to add one",
+        "Verify the full card number is never exposed",
+        "Verify the order total is correct for the cart",
+        "Verify no card details are re-entered during checkout"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Check out with a saved card without re-entering details",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Open the checkout",
+              "Select the saved card as the payment method",
+              "Place the order",
+              "Verify the payment is processed",
+              "Verify the order total is correct",
+              "Verify no card details are re-entered"
+            ],
+            "expected_results": [
+              "The order is placed and the total is unchanged"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Checkout with saved card"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "A checkout without a saved card prompts to add one",
+            "type": "negative",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the checkout",
+              "Select the payment step",
+              "Verify the user is prompted to add a card"
+            ],
+            "expected_results": [
+              "An add-card prompt is shown"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Checkout with saved card"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "The saved card number stays masked",
+            "type": "security",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the checkout",
+              "Verify the saved card shows only the last four digits",
+              "Complete the order without typing card details",
+              "Verify the full card number is not exposed in the UI"
+            ],
+            "expected_results": [
+              "Only the last four digits are visible"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Checkout with saved card"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-006",
+      "title": "Order history",
+      "content": "Users can view their order history.",
+      "category": "checkout",
+      "acceptance_criteria": [
+        "Orders are listed newest first",
+        "Each order shows status"
+      ],
+      "oracle_steps": [
+        "Open the order history",
+        "Verify the orders are listed newest first",
+        "Verify each order shows its status",
+        "Verify an empty state is shown with no orders",
+        "Verify the history is hidden while signed out",
+        "Verify the status updates after an order ships",
+        "Verify the history is scoped to the signed-in account",
+        "Export the order history to a CSV report"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Orders are listed newest first with status",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Sign in",
+              "Open the order history",
+              "Verify the orders are listed newest first",
+              "Verify each order shows its status"
+            ],
+            "expected_results": [
+              "The newest order is first and every order shows a status"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Order history"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "An account without orders sees an empty state",
+            "type": "negative",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Sign in with an account without orders",
+              "Open the order history",
+              "Verify an empty state is shown"
+            ],
+            "expected_results": [
+              "The empty state message is shown"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Order history"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "The history is hidden while signed out",
+            "type": "security",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the order history while signed out",
+              "Verify a sign-in prompt is shown"
+            ],
+            "expected_results": [
+              "The history is not visible before sign-in"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Order history"
+            ]
+          },
+          {
+            "id": "TC-004",
+            "title": "The status reflects an order that has shipped",
+            "type": "functional",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Place an order and wait until it ships",
+              "Re-open the order history",
+              "Verify the status updates after the order ships"
+            ],
+            "expected_results": [
+              "The order shows its shipped status"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Order history"
+            ]
+          },
+          {
+            "id": "TC-005",
+            "title": "The history can be exported to a CSV report",
+            "type": "functional",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the order history",
+              "Export the order history to a CSV report"
+            ],
+            "expected_results": [
+              "The CSV report lists every order with its status"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Order history"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-007",
+      "title": "Cancel an order",
+      "content": "Users can cancel an order before it ships.",
+      "category": "checkout",
+      "acceptance_criteria": [
+        "Cancellation is confirmed",
+        "Refund is initiated"
+      ],
+      "oracle_steps": [
+        "Select the cancel option for an unshipped order",
+        "Confirm the cancellation",
+        "Verify the cancellation is confirmed",
+        "Verify the refund is initiated",
+        "Verify a shipped order cannot be cancelled",
+        "Verify the order details show the cancelled status",
+        "Verify the status is stable when the order is re-opened",
+        "Verify the refund amount matches the paid total"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Cancel an unshipped order starts the refund",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Open the order details",
+              "Select the cancel option",
+              "Confirm the cancellation",
+              "Verify the cancellation is confirmed",
+              "Verify the refund is initiated"
+            ],
+            "expected_results": [
+              "The order shows the cancellation confirmation"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Cancel an order"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "A shipped order cannot be cancelled",
+            "type": "negative",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the shipped order details",
+              "Verify the cancel option is unavailable"
+            ],
+            "expected_results": [
+              "No cancel option is offered"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Cancel an order"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "Cancelling is final and the state is stable",
+            "type": "risk",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Cancel the order",
+              "Re-open the order details",
+              "Verify the status is cancelled and the refund is in progress"
+            ],
+            "expected_results": [
+              "The cancelled status and refund progress persist"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Cancel an order"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-008",
+      "title": "Apply discount code",
+      "content": "Users can apply a discount code at checkout.",
+      "category": "checkout",
+      "acceptance_criteria": [
+        "Valid code reduces the total",
+        "Invalid code shows an error"
+      ],
+      "oracle_steps": [
+        "Enter a valid discount code at checkout",
+        "Verify the total is reduced",
+        "Enter an invalid discount code",
+        "Verify an error is shown",
+        "Verify the total is unchanged after the invalid code",
+        "Verify an expired code is rejected",
+        "Verify the discount code input is keyboard accessible",
+        "Verify applying a second code replaces or is blocked"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "A valid discount code reduces the total",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Open the checkout",
+              "Enter a valid discount code",
+              "Apply the code",
+              "Verify the total is reduced by the discount"
+            ],
+            "expected_results": [
+              "The new total reflects the discount"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Apply discount code"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "An invalid discount code shows an error",
+            "type": "negative",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the checkout",
+              "Enter an invalid discount code",
+              "Apply the code",
+              "Verify an error message is shown and the total is unchanged"
+            ],
+            "expected_results": [
+              "The error is shown and the total is unchanged"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Apply discount code"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "An expired discount code is rejected",
+            "type": "boundary",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Open the checkout",
+              "Enter an expired discount code",
+              "Apply the code",
+              "Verify the expired code is rejected"
+            ],
+            "expected_results": [
+              "The expired code is refused"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Apply discount code"
+            ]
+          },
+          {
+            "id": "TC-004",
+            "title": "The code field is usable from the keyboard",
+            "type": "accessibility",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Focus the discount code input using only the keyboard",
+              "Type a valid discount code",
+              "Press Enter to apply the code"
+            ],
+            "expected_results": [
+              "The code applies from the keyboard"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Apply discount code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-009",
+      "title": "Email receipt",
+      "content": "Users receive an email receipt after purchase.",
+      "category": "checkout",
+      "acceptance_criteria": [
+        "Receipt includes order details",
+        "Receipt is sent within 1 minute"
+      ],
+      "oracle_steps": [
+        "Complete a purchase",
+        "Verify the receipt email arrives within one minute",
+        "Verify the receipt includes the order details",
+        "Verify the receipt is sent to the registered address",
+        "Verify no receipt is sent for a cancelled order",
+        "Verify the receipt references the order number",
+        "Verify the receipt shows the order total",
+        "Verify the receipt is delivered via the account email domain"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "The receipt email includes the order details",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Complete a purchase",
+              "Wait for the receipt email",
+              "Open the receipt",
+              "Verify the receipt includes the order details",
+              "Verify the receipt shows the order number and total"
+            ],
+            "expected_results": [
+              "The receipt lists the items, number, and total"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Email receipt"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "The receipt arrives within one minute",
+            "type": "boundary",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Complete a purchase",
+              "Watch the inbox for one minute",
+              "Verify the receipt email arrives within the one minute limit"
+            ],
+            "expected_results": [
+              "The receipt lands within 60 seconds"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Email receipt"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "A cancelled order sends no receipt",
+            "type": "negative",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Complete a purchase",
+              "Cancel the order",
+              "Verify no receipt email is sent for the cancelled order"
+            ],
+            "expected_results": [
+              "No receipt email arrives"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Email receipt"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-010",
+      "title": "Admin dashboard",
+      "content": "Admins can view a dashboard with key metrics.",
+      "category": "permissions",
+      "acceptance_criteria": [
+        "Metrics are up to date",
+        "Dashboard is accessible only to admins"
+      ],
+      "oracle_steps": [
+        "Sign in as an admin",
+        "Open the dashboard",
+        "Verify the key metrics are shown",
+        "Verify the metrics are up to date",
+        "Verify a non-admin is denied the dashboard",
+        "Verify the dashboard URL is not reachable by non-admins",
+        "Verify the dashboard is keyboard accessible",
+        "Verify the metrics refresh automatically every minute"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "An admin sees the key metrics",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Sign in as an admin",
+              "Open the dashboard",
+              "Verify the key metrics are shown",
+              "Verify the metrics are up to date"
+            ],
+            "expected_results": [
+              "The dashboard lists the current key metrics"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Admin dashboard"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "A non-admin is denied the dashboard",
+            "type": "security",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Sign in as a non-admin user",
+              "Open the dashboard URL directly",
+              "Verify access is denied"
+            ],
+            "expected_results": [
+              "The dashboard is refused for non-admins"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Admin dashboard"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "The dashboard is usable from the keyboard",
+            "type": "accessibility",
+            "priority": "medium",
+            "preconditions": [],
+            "steps": [
+              "Sign in as an admin",
+              "Navigate the dashboard using only the keyboard",
+              "Verify every metric widget is labeled and focusable"
+            ],
+            "expected_results": [
+              "Each widget announces its name and receives focus"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Admin dashboard"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-011",
+      "title": "Update user profile",
+      "content": "Users can update their profile: display name, email address, and avatar.",
+      "category": "profile",
+      "acceptance_criteria": [
+        "Display name is at most 60 characters",
+        "Email must be unique and valid",
+        "Avatar is limited to 2 MB and image formats only",
+        "Changes are visible immediately on the profile page"
+      ],
+      "oracle_steps": [
+        "Sign in with a registered account",
+        "Open the profile settings page",
+        "Change the display name to a new value",
+        "Save the profile changes",
+        "Verify the display name updates on the profile page",
+        "Set the email to a value already used by another account",
+        "Verify a duplicate email error is shown and the email is unchanged",
+        "Upload a 5 MB file as the avatar",
+        "Verify the size limit error is shown",
+        "Upload a valid PNG avatar under 2 MB",
+        "Verify the new avatar is displayed"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Update display name and see it applied",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [
+              "A user account exists"
+            ],
+            "steps": [
+              "Sign in with a registered account",
+              "Open the profile settings page",
+              "Change the display name to a new value",
+              "Save the profile changes",
+              "Verify the display name updates on the profile page"
+            ],
+            "expected_results": [
+              "The profile page shows the new display name"
+            ],
+            "risk": "low",
+            "requirement_refs": [
+              "Update user profile"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "A duplicate email is rejected",
+            "type": "negative",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Sign in with a registered account",
+              "Open the profile settings page",
+              "Set the email to a value already used by another account",
+              "Save the profile changes",
+              "Verify a duplicate email error is shown and the email is unchanged"
+            ],
+            "expected_results": [
+              "The error names the duplicate email and the old email remains"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Update user profile"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "Avatar size limit is enforced at 2 MB",
+            "type": "boundary",
+            "priority": "high",
+            "preconditions": [
+              "A user account exists"
+            ],
+            "steps": [
+              "Open the profile settings page",
+              "Upload a 5 MB file as the avatar",
+              "Verify the size limit error is shown",
+              "Upload a valid PNG avatar under 2 MB",
+              "Verify the new avatar is displayed"
+            ],
+            "expected_results": [
+              "The oversized file is rejected",
+              "The valid avatar is shown"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Update user profile"
+            ]
+          },
+          {
+            "id": "TC-004",
+            "title": "Profile updates require authentication",
+            "type": "security",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Open the profile settings page while signed out",
+              "Verify a sign-in prompt is shown",
+              "Verify no profile data is visible before sign-in"
+            ],
+            "expected_results": [
+              "The profile is not editable before sign-in"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Update user profile"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "REQ-012",
+      "title": "Upload product image",
+      "content": "Merchants can upload an image for a product from the product editor.",
+      "category": "upload",
+      "acceptance_criteria": [
+        "Only JPG, PNG, and WEBP are accepted",
+        "Files larger than 5 MB are rejected",
+        "The image is previewed before saving"
+      ],
+      "oracle_steps": [
+        "Sign in with a merchant account",
+        "Open the product editor for a product",
+        "Choose a valid PNG image under 5 MB",
+        "Verify the image preview appears",
+        "Save the product",
+        "Verify the image is shown on the product page",
+        "Choose a text file as the image",
+        "Verify an unsupported format error is shown",
+        "Choose a 6 MB image file",
+        "Verify the size limit error is shown"
+      ],
+      "suite": {
+        "test_cases": [
+          {
+            "id": "TC-001",
+            "title": "Upload a valid product image end to end",
+            "type": "functional",
+            "priority": "high",
+            "preconditions": [
+              "A merchant account owns at least one product"
+            ],
+            "steps": [
+              "Sign in with a merchant account",
+              "Open the product editor for a product",
+              "Choose a valid PNG image under 5 MB",
+              "Verify the image preview appears",
+              "Save the product",
+              "Verify the image is shown on the product page"
+            ],
+            "expected_results": [
+              "The product page shows the uploaded image"
+            ],
+            "risk": "low",
+            "requirement_refs": [
+              "Upload product image"
+            ]
+          },
+          {
+            "id": "TC-002",
+            "title": "Unsupported file types are rejected",
+            "type": "negative",
+            "priority": "high",
+            "preconditions": [
+              "A merchant account owns at least one product"
+            ],
+            "steps": [
+              "Open the product editor for a product",
+              "Choose a text file as the image",
+              "Verify an unsupported format error is shown"
+            ],
+            "expected_results": [
+              "Only JPG, PNG, and WEBP are accepted"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Upload product image"
+            ]
+          },
+          {
+            "id": "TC-003",
+            "title": "Files over 5 MB are rejected",
+            "type": "boundary",
+            "priority": "high",
+            "preconditions": [
+              "A merchant account owns at least one product"
+            ],
+            "steps": [
+              "Open the product editor for a product",
+              "Choose a 6 MB image file",
+              "Verify the size limit error is shown"
+            ],
+            "expected_results": [
+              "The large file is rejected with a size error"
+            ],
+            "risk": "medium",
+            "requirement_refs": [
+              "Upload product image"
+            ]
+          },
+          {
+            "id": "TC-004",
+            "title": "The upload is scoped to the merchant's own products",
+            "type": "security",
+            "priority": "high",
+            "preconditions": [],
+            "steps": [
+              "Sign in with a merchant account",
+              "Open the product editor for another merchant's product",
+              "Verify access to the editor is denied"
+            ],
+            "expected_results": [
+              "A merchant cannot upload for products they do not own"
+            ],
+            "risk": "high",
+            "requirement_refs": [
+              "Upload product image"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

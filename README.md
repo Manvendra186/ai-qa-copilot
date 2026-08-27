@@ -57,3 +57,15 @@ requirement → test design → automation → execution → failure analysis �
    pnpm lint             # clean
    pnpm build            # type-check + production build, clean
    ```
+6. **Test design + eval (S1.2/S1.4)** — the Test Design Agent over the golden set:
+   ```powershell
+   # unit tests — the golden set (packages/ai/golden/golden_v1.json) is the single
+   # source of truth for the S1.2 fakes AND the S1.4 live eval:
+   uv run pytest tests/unit/test_test_design_agent.py tests/unit/test_eval_runner.py -q
+
+   # live eval run against the local LLM (LM Studio / llama.cpp from .env):
+   uv run python scripts/eval_run.py --report reports/eval_v1.json
+   # → JSON report on stdout (schema-valid ≥ 99% · step coverage ≥ 85% per §31.7),
+   #   human summary on stderr, exit 0 targets met / 1 missed / 2 config error.
+   #   (`python -m qa_copilot_ai.eval …` is the same runner without the .env read.)
+   ```

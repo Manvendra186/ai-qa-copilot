@@ -5,11 +5,21 @@
 
 ## 1. Current position
 
-- **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design → Eval (in progress)
-- **Step:** S0.1–S1.3 ✓ (S1.3 = persistence + UI flow + read-back) · **S1.4 next**
+- **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete**
+- **Step:** S0.1–S1.4 ✓ (S1.4 = eval runner CLI + golden set v1) · **S2.1 next**
 
 ## 2. Just completed
 
+- 2026-08-27 · **S1.4 (Eval) — runner CLI + golden set v1** (commit pending):
+  `qa_copilot_ai.eval` package (`golden.py` loader/validator + shared `step_coverage`,
+  `runner.py` per-fixture eval w/ failure isolation, `cli.py` JSON report on stdout ·
+  human summary on stderr · exit 0/1/2) · **`packages/ai/golden/golden_v1.json` — 12
+  fixtures across 7 workflow categories, single source of truth for the S1.2 offline
+  fakes AND the S1.4 live eval** (S1.2 test file refactored onto it; old 10-fixture
+  inline set + local coverage helper removed) · §31.7 targets `schema_valid_min: 0.99`,
+  `oracle_step_coverage_min: 0.85` · `scripts/eval_run.py` (persistent runner, reads
+  `.env`) · **exit: 145 tests ✓ · mypy strict (46) ✓ · ruff ✓ · live run vs LM Studio
+  Qwen-27B → `reports/eval_v1.json`.**
 - 2026-08-27 · **S1.3 (UI flow) — web shell on the real API** (commit `8c0ed5b`):
   `GET /api/v1/requirements/{id}` read-back (auth + project role; non-member → 403, no
   existence leak; 6 tests) · web: `lib/api.ts` (Bearer fetch client; SSE via fetch
@@ -42,13 +52,12 @@
 
 ## 3. NEXT STEP (start here)
 
-**S1.4 — Eval runner CLI + golden set v1** (build bible §19 Phase 1, §22): an `eval`
-CLI runs the agents (S1.1/S1.2) over the golden fixture set and emits a JSON report
-vs the §31.7 targets (schema validity, step coverage, token/latency budgets) —
-reusable regression gate for prompt/model changes (e.g. the S1.3 output-budget fix).
-- **Exit criterion:** `eval run` emits a JSON report vs §31.7 targets.
-- Queued follow-ups (not S1.4 blockers): SSE bus is in-process — multi-worker deploy
-  needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1).
+**S2.1 — Repository scanner** (build bible §19 Phase 2): language/framework detection
++ test-structure detection. **Exit criterion: correct on 3 sample repos.**
+- Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
+  needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
+  artifacts live in gitignored `reports/` — commit one baseline after each
+  prompt/model change if we want drift tracking.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -138,6 +147,13 @@ reusable regression gate for prompt/model changes (e.g. the S1.3 output-budget f
   `app.state.jobs_test_design_agent`) · `routes.py`
   (`POST /api/v1/requirements/test-cases`) · `schemas.py` (`TestDesignRequest`) ·
   `tests/unit/test_test_design_agent.py` (oracle step-coverage gate)
+- Eval (S1.4): `packages/ai/src/qa_copilot_ai/eval/` (`golden.py` golden-set loader +
+  shared `step_coverage` · `runner.py` `run_test_design_eval` + `EvaluationReport` ·
+  `cli.py` `python -m qa_copilot_ai.eval` JSON report + exit 0/1/2) ·
+  `packages/ai/golden/golden_v1.json` (12 fixtures, 7 categories — S1.2/S1.4 shared
+  source of truth) · `tests/unit/test_eval_runner.py` (fake OpenAI server e2e,
+  loader/CLI/isolation) · `scripts/eval_run.py` (persistent runner; `reports/`
+  gitignored)
 
 ## 7. Open questions / gotchas
 

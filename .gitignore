@@ -21,6 +21,7 @@ node_modules/
 runs/
 test-results/
 playwright-report/
+reports/
 
 # OS / IDE
 .DS_Store
