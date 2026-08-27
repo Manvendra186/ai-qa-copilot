@@ -6,10 +6,19 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design (in progress)
-- **Step:** S0.1–S1.2 ✓ · **S1.3 next**
+- **Step:** S0.1–S1.2 ✓ · S1.3 persistence ✓ · **S1.3 UI flow next**
 
 ## 2. Just completed
 
+- 2026-08-27 · **S1.3 (persistence) — persist the AI suite as §10 rows** (commit `022fb6b`): `persist_requirement_with_suite(...)` in
+  `qa_copilot_repository.requirements` (keeps dependency direction — the repo package,
+  not the API layer) writes one `requirements` row + N `test_cases` rows + the §10 M:N
+  `requirement_test_cases` join; AI `TestType`/`Priority`/`RiskLevel` strings → domain
+  enums; `TestDesignJobAgent.run()` now returns the persisted requirement id as the job
+  `output_ref` (suite JSON kept as the `ai_actions` audit payload). **55 tests ✓ — incl.
+  `test_persist_requirement_with_suite_writes_rows_and_join` and a `TestDesignJobAgent`
+  end-to-end test (rows + join + output_ref + audit) · mypy strict clean (40 files) ·
+  ruff ✓.**
 - 2026-08-27 · **S1.2 — Test Design Agent** (commit `bb5bb2f`, details: SESSION_LOG.md):
   `TestDesignAgent` + §12 `TestCase`/`TestSuite` schema (functional/negative/boundary/
   risk/a11y/security; unique `TC-###` ids; non-empty steps + expectations) through the
@@ -35,10 +44,12 @@
 
 ## 3. NEXT STEP (start here)
 
-**S1.3 — UI flow: requirement → structured test cases (persisted)** (build bible §19
-Phase 1): the S1.2 agent is pure (suite JSON is the job `output_ref`) — S1.3 persists
-the suite (requirement/test-case rows + the §10 M:N join), drives the web shell's
-analyze → test-cases flow against the real API, and renders the structured cases.
+**S1.3 (remainder) — UI flow: analyze → test-cases against the real API + render**
+(build bible §19 Phase 1). **Persistence is DONE** (see "Just completed"): the suite
+now lands in `requirements`/`test_cases`/the §10 M:N join and the job `output_ref` is
+the persisted requirement id. Remaining: drive the web shell's analyze → test-cases
+flow against the real API (replace the mock SSE) and render the structured cases from
+the persisted rows.
 - **Exit criterion:** manual E2E through the UI.
 - Queued follow-ups (not S1.3 blockers): web shell still consumes the mock SSE
   (`/mock/events`) — point `useJobEvents` at `GET /events` with a fetch-based reader
