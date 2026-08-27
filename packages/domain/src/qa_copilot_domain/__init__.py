@@ -18,6 +18,7 @@ from .entities import (
     User,
 )
 from .enums import (
+    ROLE_RANK,
     ArtifactType,
     FailureCategory,
     JobStatus,
@@ -25,7 +26,6 @@ from .enums import (
     Priority,
     ProjectRole,
     RiskLevel,
-    ROLE_RANK,
     TestType,
     role_at_least,
 )

@@ -47,6 +47,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AUTH_TOKEN_SECRET"),
     )
 
+    # --- Jobs (S0.9, §31.2: 202 + SSE) ---
+    # StubAgent progress-tick delay in seconds (dev pacing; tests use ~0.01).
+    job_tick_delay_s: float = Field(
+        default=0.25,
+        ge=0.0,
+        validation_alias=AliasChoices("JOB_TICK_DELAY_S"),
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

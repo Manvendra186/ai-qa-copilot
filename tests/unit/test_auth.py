@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import NAMESPACE_DNS, uuid5
 
 import jwt as pyjwt
@@ -98,12 +100,15 @@ def _make_token(
     return pyjwt.encode(payload, secret, algorithm="HS256")
 
 
-def _auth_header(user: str, **kwargs: object) -> dict[str, str]:
-    return {"Authorization": f"Bearer {_make_token(USER_IDS[user], EMAILS[user], **kwargs)}"}
+def _auth_header(
+    user: str, secret: str = SECRET, exp_delta: timedelta | None = None
+) -> dict[str, str]:
+    token = _make_token(USER_IDS[user], EMAILS[user], secret=secret, exp_delta=exp_delta)
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture()
-def env():
+def env() -> Iterator[dict[str, Any]]:
     """Scratch Postgres DB + migrated schema + users/projects/roles + app."""
     import os
 
@@ -142,7 +147,11 @@ def env():
         session.commit()
 
     app = create_app(
-        settings=Settings(database_url=TEST_URL, auth_token_secret=SECRET, _env_file=None)
+        # ``_env_file=None`` is pydantic-settings' private init kwarg (keep
+        # tests from reading the dev .env) — mypy can't see it in the stubs.
+        settings=Settings(  # type: ignore[call-arg]
+            database_url=TEST_URL, auth_token_secret=SECRET, _env_file=None
+        )
     )
 
     yield {"app": app, "engine": engine}
@@ -158,7 +167,7 @@ def env():
 
 
 @pytest.fixture()
-def client(env) -> TestClient:
+def client(env: dict[str, Any]) -> Iterator[TestClient]:
     with TestClient(env["app"]) as test_client:
         yield test_client
 
@@ -344,7 +353,9 @@ def test_project_delete_requires_auth(client: TestClient) -> None:
 def test_missing_secret_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
     """No ``AUTH_TOKEN_SECRET`` → 500; there must be no fallback secret."""
     monkeypatch.delenv("AUTH_TOKEN_SECRET", raising=False)
-    app = create_app(settings=Settings(database_url=TEST_URL, _env_file=None))
+    app = create_app(
+        settings=Settings(database_url=TEST_URL, _env_file=None)  # type: ignore[call-arg]
+    )
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(
         "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}

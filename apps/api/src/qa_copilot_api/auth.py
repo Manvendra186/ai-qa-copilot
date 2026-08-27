@@ -90,10 +90,10 @@ def verify_password(password: str, stored: str) -> bool:
     Malformed *stored* values return ``False`` (never raise).
     """
     try:
-        algorithm, iterations, salt_hex, digest_hex = stored.split("$")
+        algorithm, iterations_str, salt_hex, digest_hex = stored.split("$")
         if algorithm != "pbkdf2_sha256":
             return False
-        iterations = int(iterations)
+        iterations = int(iterations_str)
         salt = bytes.fromhex(salt_hex)
         expected = bytes.fromhex(digest_hex)
     except (ValueError, AttributeError):

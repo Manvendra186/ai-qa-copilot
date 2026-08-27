@@ -65,3 +65,43 @@ class ProjectOut(BaseModel):
     id: str
     name: str
     settings: dict[str, Any]
+
+
+# --- Jobs (S0.9, §11: 202 + SSE) ---------------------------------------------
+
+
+class AnalyzeRequest(BaseModel):
+    """``POST /api/v1/requirements/analyze`` (§11): inline requirement + project.
+
+    S0.9 carries the requirement inline (no requirement row yet — the S1.x
+    requirement agent persists it); ``project_id`` scopes the job for RBAC
+    and the SSE project filter.
+    """
+
+    project_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+
+
+class JobCreated(BaseModel):
+    """202 body (§11): job id + initial status (``Location`` points at ``GET /jobs/{id}``)."""
+
+    job_id: str
+    status: str
+
+
+class JobOut(BaseModel):
+    """``GET /api/v1/jobs/{id}`` (§11): status, progress, result/error refs."""
+
+    id: str
+    project_id: str | None
+    type: str
+    status: str
+    progress: float
+    input_ref: str | None
+    output_ref: str | None
+    error: str | None
+    created_at: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None

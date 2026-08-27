@@ -85,7 +85,7 @@ def test_project_members_role_is_plain_varchar() -> None:
     """S0.8: project-scoped role (§31.3) also stores the domain wire string."""
     col = models.ProjectMember.__table__.c["role"]
     assert isinstance(col.type, sa.String)
-    pk = [c.name for c in models.ProjectMember.__table__.primary_key.columns]
+    pk = [c.name for c in models.ProjectMember.__table__.primary_key]
     assert pk == ["project_id", "user_id"]
 
 
