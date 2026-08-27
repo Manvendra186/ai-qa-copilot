@@ -5,39 +5,40 @@
 
 ## 1. Current position
 
-- **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design
-- **Step:** S0.1–S0.9 ✓ · **S0.10 ✓ — next: S1.1**
+- **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design (in progress)
+- **Step:** S0.1–S1.1 ✓ · **S1.2 next**
 
 ## 2. Just completed
 
-- 2026-08-27 · **S0.10 — demo app v0** (separate repo `ai-qa-copilot-demo-app`, commit `43739a5`,
-  details: SESSION_LOG.md): Express 4 + `better-sqlite3` + React 18/Vite 6; `/login /products
-  /cart /checkout`; demo user `qa`/`qa1234`; defect flags 1:1 §16 — `DEFECT_API_500` (checkout
-  500) · `DEFECT_BAD_DATA` (order `items: []`) · `DEFECT_FLAKY` (300ms–3s) · `DEFECT_LOCATOR_DRIFT`
-  (client-side id rename/removal via `GET /api/config`). **Smoke 11/11 · defect-check 7/7 ·
-  build ✓ · SPA serve ✓.** Phase 0 done.
-- 2026-08-27 · **S0.9 — jobs API** (commit `2051749`, details: SESSION_LOG.md):
-  `qa_copilot_api.jobs` — async job submission + SSE (build bible §11/§19).
-  `POST /projects/{id}/requirements/analyze` → **202** `{job_id}` (member+; requirement
-  persisted, re-analyze idempotent) · `GET /jobs/{id}` (viewer+; non-member 404) ·
-  `GET /events?scope=job|project` (SSE in the S0.7 shell shape: `job.started`/`stage.*`/
-  `progress`/`job.completed`; 15s heartbeat). `JobAgent` protocol + `StubAgent`
-  (deterministic six §4 stages — **S1.x swaps in the LLM agent through the same
-  protocol**). State machine queued→running→completed|failed; `reap_orphans()` on
-  startup (PID-scoped). In-process pub/sub bus (multi-worker → Redis, noted).
-  **97 unit tests green** · mypy strict clean (34 files — 34 errors fixed, incl. S0.8
-  debt) · ruff check+format ✓.
-- 2026-08-26/27 · **S0.1–S0.8** (details: SESSION_LOG.md): monorepo skeleton (uv+pnpm) · compose
-  infra (PG16+pgvector :5433, Redis) · FastAPI skeleton · domain package · SQLAlchemy+Alembic+seed ·
-  AI gateway (LM Studio live ✓) · React shell (mock SSE) · auth baseline (JWT + project RBAC).
+- 2026-08-27 · **S1.1 — Requirement Agent** (commit `6a1bf88`, details: SESSION_LOG.md):
+  prompt registry v1 (`PromptSpec`/`InMemoryPromptStore`/`FilePromptStore`,
+  `packages/ai/prompts/requirement-analyst.v1.md`) + `RequirementAgent` —
+  schema-validated `RequirementAnalysis` (strict pydantic; `suggested_test_types`
+  validated against `SUGGESTED_TEST_TYPES` = domain `TestType`) through the S0.6
+  gateway. `RequirementJobAgent` implements the S0.9 `JobAgent` protocol — real
+  analysis + `ai_actions` audit row inside the job pipeline; `StubAgent` stays the
+  fallback when no LLM is configured. **Exit: 10 fixture requirements → 10/10
+  schema-valid ✓.** 103 tests · mypy strict clean (37 files) · ruff ✓.
+- 2026-08-27 · **S0.9 — jobs API** (commit `2051749`): `POST .../analyze` → 202 ·
+  `GET /jobs/{id}` · `GET /events` SSE (`job.started`/`stage.*`/`progress`/
+  `job.completed`, 15s heartbeat) · `JobAgent`/`StubAgent` seam (S1.1 filled the
+  real agent) · queued→running→completed|failed + `reap_orphans`.
+- 2026-08-27 · **S0.10 — demo app v0** (separate repo `ai-qa-copilot-demo-app`,
+  commit `43739a5`): Express 4 + `better-sqlite3` + React 18/Vite 6; `/login
+  /products /cart /checkout`; demo user `qa`/`qa1234`; defect flags 1:1 §16.
+  **Smoke 11/11 · defect-check 7/7 · build ✓.**
+- 2026-08-26/27 · **S0.1–S0.8**: monorepo skeleton (uv+pnpm) · compose infra
+  (PG16+pgvector :5433, Redis) · FastAPI skeleton · domain package ·
+  SQLAlchemy+Alembic+seed · AI gateway (LM Studio live ✓) · React shell (mock SSE) ·
+  auth baseline (JWT + project RBAC).
 
 ## 3. NEXT STEP (start here)
 
-**S1.1 — Requirement Agent** (build bible §19 Phase 1): prompt v1 (registry §31.6) +
-schema-validated output through the S0.6 gateway; runs inside the S0.9 job pipeline
-(`JobAgent` seam — `StubAgent` is the placeholder to replace).
-- **Exit criterion:** 10 fixture requirements → 10/10 schema-valid.
-- Queued follow-ups (not S1.1 blockers): web shell still consumes the mock SSE
+**S1.2 — Test Design Agent** (build bible §19 Phase 1): generate functional/negative/
+boundary/risk/a11y/security test cases from the S1.1 `RequirementAnalysis`; persist
+test cases through the same job-pipeline `JobAgent` seam (prompt registry §31.6).
+- **Exit criterion:** step coverage ≥ 85% vs oracle on 10 requirements.
+- Queued follow-ups (not S1.2 blockers): web shell still consumes the mock SSE
   (`/mock/events`) — point `useJobEvents` at `GET /events` with a fetch-based reader
   (EventSource can't set `Authorization`; JWT landed S0.8) · SSE bus is in-process —
   multi-worker deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1).
@@ -115,41 +116,37 @@ schema-validated output through the S0.6 gateway; runs inside the S0.9 job pipel
 - Jobs (S0.9): `apps/api/src/qa_copilot_api/jobs.py` (JobAgent/StubAgent/JobBus/
   `sse_stream`/`reap_orphans`) · `routes.py` (analyze/jobs/events) · `schemas.py`
   (Analyze/JobResponse) · `tests/unit/test_jobs.py`
+- Requirement agent (S1.1): `packages/ai/src/qa_copilot_ai/agents/requirement.py`
+  (`RequirementAgent`/`RequirementAnalysis`/`RequirementInput`) · `prompts.py`
+  (`PromptSpec`/stores/`render_prompt`) · `packages/ai/prompts/requirement-analyst.v1.md`
+  (v1 prompt) · `jobs.py` (`RequirementJobAgent` — real agent in the S0.9 pipeline;
+  `StubAgent` fallback when no LLM) · `main.py` (`_build_jobs_agent`) ·
+  `tests/unit/test_requirement_agent.py`
 
 ## 7. Open questions / gotchas
 
-- **node:sqlite (S0.10):** experimental on Node 22 (warning + stderr noise) — demo app uses
-  `better-sqlite3` (prebuilds OK; approve in `pnpm-workspace.yaml` `onlyBuiltDependencies`/`allowBuilds`).
-- **PowerShell NativeCommandError (S0.10):** any child-process stderr (pnpm progress, node
-  warnings) makes the tool shell report failure — read the actual output/exit code; use
-  `git --no-pager`; background servers via `Start-Process -PassThru` + `Stop-Process -Id`.
-- **PATH gotcha:** docker CLI lives on the USER PATH (per-user install) — terminals opened before
-  install don't see it; refresh `$env:Path` from Machine+User (or open a new shell).
-- **pnpm 11:** the `pnpm` field in `package.json` is IGNORED — settings like
-  `onlyBuiltDependencies` (esbuild, needed by Vite) go in `pnpm-workspace.yaml`.
-- **Vite dev binds `[::1]:5173`:** `curl http://127.0.0.1:5173` → connection refused;
-  use `http://localhost:5173`.
-- **pydantic v2:** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg (mypy strict
-  rejects it) — use `Annotated[str, StringConstraints(...)]` (learned in S0.4).
-- **ruff isort:** `qa_copilot_*` packages are NOT detected as first-party (src-layout workspace) —
-  they sort in the third-party block, no blank line between `pydantic`/`pytest` and them.
+- **Env leak → wrong agent (S1.1):** `qa_copilot_repository.db.get_database_url()` → `_load_dotenv()` writes
+  repo `.env` keys (incl. `LLM_BASE_URL`/`LLM_MODEL`) into `os.environ`; alembic's `env.py` calls it in test
+  fixtures, and pydantic-settings reads env vars even with `_env_file=None` → the app silently used
+  `RequirementJobAgent` (real LM Studio call; 8 job tests hung). Stub-contract tests must pass
+  `llm_base_url=None, llm_model=None` explicitly (init kwargs beat env vars).
+- **mypy strict + `dict[str, object]` (S1.1):** `audit_dict()` values are `object` — `int(audit["x"])` fails; use `cast(int, ...)`.
+- **node:sqlite (S0.10):** experimental on Node 22 — demo app uses `better-sqlite3` (approve in `pnpm-workspace.yaml` `onlyBuiltDependencies`/`allowBuilds`).
+- **PowerShell NativeCommandError (S0.10):** any child-process stderr makes the tool shell report
+  failure — read the actual output/exit code; `git --no-pager`; servers via `Start-Process -PassThru`.
+- **PATH gotcha:** docker CLI is on the USER PATH — old terminals don't see it; refresh `$env:Path` from Machine+User.
+- **pnpm 11:** the `pnpm` field in `package.json` is IGNORED — `onlyBuiltDependencies` (esbuild) goes in `pnpm-workspace.yaml`.
+- **Vite dev binds `[::1]:5173`:** `curl http://127.0.0.1:5173` refused — use `http://localhost:5173`.
+- **pydantic v2 (S0.4):** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg — use `Annotated[str, StringConstraints(...)]`.
+- **ruff isort (S1.1):** `qa_copilot_*` is NOT first-party (src-layout workspace) — sorts in the third-party block.
 - **mypy strict + pydantic:** wire-string/negative cases must go through `model_validate` — typed
   constructors are arg-checked (`status="completed"` → arg-type error).
-- **pydantic-settings + mypy (S0.9):** the private `_env_file` init kwarg is invisible to mypy
-  (stub limitation — reproduced with a minimal `BaseSettings` subclass) → test calls carry
-  `# type: ignore[call-arg]` (3× in tests/unit); drop when stubs improve.
-- **SQLAlchemy:** `metadata` is reserved on DeclarativeBase — JSONB `metadata` columns use the
-  `metadata_` Python attribute (learned in S0.5).
-- **ruff B023:** factory lambdas in loops must bind the loop vars
-  (`lambda title=title, i=i: ...`) — hit in S0.5 seed.
-- **Alembic + pgvector:** generated migrations import `pgvector.sqlalchemy` by *attribute* — add
-  `import pgvector.sqlalchemy` at the top of the migration or import fails on apply (learned S0.5).
-- **Postgres UUID columns (S0.8):** test fixtures must seed real UUIDs — string ids like
-  `prj-acme` → `invalid input syntax for type uuid`. Use deterministic `uuid5` values.
-- **SQLAlchemy `db.delete(parent)` (S0.8):** with `ondelete="CASCADE"` children whose FK is a
-  composite PK, the ORM tries to NULL out the PK instead of letting Postgres cascade —
-  delete the child rows explicitly first (S0.8 project delete route).
-- **Test DB teardown (S0.8):** `DROP DATABASE` fails with `ObjectInUse` if engine pools
-  still hold connections — `engine.dispose()` (ALL engines, incl. `app.state.engine`) first.
-- **PowerShell + curl.exe (S0.8):** JSON bodies get mangled through the tool shell —
-  write a small Python (urllib) script for API smoke tests instead.
+- **pydantic-settings + mypy (S0.9):** the private `_env_file` init kwarg is invisible to mypy →
+  test calls carry `# type: ignore[call-arg]`; drop when stubs improve.
+- **SQLAlchemy (S0.5/8):** `metadata` is reserved on DeclarativeBase — use the `metadata_` attribute ·
+  `db.delete(parent)` with composite-PK children NULLs the PK instead of cascading — delete children first ·
+  `engine.dispose()` (ALL engines) before `DROP DATABASE` or it fails `ObjectInUse`.
+- **ruff B023 (S0.5):** factory lambdas in loops must bind loop vars (`lambda title=title, i=i: ...`).
+- **Alembic + pgvector (S0.5):** migrations import `pgvector.sqlalchemy` by *attribute* — add `import pgvector.sqlalchemy` at top.
+- **Postgres UUID columns (S0.8):** fixtures must seed real UUIDs (`uuid5`) — string ids → `invalid input syntax for type uuid`.
+- **PowerShell + curl.exe (S0.8):** JSON bodies get mangled through the tool shell — use a Python (urllib) script for API smoke.

@@ -497,4 +497,57 @@
   noise) · `DEFECT_LOCATOR_DRIFT` applied client-side at runtime via `/api/config` (one server flag
   changes the UI) · server :4000, client dev :5174 (5173 = copilot web shell) · PowerShell treats
   child-process stderr as an error (NativeCommandError) — read the actual output.
-- **Next session start:** S1.1 (Requirement Agent — prompt v1, schema validation) — see `STATE.md` §3.
+
+## 2026-08-27 — S1.1 Requirement Agent (prompt v1 + schema-validated analysis)
+
+- **Goal:** S1.1 — Requirement Agent (build bible §19 Phase 1): prompt v1 in the prompt
+  registry (§31.6) + schema-validated output through the S0.6 gateway; runs inside the
+  S0.9 job pipeline (replace `StubAgent` at the `JobAgent` seam). Exit: 10 fixture
+  requirements → 10/10 schema-valid.
+- **Did:**
+  - `packages/ai/src/qa_copilot_ai/prompts.py` (extended): `PromptSpec` + `PromptStore`
+    protocol, `InMemoryPromptStore`, `FilePromptStore` (front-matter
+    `name/version/description` + `input_variables` + `output_contract`);
+    `render_prompt` fails loud on missing variables.
+  - `packages/ai/src/qa_copilot_ai/agents/requirement.py` (new): `RequirementInput` /
+    `RequirementAnalysis` (strict pydantic; `suggested_test_types` validated against
+    `SUGGESTED_TEST_TYPES` = the domain `TestType` taxonomy); `RequirementAgent.analyze()`
+    — renders the registered prompt, calls the gateway, tolerates markdown fences,
+    `model_validate_json` → loud `ValueError` on schema violations; `LLMCall.audit_dict()`
+    for the audit trail.
+  - `packages/ai/prompts/requirement-analyst.v1.md` (new): v1 requirement-analyst prompt
+    (input variables: title/content/criteria; JSON output contract).
+  - `apps/api/src/qa_copilot_api/jobs.py`: `RequirementJobAgent` implements the S0.9
+    `JobAgent` protocol — same six §4 stages, but `requirement_analysis` runs the real
+    agent, persists the analysis as a JSON artifact, and records the `ai_actions` audit
+    row against the job's `ai_sessions` anchor. `StubAgent` unchanged — still the
+    fallback when no LLM is configured.
+  - `main.py`: `_build_jobs_agent()` — `RequirementJobAgent` when `llm_base_url` +
+    `llm_model` are set, `StubAgent` otherwise (logs which one is wired).
+  - `tests/unit/test_requirement_agent.py` (new, 6 tests): **exit criterion — 10 fixture
+    requirements → 10/10 schema-valid** (fake gateway transport; prompt pulled from the
+    registry; invalid JSON rejected; schema violation rejected; unknown test type
+    rejected; markdown fence tolerated).
+  - `tests/unit/test_jobs.py`: fixture now pins `llm_base_url=None, llm_model=None` —
+    these tests assert the S0.9 stub contract and must stay hermetic against a real LLM
+    in the environment.
+- **Verified (exit criterion):** `uv run pytest -q` → **103 passed** (6 new) ·
+  `uv run mypy` → **no issues in 37 source files** · `ruff check .` ✓ ·
+  `ruff format --check .` ✓.
+- **Decisions / gotchas (also in STATE.md §7):**
+  - **Env leak — root cause of the 8 job-test failures (prior session):**
+    `qa_copilot_repository.db.get_database_url()` → `_load_dotenv()` writes repo `.env`
+    values (incl. `LLM_BASE_URL`/`LLM_MODEL`) into `os.environ`; the test fixture ran
+    Alembic first, and pydantic-settings reads env vars even with `_env_file=None` →
+    `create_app` wired `RequirementJobAgent` → real LM Studio call → jobs hung past the
+    10s test window. Fix: pass `llm_base_url=None, llm_model=None` explicitly in the
+    test `Settings` (init kwargs beat env vars — verified empirically).
+  - mypy strict: `audit_dict()` returns `dict[str, object]` → `int(audit["x"])` fails
+    `call-overload`; use `cast(int, ...)` (jobs.py `_record_action`).
+  - ruff isort: `qa_copilot_ai` is NOT first-party (src-layout workspace) — it sorts in
+    the third-party block (main.py, test_requirement_agent.py).
+- **Commit:** `6a1bf88 step S1.1: requirement agent (prompt registry v1 +
+  schema-validated analysis, wired into the S0.9 job pipeline; mypy/ruff/pytest green)`.
+- **Next session start:** S1.2 (Test Design Agent — functional/negative/boundary/risk/
+  a11y/security; exit: step coverage ≥ 85% vs oracle on 10 requirements) — see
+  `STATE.md` §3.
