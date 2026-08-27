@@ -13,10 +13,25 @@ S0.8: user + project-membership lookups for the auth baseline
 
 S1.3: suite persistence — requirement + test-case rows + the §10 M:N join
 (:mod:`qa_copilot_repository.requirements`).
+
+S2.1: deterministic repository scanner — languages, frameworks, test
+structure (:mod:`qa_copilot_repository.scanner`), producing
+:class:`qa_copilot_domain.RepositoryProfile`.
 """
 
-from . import audit, db, membership, models, prompts, requirements
+from . import audit, db, membership, models, prompts, requirements, scanner
+from .scanner import scan_repository
 
 __version__ = "0.1.0"
 
-__all__ = ["__version__", "audit", "db", "membership", "models", "prompts", "requirements"]
+__all__ = [
+    "__version__",
+    "audit",
+    "db",
+    "membership",
+    "models",
+    "prompts",
+    "requirements",
+    "scan_repository",
+    "scanner",
+]

@@ -72,6 +72,28 @@ class Project(DomainModel):
     created_at: datetime | None = None
 
 
+class RepositoryProfile(DomainModel):
+    """Structured facts about a scanned target repository (build bible §7, §19 S2.1).
+
+    Produced by :func:`qa_copilot_repository.scanner.scan_repository` — a
+    deterministic, LLM-free scan. ``languages`` is ordered by prevalence
+    (most files first); the other list fields are sorted for stable diffing.
+    Wire strings are lowercase (``"python"``, ``"fastapi"``, ``"pytest"``);
+    ``test_dirs`` are repo-relative POSIX paths.
+    """
+
+    languages: list[str] = Field(default_factory=list)
+    frameworks: list[str] = Field(default_factory=list)
+    test_frameworks: list[str] = Field(default_factory=list)
+    test_dirs: list[str] = Field(default_factory=list)
+    test_file_count: int = Field(default=0, ge=0)
+    package_managers: list[str] = Field(default_factory=list)
+    monorepo: bool = False
+    file_count: int = Field(default=0, ge=0)
+    notes: list[str] = Field(default_factory=list)
+    scanned_at: datetime | None = None
+
+
 class Requirement(DomainModel):
     """A product requirement with acceptance criteria (build bible §10)."""
 

@@ -1,0 +1,9 @@
+{
+  "name": "js-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["client", "server"],
+  "scripts": {
+    "smoke": "node scripts/smoke.mjs"
+  }
+}

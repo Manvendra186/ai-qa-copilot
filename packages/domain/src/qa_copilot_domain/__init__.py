@@ -4,6 +4,7 @@ S0.4: pydantic entities + enums for the §10 core data model — project,
 requirement, test_case, failure, artifact, job.
 S0.8: auth baseline (§31.3) — ``User``, ``ProjectMember``, ``ProjectRole``
 and the ``role_at_least`` permission rule.
+S2.1: ``RepositoryProfile`` — repository scanner output (build bible §7 / §19).
 """
 
 from .base import DomainModel
@@ -13,6 +14,7 @@ from .entities import (
     Job,
     Project,
     ProjectMember,
+    RepositoryProfile,
     Requirement,
     TestCase,
     User,
@@ -45,6 +47,7 @@ __all__ = [
     "Project",
     "ProjectMember",
     "ProjectRole",
+    "RepositoryProfile",
     "Requirement",
     "RiskLevel",
     "ROLE_RANK",
