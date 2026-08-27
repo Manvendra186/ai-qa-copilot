@@ -10,10 +10,13 @@ and ``ai_actions`` audit recorder (:mod:`qa_copilot_repository.audit`, §31.1).
 
 S0.8: user + project-membership lookups for the auth baseline
 (:mod:`qa_copilot_repository.membership`, §31.3).
+
+S1.3: suite persistence — requirement + test-case rows + the §10 M:N join
+(:mod:`qa_copilot_repository.requirements`).
 """
 
-from . import audit, db, membership, models, prompts
+from . import audit, db, membership, models, prompts, requirements
 
 __version__ = "0.1.0"
 
-__all__ = ["__version__", "audit", "db", "membership", "models", "prompts"]
+__all__ = ["__version__", "audit", "db", "membership", "models", "prompts", "requirements"]

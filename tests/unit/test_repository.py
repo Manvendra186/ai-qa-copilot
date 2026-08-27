@@ -208,3 +208,114 @@ def test_record_ai_call_writes_action_row() -> None:
             assert row.model == "fake-model"
     finally:
         engine.dispose()
+
+
+# --- S1.3: suite persistence (build bible §10, §12; §19 S1.3) -----------------
+
+
+def test_persist_requirement_with_suite_writes_rows_and_join() -> None:
+    """S1.3: persist the pure ``TestSuite`` → requirement + test-cases + §10 M:N join.
+
+    Drives :func:`qa_copilot_repository.requirements.persist_requirement_with_suite`
+    against the dev database: one ``requirements`` row, one ``test_cases`` row per
+    suite case, and the ``requirement_test_cases`` join rows linking them.
+    """
+    from qa_copilot_ai import TestCase as AITestCase
+    from qa_copilot_ai import TestSuite
+    from qa_copilot_domain.enums import Priority, RiskLevel, TestType
+    from qa_copilot_repository import requirements as repo_requirements
+
+    engine = _engine_or_skip()
+    if engine is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    suite = TestSuite(
+        test_cases=[
+            AITestCase(
+                id="TC-001",
+                title="valid login succeeds",
+                type="functional",
+                priority="high",
+                preconditions=["a registered user exists"],
+                steps=["enter email + password", "submit"],
+                expected_results=["redirected to /home"],
+                risk="high",
+            ),
+            AITestCase(
+                id="TC-002",
+                title="empty password rejected",
+                type="negative",
+                priority="medium",
+                steps=["submit an empty password"],
+                expected_results=["a validation error is shown"],
+                risk="medium",
+            ),
+            AITestCase(
+                id="TC-003",
+                title="password length boundary",
+                type="boundary",
+                priority="low",
+                steps=["submit a 72-character password"],
+                expected_results=["accepted or rejected at the documented limit"],
+                risk="low",
+            ),
+        ]
+    )
+    try:
+        with db.session_scope(engine) as session:
+            org = models.Organization(name="S1.3 persistence test org")
+            session.add(org)
+            session.flush()
+            project = models.Project(name="S1.3 persistence test project", organization_id=org.id)
+            session.add(project)
+            session.flush()
+            persisted = repo_requirements.persist_requirement_with_suite(
+                session,
+                project_id=project.id,
+                title="Login flow",
+                content="Users can log in with email + password and are redirected to /home.",
+                acceptance_criteria=["valid credentials succeed", "invalid credentials fail"],
+                suite=suite,
+            )
+
+        # A *fresh* scope proves the rows were committed, not merely flushed.
+        with db.session_scope(engine) as session:
+            requirement = session.get(models.Requirement, persisted.requirement_id)
+            assert requirement is not None
+            assert requirement.project_id == project.id
+            assert requirement.title == "Login flow"
+            assert requirement.acceptance_criteria == [
+                "valid credentials succeed",
+                "invalid credentials fail",
+            ]
+
+            assert len(persisted.test_case_ids) == 3
+            cases = {
+                case.title: case
+                for case in session.scalars(
+                    sa.select(models.TestCase).where(
+                        models.TestCase.id.in_(persisted.test_case_ids)
+                    )
+                ).all()
+            }
+            assert set(cases) == {
+                "valid login succeeds",
+                "empty password rejected",
+                "password length boundary",
+            }
+            # Enum round-trip: the stored wire strings come back as domain enums.
+            assert cases["valid login succeeds"].type is TestType.FUNCTIONAL
+            assert cases["valid login succeeds"].priority is Priority.HIGH
+            assert cases["valid login succeeds"].risk is RiskLevel.HIGH
+            assert cases["valid login succeeds"].steps == ["enter email + password", "submit"]
+            assert cases["valid login succeeds"].preconditions == ["a registered user exists"]
+            assert cases["empty password rejected"].type is TestType.NEGATIVE
+            assert cases["password length boundary"].type is TestType.BOUNDARY
+
+            # The §10 M:N join: all three cases are linked to exactly this requirement.
+            join_count = session.execute(
+                sa.text("SELECT count(*) FROM requirement_test_cases WHERE requirement_id = :rid"),
+                {"rid": persisted.requirement_id},
+            ).scalar_one()
+            assert join_count == 3
+    finally:
+        engine.dispose()

@@ -56,6 +56,7 @@ from qa_copilot_ai.agents import (
 from qa_copilot_domain.enums import JobStatus, JobType
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import models
+from qa_copilot_repository import requirements as repo_requirements
 from sqlalchemy import Engine, update
 from sqlalchemy.engine import CursorResult
 
@@ -328,8 +329,9 @@ class TestDesignJobAgent:
     Replaces :class:`StubAgent` for ``test_case_generation`` jobs. Runs the
     pure :class:`qa_copilot_ai.agents.TestDesignAgent` (prompt registry +
     gateway, §31.6/§31.1), records the ``ai_actions`` audit row against the
-    job's ``ai_sessions`` anchor (§31.5), and returns the validated
-    :class:`~qa_copilot_ai.agents.TestSuite` JSON as the ``output_ref``.
+    job's ``ai_sessions`` anchor (§31.5), and **persists the suite** (S1.3:
+    requirement + test-case rows + the §10 M:N join). The job's ``output_ref``
+    is the persisted requirement id; the full suite JSON is the audit ref.
     """
 
     stages: tuple[str, ...] = ("test_design",)
@@ -339,7 +341,7 @@ class TestDesignJobAgent:
         self._engine = engine
 
     async def run(self, ctx: JobContext) -> str:
-        """Design the test suite; return the suite JSON as ``output_ref``."""
+        """Design the test suite, persist it (§10 rows), return the requirement id."""
         input_data = ctx.input
         requirement = TestDesignInput(
             title=input_data.get("title", ""),
@@ -350,10 +352,22 @@ class TestDesignJobAgent:
         await ctx.emit("progress", {"stage": "test_design", "value": 0.5})
         result = await self._agent.run(requirement)
         suite_json = json.dumps(result.suite.model_dump(), separators=(",", ":"))
+        # S1.3: persist the suite — requirement + test-case rows + the §10
+        # M:N join. ``output_ref`` becomes the persisted requirement id; the
+        # §10 rows are the result the UI reads back.
+        with repo_db.session_scope(self._engine) as session:
+            persisted = repo_requirements.persist_requirement_with_suite(
+                session,
+                project_id=ctx.project_id or "",
+                title=requirement.title,
+                content=requirement.content,
+                acceptance_criteria=list(requirement.acceptance_criteria),
+                suite=result.suite,
+            )
         await ctx.emit("progress", {"stage": "test_design", "value": 1.0})
         await ctx.emit("stage.completed", {"stage": "test_design"})
         self._record_action(ctx, result, suite_json)
-        return suite_json[:1024]
+        return persisted.requirement_id
 
     def _record_action(
         self, ctx: JobContext, result: TestDesignAgentResult, suite_json: str

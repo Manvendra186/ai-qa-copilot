@@ -18,19 +18,23 @@ Covers the mandatory ``202 + job_id`` pattern end-to-end:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_DNS, uuid4, uuid5
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from qa_copilot_ai import InMemoryPromptStore, LLMGateway, PromptSpec, TestDesignAgent
 from qa_copilot_api import auth
 from qa_copilot_api.config import Settings
+from qa_copilot_api.jobs import JobContext, TestDesignJobAgent
 from qa_copilot_api.main import create_app
 from qa_copilot_domain.enums import JobStatus, JobType, ProjectRole
 from qa_copilot_repository import db, models
@@ -670,3 +674,134 @@ def test_reap_orphans_and_synthesized_terminal_frame(
     events = _read_sse(client, f"/api/v1/events?job_id={orphan_id}", "alice")
     assert [n for n, _ in events] == ["job.failed"]
     assert "server restarted" in events[0][1]["error"]
+
+
+# --- S1.3: TestDesignJobAgent end-to-end (real agent + real persistence) ------
+
+# The job agent's model is faked with an httpx transport (no network): it always
+# answers with a fixed two-case suite, so the test asserts *persistence*, not
+# model quality (that is test_test_design_agent.py's job).
+_DESIGN_PROMPT = PromptSpec(
+    name="test-designer",
+    version=1,
+    body="Design test cases for: {{title}} | {{content}} | {{acceptance_criteria}} | {{analysis}}",
+    model_class="coder",
+    input_budget=8000,
+    output_budget=4096,
+    schema_ref="test-suite/v1",
+    temperature=0.3,
+)
+
+
+class _LlmTransport(httpx.AsyncBaseTransport):
+    """Async-transport shim so ``AsyncClient`` accepts a sync fake handler."""
+
+    def __init__(self, handler: Callable[[httpx.Request], httpx.Response]) -> None:
+        self._handler = handler
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return self._handler(request)
+
+
+def _llm_assistant(payload: dict[str, object]) -> dict[str, object]:
+    """OpenAI-compatible chat-completion body (the fake "model" answer)."""
+    return {
+        "choices": [{"message": {"role": "assistant", "content": json.dumps(payload)}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 60},
+    }
+
+
+def _fake_gateway(cases: list[dict[str, object]]) -> LLMGateway:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_llm_assistant({"test_cases": cases}))
+
+    return LLMGateway(
+        "http://llm.test/v1",
+        "fake-model",
+        max_retries=0,
+        transport=_LlmTransport(handler),
+    )
+
+
+def test_test_design_agent_persists_suite_and_returns_requirement_id(env: dict[str, Any]) -> None:
+    """S1.3: ``TestDesignJobAgent.run()`` persists the AI suite as §10 rows and
+    returns the requirement id as ``output_ref``; the ``ai_actions`` audit row
+    still records the suite JSON (not the full model result)."""
+    cases: list[dict[str, object]] = [
+        {
+            "id": "TC-001",
+            "title": "valid login succeeds",
+            "type": "functional",
+            "priority": "high",
+            "steps": ["enter credentials", "submit"],
+            "expected_results": ["redirected to /home"],
+        },
+        {
+            "id": "TC-002",
+            "title": "empty password rejected",
+            "type": "negative",
+            "priority": "medium",
+            "steps": ["submit an empty password"],
+            "expected_results": ["an error is shown"],
+        },
+    ]
+    suite_json = json.dumps({"test_cases": cases})
+    assert len(suite_json) <= 1024  # ai_actions.output_ref column cap
+
+    store = InMemoryPromptStore([_DESIGN_PROMPT])
+    gateway = _fake_gateway(cases)
+    agent = TestDesignAgent(store, gateway)
+
+    # A real ai_sessions anchor so the audit row is written (§10).
+    with db.make_session_factory(env["engine"])() as session:
+        ai_session = models.AISession(project_id=ACME_ID, task_type="test_case_generation")
+        session.add(ai_session)
+        session.commit()
+        session_id = ai_session.id
+
+    job_agent = TestDesignJobAgent(agent, env["engine"])
+
+    async def _emit(_event: str, _data: dict[str, Any]) -> None:
+        return None
+
+    ctx = JobContext(
+        job_id=str(uuid4()),
+        project_id=ACME_ID,
+        job_type=JobType.TEST_CASE_GENERATION,
+        input={
+            "title": "Login flow",
+            "content": "Users can log in with email + password and are redirected to /home.",
+            "acceptance_criteria": ["valid credentials -> 200", "invalid password -> 401"],
+        },
+        emit=_emit,
+        ai_session_id=session_id,
+    )
+
+    async def _drive() -> str | None:
+        try:
+            return await job_agent.run(ctx)
+        finally:
+            await gateway.aclose()
+
+    output_ref = asyncio.run(_drive())
+
+    # S1.3: output_ref is the persisted requirement id, not the suite JSON.
+    assert output_ref is not None
+    assert output_ref != suite_json
+
+    with db.make_session_factory(env["engine"])() as session:
+        requirement = session.get(models.Requirement, output_ref)
+        assert requirement is not None
+        assert requirement.project_id == ACME_ID
+        # join table links exactly the two test cases (titles round-trip)
+        assert {tc.title for tc in requirement.test_cases} == {
+            "valid login succeeds",
+            "empty password rejected",
+        }
+        # the audit row still records the suite JSON
+        action = session.scalars(
+            select(models.AIAction).where(models.AIAction.session_id == session_id)
+        ).first()
+        assert action is not None
+        assert "TC-001" in (action.output_ref or "")
+        assert "valid login succeeds" in (action.output_ref or "")
