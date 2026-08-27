@@ -667,3 +667,98 @@
   (persistence half: `022fb6b`).
 - **Next session start:** S1.4 (Eval runner CLI + golden set v1, §22; exit:
   `eval run` emits JSON report vs §31.7 targets) — see `STATE.md` §3.
+
+## 2026-08-27 — S1.4 Eval runner CLI + golden set v1 (commit `74a733d`)
+
+- **Goal:** build bible §19 S1.4 — `eval run` emits a JSON report against the §31.7
+  targets (schema-valid ≥ 0.99 · oracle step coverage ≥ 0.85).
+- **Did:**
+  - `qa_copilot_ai.eval` package: `golden.py` (golden-set loader/validator + shared
+    `step_coverage` helper), `runner.py` (per-fixture eval with failure isolation,
+    `EvaluationReport`), `cli.py` (`python -m qa_copilot_ai.eval` → JSON report on
+    stdout, human summary on stderr, exit 0/1/2).
+  - **`packages/ai/golden/golden_v1.json` — 12 fixtures across 7 workflow categories;
+    single source of truth for the S1.2 offline fakes AND the S1.4 live eval** (S1.2
+    test file refactored onto it; the old 10-fixture inline set + local coverage
+    helper removed).
+  - `scripts/eval_run.py` — persistent runner reading `.env`; live run vs LM Studio
+    Qwen-27B → `reports/eval_v1.json` (`reports/` is gitignored).
+- **Verified (exit criterion):** `uv run pytest -q` → 145 passed · `uv run mypy` →
+  no issues in 46 source files · `ruff check .` + `ruff format --check .` ✓ · live
+  eval run emitted the JSON report with the §31.7 gates evaluated.
+- **Next session start:** S2.1 (repository scanner) — see `STATE.md` §3.
+
+## 2026-08-28 — S2.1 Repository scanner (commit `aa47408`)
+
+- **Goal:** build bible §19 S2.1 — deterministic, LLM-free repository scanner:
+  language/framework detection, test-structure detection, package managers, monorepo
+  signals. **Exit: correct on 3 sample repos.**
+- **Did:**
+  - `qa_copilot_repository.scanner` (new module, ~530 lines) —
+    `scan_repository(root) -> RepositoryProfile` + `main()` CLI
+    (`python -m qa_copilot_repository.scanner <root>` → JSON profile). Sorted
+    `os.walk` (deterministic order), symlinks never followed, `SKIP_DIRS` pruning
+    (node_modules/.git/dist/build/caches/venvs), 50k-file cap, manifests read ≤512KB
+    (larger ones noted + skipped). **Source files are classified by name only —
+    never read.**
+  - Detection:
+    - **languages** — extension map (py/ts/js/go/rust/ruby/java/…); `languages`
+      ordered by file count desc, then name.
+    - **frameworks** — npm manifest deps (`NODE_FRAMEWORKS`: react/next/nuxt/express/
+      fastify/vue/svelte/… + tailwind/vite/webpack) · Python manifest deps
+      (`PYTHON_FRAMEWORKS`: fastapi/django/flask/starlette/…) from `project`/poetry/
+      uv/`dependency-groups` + `requirements*.txt` · Go/Ruby/Rust/Spring via
+      `MANIFEST_MARKERS` (go.mod/Gemfile/Cargo.toml/pom.xml) · config-file names
+      (vite/webpack/tailwind/svelte/next/nuxt/astro/angular).
+    - **test structure** — Vitest/Jest/Playwright/Mocha from npm deps, pytest from
+      Python deps + `[tool.pytest.ini_options]` + `requirements*.txt`; test files by
+      convention (`*.test.*`/`*.spec.*`/`__tests__/`, `test_*.py`/`*_test.py`,
+      `*_test.go`) → `test_dirs` + `test_file_count`; Playwright `testDir` resolved
+      from the config (recorded in `notes`).
+    - **package managers** — root lockfiles/manifests: pnpm-lock.yaml→pnpm,
+      package-lock.json→npm, yarn.lock→yarn, bun.lockb→bun, uv.lock→uv,
+      poetry.lock→poetry, Pipfile→pipenv, else pyproject/setup/requirements→pip.
+    - **monorepo** — pnpm-workspace.yaml `packages:` (line-based parse that stops at
+      the next top-level key, so `onlyBuiltDependencies`/`allowBuilds` are ignored;
+      quotes stripped) · npm `workspaces` (list or map) · uv `workspace.members` ·
+      lerna/nx/rush markers; member globs recorded in `notes`.
+  - `qa_copilot_domain.RepositoryProfile` (new domain entity) — shared contract for
+    the S2.2 convention extractor, S2.3 automation agent, and the later §10
+    `repositories` persistence; exported from `qa_copilot_domain` and
+    `qa_copilot_repository` (`scan_repository`).
+  - **3 golden samples** under `packages/repository/samples/sample_repos/` (same
+    version-controlled golden-set precedent as S1.4's `packages/ai/golden`):
+    - `js-web-app` — React + Vite + TypeScript + Tailwind, Vitest unit tests
+      (`src/__tests__/`) + Playwright e2e (`e2e/`, `testDir` in config), pnpm.
+    - `python-api` — FastAPI + uv, pytest (`tests/unit` + `tests/integration`,
+      `conftest.py`).
+    - `js-monorepo` — pnpm workspaces (React client + Express server),
+      **no test framework** (manual smoke script) — exercises the
+      "no test framework detected" note path.
+  - `tests/unit/test_repository_scanner.py` (16 tests): full-profile golden
+    assertions for all 3 samples (languages order, frameworks, test frameworks/dirs,
+    counts, managers, monorepo flag, notes), determinism (two runs equal after
+    stripping `scanned_at`), sorted-unique list invariants, str-root acceptance,
+    missing/non-directory root → ValueError, empty repo, `node_modules`/`.git`
+    pruning, pnpm-workspace regression (`onlyBuiltDependencies` ignored), Go +
+    pytest naming conventions.
+- **Verified (exit criterion):** `uv run pytest -q` → **161 passed** (16 new) ·
+  `uv run mypy` → no issues in 48 source files · `ruff check .` ✓ ·
+  `ruff format --check .` ✓ (71 files) · sanity scans of real repos
+  (`ai-qa-copilot-demo-app`, `ai-qa-copilot`, `WheelDesk`) → profiles as expected.
+- **Decisions / gotchas (also in STATE.md §5/§7):**
+  - **pnpm-workspace.yaml:** pnpm 11 puts `onlyBuiltDependencies`/`allowBuilds` in
+    the same YAML as `packages:` — the line-based parser reads only list items under
+    the top-level `packages:` key (regression test added for this bug class).
+  - **`_is_test_file` stem math:** for `*.test.*`/`*.spec.*` the stem is
+    `name[:rfind(".")]` — a naive single-suffix strip broke `counter.spec.ts`
+    (fixed + covered by the js-web-app golden profile).
+  - **Determinism:** sorted walk + sorted output lists; `languages` ordered count
+    desc then name; `scanned_at` is the only non-deterministic field (tests strip
+    it before comparing).
+  - **Safety:** no dependency installation, no symlink following, capped walk,
+    bounded manifest reads — scanning an untrusted repo is read-only.
+- **Commit:** `aa47408 step S2.1: repository scanner + samples + tests (…)` —
+  36 files, 1089 insertions.
+- **Next session start:** S2.2 (convention extractor — locators, page objects,
+  fixtures, helpers; exit: golden outputs match on 2 repos) — see `STATE.md` §3.

@@ -5,41 +5,38 @@
 
 ## 1. Current position
 
-- **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete**
-- **Step:** S0.1–S1.4 ✓ (S1.4 = eval runner CLI + golden set v1) · **S2.1 next**
+- **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
+  Phase 2 — Playwright Copilot (in progress)
+- **Step:** S0.1–S2.1 ✓ (S2.1 = repository scanner + 3 golden samples) · **S2.2 next**
 
 ## 2. Just completed
 
-- 2026-08-27 · **S1.4 (Eval) — runner CLI + golden set v1** (commit pending):
-  `qa_copilot_ai.eval` package (`golden.py` loader/validator + shared `step_coverage`,
-  `runner.py` per-fixture eval w/ failure isolation, `cli.py` JSON report on stdout ·
-  human summary on stderr · exit 0/1/2) · **`packages/ai/golden/golden_v1.json` — 12
-  fixtures across 7 workflow categories, single source of truth for the S1.2 offline
-  fakes AND the S1.4 live eval** (S1.2 test file refactored onto it; old 10-fixture
-  inline set + local coverage helper removed) · §31.7 targets `schema_valid_min: 0.99`,
-  `oracle_step_coverage_min: 0.85` · `scripts/eval_run.py` (persistent runner, reads
-  `.env`) · **exit: 145 tests ✓ · mypy strict (46) ✓ · ruff ✓ · live run vs LM Studio
-  Qwen-27B → `reports/eval_v1.json`.**
-- 2026-08-27 · **S1.3 (UI flow) — web shell on the real API** (commit `8c0ed5b`):
-  `GET /api/v1/requirements/{id}` read-back (auth + project role; non-member → 403, no
-  existence leak; 6 tests) · web: `lib/api.ts` (Bearer fetch client; SSE via fetch
-  streaming reader — `EventSource` can't set `Authorization`) · `useAuth` ·
-  `useJobEvents.start(jobId)` → real `/events?job_id=…` · `LoginForm`/`RequirementForm`/
-  `TestCaseList` + `App` gates · mock SSE plugin removed · **test-designer prompt
-  capped (≤6 cases, compact fields) — Qwen-27B was truncating JSON at the 4000-token
-  output budget** · **exit: live E2E green** (`scripts/e2e_s13.py`: login → 202 → SSE →
-  read-back 4 persisted cases → job row consistent; bad login 401 · unauth SSE 401 ·
-  unknown id 404) · **131 tests ✓ · mypy strict (40) ✓ · ruff ✓ · tsc/eslint/build ✓.**
-- 2026-08-27 · **S1.3 (persistence) — persist the AI suite as §10 rows** (commit
-  `022fb6b`): `persist_requirement_with_suite(...)` in `qa_copilot_repository.requirements`
-  writes one `requirements` row + N `test_cases` rows + the §10 M:N join; AI strings →
-  domain enums; `TestDesignJobAgent.run()` returns the persisted requirement id as
-  `output_ref` (suite JSON kept as the `ai_actions` audit payload).
+- 2026-08-28 · **S2.1 (repo scanner) — deterministic repository scan** (commit `aa47408`):
+  `qa_copilot_repository.scanner` (LLM-free) → `qa_copilot_domain.RepositoryProfile` —
+  languages (count desc, then name) · frameworks (npm/Python/Go/Ruby/Rust/Spring
+  manifests + config files) · test structure (Vitest/Jest/Playwright/Mocha/pytest
+  signals, test-file conventions `*.test.*`/`*.spec.*`/`test_*.py`/`*_test.go`,
+  Playwright `testDir`) · package managers (root lockfiles/manifests) · monorepo
+  (pnpm-workspace.yaml `packages:`, npm `workspaces`, uv members, lerna/nx/rush) ·
+  safety: SKIP_DIRS, no symlink follow, 50k file cap, manifests ≤512KB, source files
+  classified by name only (never read) · CLI `python -m qa_copilot_repository.scanner
+  <root>` → JSON · **3 golden samples** `packages/repository/samples/sample_repos/`
+  (js-web-app: React+Vite+TS/Vitest+Playwright · python-api: FastAPI+uv/pytest ·
+  js-monorepo: pnpm workspaces, no tests) · **exit: 161 tests ✓ · mypy strict (48) ✓
+  · ruff ✓ · real-repo sanity scans ✓.**
+- 2026-08-27 · **S1.4 (Eval)** (commit `74a733d`, details: SESSION_LOG.md):
+  `qa_copilot_ai.eval` runner CLI + 12-fixture `packages/ai/golden/golden_v1.json`
+  (S1.2/S1.4 shared truth) + `scripts/eval_run.py`; §31.7 gates 0.99/0.85; live
+  LM Studio run → `reports/eval_v1.json`.
+- 2026-08-27 · **S1.3 (UI flow)** (commit `8c0ed5b`, details: SESSION_LOG.md): web
+  shell on the real API — login, 202+SSE, persisted read-back
+  `GET /api/v1/requirements/{id}`; test-designer prompt capped (≤6 cases) for
+  Qwen-27B's output budget; live E2E green.
+- 2026-08-27 · **S1.3 (persistence)** (commit `022fb6b`): AI suite → §10 rows
+  (`persist_requirement_with_suite` + M:N join); job `output_ref` = requirement id.
 - 2026-08-27 · **S1.2 — Test Design Agent** (commit `bb5bb2f`, details: SESSION_LOG.md):
-  `TestDesignAgent` + §12 `TestSuite` schema through the gateway (`test-designer@1`);
-  `TestDesignJobAgent` on the S0.9 seam + `POST /api/v1/requirements/test-cases`
-  (202 + job; `StubAgent` fallback). **Exit: 10 fixtures → schema-valid + step coverage
-  ≥ 85% vs oracle ✓.**
+  `TestDesignAgent` + `POST /api/v1/requirements/test-cases` job. **Exit: 10 fixtures →
+  schema-valid + step coverage ≥ 85% vs oracle ✓.**
 - 2026-08-27 · **S1.1 — Requirement Agent** (commit `6a1bf88`): `RequirementAgent` +
   schema-validated `RequirementAnalysis` on the S0.9 seam. **Exit: 10/10 schema-valid ✓.**
 - 2026-08-27 · **S0.9 — jobs API** (commit `2051749`): 202 + `GET /jobs/{id}` + SSE
@@ -52,8 +49,11 @@
 
 ## 3. NEXT STEP (start here)
 
-**S2.1 — Repository scanner** (build bible §19 Phase 2): language/framework detection
-+ test-structure detection. **Exit criterion: correct on 3 sample repos.**
+**S2.2 — Convention extractor** (build bible §19 Phase 2): extract the target repo's
+test conventions — locators, page objects, fixtures, helpers — on top of
+`qa_copilot_repository.scanner` + `RepositoryProfile`. **Exit: golden outputs match
+on 2 repos.** (Golden candidates: S2.1 sample `js-web-app` (Vitest + Playwright)
+and/or the demo app `ai-qa-copilot-demo-app`.)
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
   needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
   artifacts live in gitignored `reports/` — commit one baseline after each
@@ -109,6 +109,11 @@
   `job.started` emitted before the agent runs (no event loss) · SSE bus in-process
   pub/sub (multi-worker deploy → Redis) · `sse_stream()` typed `AsyncGenerator` so
   `aclose()` typechecks
+- S2.1 scanner: deterministic + LLM-free · `RepositoryProfile` lives in the **domain**
+  pkg (shared contract for the S2.2 extractor, S2.3 agent, and §10 persistence) ·
+  source files classified by name only, never read · `languages` ordered count desc
+  → name, all other lists sorted · `scanned_at` is the only time-varying field
+  (tests strip it before comparing)
 
 ## 6. Pointers (paths only — no code here)
 
@@ -154,19 +159,27 @@
   source of truth) · `tests/unit/test_eval_runner.py` (fake OpenAI server e2e,
   loader/CLI/isolation) · `scripts/eval_run.py` (persistent runner; `reports/`
   gitignored)
+- Repo scanner (S2.1): `packages/repository/src/qa_copilot_repository/scanner.py`
+  (`scan_repository` + CLI `python -m qa_copilot_repository.scanner <root>` → JSON) ·
+  `qa_copilot_domain.RepositoryProfile` (S2.2/S2.3/§10 shared contract) · golden
+  samples `packages/repository/samples/sample_repos/{js-web-app,python-api,js-monorepo}`
+  · `tests/unit/test_repository_scanner.py` (16 tests: golden profiles, determinism,
+  pruning, pnpm-workspace regression)
 
 ## 7. Open questions / gotchas
 
 - **Env leak → wrong agent (S1.1):** `get_database_url()` → `_load_dotenv()` injects `.env` LLM keys
   into `os.environ` even in tests (pydantic-settings reads env vars) → app silently wires the
-  real agent; job tests hang on LM Studio. Stub-contract tests must pass
-  `llm_base_url=None, llm_model=None` explicitly (init kwargs beat env vars).
+  real agent. Stub-contract tests must pass `llm_base_url=None, llm_model=None` (init kwargs beat env).
 - **mypy strict + `dict[str, object]` (S1.1):** `audit_dict()` values are `object` — `int(audit["x"])` fails; use `cast(int, ...)`.
 - **node:sqlite (S0.10):** experimental on Node 22 — demo app uses `better-sqlite3` (approve in `pnpm-workspace.yaml` `onlyBuiltDependencies`/`allowBuilds`).
 - **PowerShell NativeCommandError (S0.10):** any child-process stderr makes the tool shell report
   failure — read the actual output/exit code; `git --no-pager`; servers via `Start-Process -PassThru`.
 - **PATH gotcha:** docker CLI is on the USER PATH — old terminals don't see it; refresh `$env:Path` from Machine+User.
 - **pnpm 11:** the `pnpm` field in `package.json` is IGNORED — `onlyBuiltDependencies` (esbuild) goes in `pnpm-workspace.yaml`.
+- **pnpm-workspace.yaml (S2.1):** that same file also carries `onlyBuiltDependencies`/`allowBuilds`
+  lists — a parser must read only list items under the top-level `packages:` key
+  (regression: `test_pnpm_workspace_ignores_other_keys`).
 - **Vite dev binds `[::1]:5173`:** `curl http://127.0.0.1:5173` refused — use `http://localhost:5173`.
 - **pydantic v2 (S0.4):** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg — use `Annotated[str, StringConstraints(...)]`.
 - **ruff isort (S1.1):** `qa_copilot_*` is NOT first-party (src-layout workspace) — sorts in the third-party block.
