@@ -343,3 +343,61 @@
   Tailwind, mocked SSE pipeline view)`.
 - **Next session start:** S0.8 (auth baseline: dev user, JWT middleware, project
   roles owner/member/viewer; exit: 401/200/403 matrix tested) — see `STATE.md` §3.
+
+## 2026-08-27 — S0.8 auth baseline (JWT login + project-scoped RBAC)
+
+- **Goal:** S0.8 — dev-mode login (email+password → JWT) and project-scoped RBAC
+  (`owner` / `member` / `viewer` per project, §31.3); exit: 401/200/403 matrix tested.
+- **Did:**
+  - `apps/api/src/qa_copilot_api/auth.py`: PBKDF2-SHA256 password hashing/verify
+    (stdlib `hashlib`, `pbkdf2_sha256$<iter>$<salt>$<digest>`), HS256 JWT
+    create/decode (PyJWT, `sub`/`email`/`iat`/`exp`, `TOKEN_TTL`), Bearer parsing,
+    `get_current_user()` dependency (401 on missing/invalid/expired/wrong-secret),
+    `require_role(minimum)` factory — looks up `project_members` FIRST, so
+    non-members get 403 without leaking project existence; role ladder
+    viewer < member < owner.
+  - `routes.py`: `POST /api/v1/auth/login` (dummy hash-verify for unknown users →
+    constant-ish timing), `GET /api/v1/auth/me` (user + project roles),
+    `GET /api/v1/projects` (memberships), `GET /projects/{id}` (viewer+),
+    `DELETE /projects/{id}` (owner). Missing `AUTH_TOKEN_SECRET` → 500 with readable
+    detail (`_require_secret` raises; login catches → `HTTPException(500)`).
+  - `config.py`: `auth_token_secret` (env `AUTH_TOKEN_SECRET`, no default — fail loud);
+    `.env` gets generated machine-local secret + `AUTH_DEV_PASSWORD`; `.env.example`
+    documents both.
+  - Schema: migration `2d783f832c48` adds `project_members` (composite PK
+    `(project_id, user_id)` + `user_id` index, role = plain VARCHAR of the domain wire
+    string per S0.5 convention, CASCADE FKs, `created_at`); `users.password_hash`
+    added in the same migration (nullable — pre-auth rows kept).
+    `packages/repository/.../membership.py`: `get_user_by_email` /
+    `get_project_role` helpers (single DB entry point for API + seed).
+  - `scripts/seed.py` (idempotent): sets `dev@local.dev` `password_hash` from
+    `AUTH_DEV_PASSWORD` when missing; links dev user as **owner** of the seeded
+    project (natural-key lookup, no duplicate rows).
+  - `tests/unit/test_auth.py` (21 tests, function-scoped scratch DB
+    `qa_copilot_auth_test` on 5433, migrated per test via Alembic): password
+    roundtrip + reject; JWT create/decode/expiry/tamper/wrong-secret; login
+    ok/bad-password/unknown-user/missing-hash; `/me` token matrix; projects list;
+    RBAC matrix (owner/member/viewer read 200; non-member 403 on real AND ghost
+    project; member/viewer/non-member delete 403; owner delete 204 → gone);
+    unauthenticated delete 401; missing-secret → 500 mentioning `AUTH_TOKEN_SECRET`.
+- **Verified (exit criterion):** `uv run pytest tests/unit -q` → **82 passed** (21 auth
+  + 61 prior) · `ruff check` + `ruff format --check` clean · `alembic current` →
+  `2d783f832c48 (head)` · seed ×2 idempotent · live uvicorn smoke (Python/urllib):
+  login 200 + token + owner project · `/me` 200 · projects list · project detail ·
+  401 (no token / bad password / garbage token) — **ALL PASS**.
+- **Decisions / gotchas (recorded in STATE.md §5/§7):**
+  - Authorization is project-scoped (`project_members.role`); `users.role` is a
+    default only. Non-member → 403 (not 404) even for deleted/unknown projects.
+  - `db.delete(project)` with `ondelete="CASCADE"` children breaks the ORM
+    (tries to null out the composite PK) → delete `project_members` rows explicitly
+    first in the route.
+  - Test fixtures: UUID columns need real UUIDs (deterministic `uuid5`); `DROP
+    DATABASE` needs `engine.dispose()` on ALL engines (incl. `app.state.engine`)
+    first.
+  - PowerShell mangles JSON bodies for `curl.exe` through the tool shell — smoke
+    tests go through a Python urllib script.
+  - S0.9 note: web shell uses native `EventSource` (no `Authorization` header) —
+    header-based JWT means S0.9's real SSE endpoint needs a fetch-based reader in
+    `apps/web` (flagged S0.7).
+- **Commit:** `6df40a6 S0.8: auth baseline (JWT login + project-scoped RBAC)`.
+- **Next session start:** S0.9 (jobs API: 202 + SSE) — see `STATE.md` §3.

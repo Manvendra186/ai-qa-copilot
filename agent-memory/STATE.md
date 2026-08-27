@@ -6,9 +6,26 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation
-- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · S0.6 ✓ · **S0.7 ✓ — next: S0.8**
+- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · S0.6 ✓ · S0.7 ✓ · **S0.8 ✓ — next: S0.9**
 
 ## 2. Just completed
+
+- 2026-08-27 · **S0.8 — auth baseline** (commit `6df40a6`): `qa_copilot_api.auth` —
+  PBKDF2-SHA256 password hashing (stdlib `hashlib`) + HS256 JWT (PyJWT) + Bearer parsing;
+  `get_current_user()` and `require_role()` dependencies — authorization is
+  **project-scoped** via `project_members.role` (§31.3; `users.role` is a default only);
+  non-members get 403 (checked before project lookup — no existence leak); login runs a
+  dummy hash for unknown users (timing). Routes: `POST /api/v1/auth/login`,
+  `GET /api/v1/auth/me`, `GET /api/v1/projects`, `GET /projects/{id}` (viewer+),
+  `DELETE /projects/{id}` (owner; deletes memberships explicitly first — ORM would
+  otherwise try to null out the composite PK). `AUTH_TOKEN_SECRET` is REQUIRED (no
+  fallback; missing → 500 with readable body); `AUTH_DEV_PASSWORD` sets the dev user's
+  password in seed (`dev@local.dev`, linked as project owner). Migration `2d783f832c48`
+  adds `project_members` (composite PK `(project_id, user_id)`, role = plain VARCHAR of
+  the domain wire string, CASCADE FKs). Tests: `tests/unit/test_auth.py` (21 tests,
+  scratch DB per test, real Postgres, full 401/200/403 matrix) — **82 unit tests green**
+  · ruff check+format ✓ · alembic head ✓ · seed idempotent ✓ · live smoke ✓ (login/me/
+  list/detail + 401/bad-token/bad-password cases via urllib script).
 
 - 2026-08-27 · **S0.7 — React shell** (commit `4d8840b`): pnpm workspace at root
   (`pnpm-workspace.yaml` + private root `package.json` → one-command
@@ -60,13 +77,14 @@
 
 ## 3. NEXT STEP (start here)
 
-**S0.8 — Auth baseline** (build bible §19): dev user, JWT middleware, project roles
-owner/member/viewer.
-- **Exit criterion:** 401/200/403 matrix tested.
-- Notes: S0.9 (jobs: 202 + SSE) slots straight into the shell — `useJobEvents`
-  already speaks the event contract; point it at the real endpoint and drop the
-  mock. `EventSource` is cookie-friendly; if S0.8 lands header-based JWT, the web
-  client needs a fetch-based SSE reader (see SESSION_LOG, S0.7).
+**S0.9 — jobs API** (build bible §19): async job submission (202) + SSE event stream.
+- **Exit criterion:** per §19 — job POST returns 202 with id; events stream over
+  `GET /events` in the S0.7 shell contract shape (`job.started`/`stage.*`/`progress`/
+  `job.completed`).
+- Notes: `useJobEvents` (S0.7 shell) already speaks the event contract — point it at the
+  real endpoint and drop the mock SSE. S0.8 landed **header-based JWT**, so the web
+  client needs a fetch-based SSE reader (`EventSource` can't set `Authorization`;
+  flagged in S0.7 session log).
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -107,6 +125,11 @@ owner/member/viewer.
   only, hard `LLMError` otherwise (no silent model-swap) · redaction before wire + logs
   (§31.7) · `usage` from server with char-estimate fallback · prompt rendering fails
   loudly on missing variables · `ai_actions` payload = the `ai_call` log record
+- S0.8 auth: dev-mode JWT HS256 (PyJWT) + PBKDF2-SHA256 (stdlib `hashlib`) ·
+  `AUTH_TOKEN_SECRET` REQUIRED, no code fallback (missing → 500 with readable body) ·
+  RBAC is **project-scoped** via `project_members.role` — `users.role` is a default only
+  (§31.3) · role check precedes project lookup (non-members → 403, no existence leak) ·
+  login dummies the hash verify for unknown users (timing)
 
 ## 6. Pointers (paths only — no code here)
 
@@ -122,6 +145,10 @@ owner/member/viewer.
   `scripts/llm_live_check.py` · `ai_actions` writer: `qa_copilot_repository.audit`
 - Web shell: `apps/web/` (React 18 + Vite 6 + TS + Tailwind 4; mock SSE:
   `vite.config.ts` → `GET /mock/events`; pipeline contract: `src/lib/pipeline.ts`)
+- Auth (S0.8): `apps/api/src/qa_copilot_api/auth.py` (hash/JWT/deps) · `routes.py`
+  (login/me/projects) · `config.py` (`auth_token_secret`) · membership lookups:
+  `packages/repository/src/qa_copilot_repository/membership.py` · migration
+  `infra/migrations/versions/2d783f832c48_*.py`
 
 ## 7. Open questions / gotchas
 
@@ -143,3 +170,12 @@ owner/member/viewer.
   (`lambda title=title, i=i: ...`) — hit in S0.5 seed.
 - **Alembic + pgvector:** generated migrations import `pgvector.sqlalchemy` by *attribute* — add
   `import pgvector.sqlalchemy` at the top of the migration or import fails on apply (learned S0.5).
+- **Postgres UUID columns (S0.8):** test fixtures must seed real UUIDs — string ids like
+  `prj-acme` → `invalid input syntax for type uuid`. Use deterministic `uuid5` values.
+- **SQLAlchemy `db.delete(parent)` (S0.8):** with `ondelete="CASCADE"` children whose FK is a
+  composite PK, the ORM tries to NULL out the PK instead of letting Postgres cascade —
+  delete the child rows explicitly first (S0.8 project delete route).
+- **Test DB teardown (S0.8):** `DROP DATABASE` fails with `ObjectInUse` if engine pools
+  still hold connections — `engine.dispose()` (ALL engines, incl. `app.state.engine`) first.
+- **PowerShell + curl.exe (S0.8):** JSON bodies get mangled through the tool shell —
+  write a small Python (urllib) script for API smoke tests instead.
