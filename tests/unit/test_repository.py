@@ -41,6 +41,7 @@ EXPECTED_TABLES = {
     "users",
     "repositories",
     "projects",
+    "project_members",
     "files",
     "requirements",
     "test_cases",
@@ -78,6 +79,14 @@ def test_enum_columns_are_plain_varchar() -> None:
     """Enum values live in qa_copilot_domain; the DB stores plain VARCHAR."""
     col = models.Requirement.__table__.c["risk"]
     assert isinstance(col.type, sa.String)
+
+
+def test_project_members_role_is_plain_varchar() -> None:
+    """S0.8: project-scoped role (§31.3) also stores the domain wire string."""
+    col = models.ProjectMember.__table__.c["role"]
+    assert isinstance(col.type, sa.String)
+    pk = [c.name for c in models.ProjectMember.__table__.primary_key.columns]
+    assert pk == ["project_id", "user_id"]
 
 
 def test_embedding_column_is_pgvector() -> None:

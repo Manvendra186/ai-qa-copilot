@@ -7,10 +7,13 @@ S0.5: SQLAlchemy 2.0 ORM models for the §10 core data model
 
 S0.6: prompt-registry loader (:mod:`qa_copilot_repository.prompts`, §31.6)
 and ``ai_actions`` audit recorder (:mod:`qa_copilot_repository.audit`, §31.1).
+
+S0.8: user + project-membership lookups for the auth baseline
+(:mod:`qa_copilot_repository.membership`, §31.3).
 """
 
-from . import audit, db, models, prompts
+from . import audit, db, membership, models, prompts
 
 __version__ = "0.1.0"
 
-__all__ = ["__version__", "audit", "db", "models", "prompts"]
+__all__ = ["__version__", "audit", "db", "membership", "models", "prompts"]

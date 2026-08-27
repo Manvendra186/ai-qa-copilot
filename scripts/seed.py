@@ -5,6 +5,10 @@ requirements ↔ test cases, plus a knowledge document with embedding, a
 prompt version, an AI session/action, a job, and a run with one pass and
 one failing result with diagnosis + artifact).
 
+S0.8 (auth baseline, §31.3): the dev user ``dev@local.dev`` gets a
+PBKDF2-SHA256 password hash (login password via ``AUTH_DEV_PASSWORD``,
+default ``dev-password``) and an ``owner`` membership in the demo project.
+
 Idempotency: every row is looked up by its natural key first and left
 untouched when it already exists — running the script twice changes
 nothing (no duplicates, no rewrites).
@@ -17,16 +21,19 @@ Usage (repo root):
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from collections.abc import Callable
 
+from qa_copilot_api.auth import hash_password
 from qa_copilot_domain.enums import (
     ArtifactType,
     FailureCategory,
     JobStatus,
     JobType,
     Priority,
+    ProjectRole,
     RiskLevel,
     TestType,
 )
@@ -116,6 +123,28 @@ def seed() -> None:
             ),
             f"project '{PROJECT_NAME}'",
         )
+
+        # S0.8 (auth baseline, §31.3): dev user password + owner membership.
+        dev_password = os.environ.get("AUTH_DEV_PASSWORD", "dev-password")
+        if user.password_hash is None:
+            user.password_hash = hash_password(dev_password)
+            session.flush()
+            print(f"  + set password hash for user '{USER_EMAIL}'")
+
+        if (
+            session.scalars(
+                select(models.ProjectMember).where(
+                    models.ProjectMember.project_id == project.id,
+                    models.ProjectMember.user_id == user.id,
+                )
+            ).first()
+            is None
+        ):
+            session.add(
+                models.ProjectMember(project_id=project.id, user_id=user.id, role=ProjectRole.OWNER)
+            )
+            session.flush()
+            print(f"  + linked '{USER_EMAIL}' as owner of project '{PROJECT_NAME}'")
 
         requirements = []
         for i, title in enumerate(REQ_TITLES):
@@ -345,8 +374,8 @@ def seed() -> None:
 
         print(
             "Seed complete: "
-            f"1 organization, 1 user, 1 repository, 1 project, "
-            f"{len(requirements)} requirements, {len(test_cases)} test cases, "
+            f"1 organization, 1 user (w/ password + owner role, §31.3), 1 repository, "
+            f"1 project, {len(requirements)} requirements, {len(test_cases)} test cases, "
             f"1 knowledge document, 1 prompt version ({prompt.name}@"
             f"{prompt.version}), 1 job ({job.type.value}, {job.status.value}), "
             "1 run (1 passed / 1 failed w/ diagnosis + artifact)."

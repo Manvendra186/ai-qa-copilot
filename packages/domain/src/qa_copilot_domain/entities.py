@@ -1,7 +1,8 @@
 """Core domain entities (build bible §10, §12, §15, §16).
 
 S0.4 scope: ``Project``, ``Requirement``, ``TestCase``, ``Failure``,
-``Artifact``, ``Job``.
+``Artifact``, ``Job``. S0.8 (auth baseline, §31.3): ``User`` and
+``ProjectMember``.
 
 Conventions:
 
@@ -25,12 +26,39 @@ from .enums import (
     JobStatus,
     JobType,
     Priority,
+    ProjectRole,
     RiskLevel,
     TestType,
 )
 
 #: A required text value: whitespace-stripped, at least one character.
 NonBlankStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
+
+
+class User(DomainModel):
+    """A user of the platform (build bible §10 ``users``; auth at §31.3).
+
+    ``role`` is the user's *default* role; authorization is decided by the
+    project-scoped :class:`ProjectMember` role, which wins (§31.3).
+    """
+
+    id: str | None = None
+    email: NonBlankStr
+    role: ProjectRole = ProjectRole.OWNER
+    created_at: datetime | None = None
+
+
+class ProjectMember(DomainModel):
+    """A user's role within one project (build bible §31.3 project-scoped RBAC).
+
+    Composite key ``(project_id, user_id)`` — the same shape as the
+    ``requirement_test_cases`` join (build bible §10 v1.1).
+    """
+
+    project_id: NonBlankStr
+    user_id: NonBlankStr
+    role: ProjectRole
+    created_at: datetime | None = None
 
 
 class Project(DomainModel):

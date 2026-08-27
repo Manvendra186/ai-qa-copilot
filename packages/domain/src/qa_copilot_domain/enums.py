@@ -80,3 +80,30 @@ class ArtifactType(StrEnum):
     NETWORK = "network"
     DOM = "dom"
     LOG = "log"
+
+
+class ProjectRole(StrEnum):
+    """Project-scoped role (build bible §31.3 — V1 auth baseline).
+
+    RBAC is per project (a user can be ``owner`` of one project and
+    ``viewer`` of another). Permission rule from §31.3: code
+    apply/approve requires ``member`` or above; project deletion requires
+    ``owner``.
+    """
+
+    OWNER = "owner"
+    MEMBER = "member"
+    VIEWER = "viewer"
+
+
+#: Permission rank: higher means more authority (build bible §31.3).
+ROLE_RANK: dict[ProjectRole, int] = {
+    ProjectRole.VIEWER: 0,
+    ProjectRole.MEMBER: 1,
+    ProjectRole.OWNER: 2,
+}
+
+
+def role_at_least(role: ProjectRole, minimum: ProjectRole) -> bool:
+    """True when *role* grants at least the *minimum* permission (§31.3)."""
+    return ROLE_RANK[role] >= ROLE_RANK[minimum]

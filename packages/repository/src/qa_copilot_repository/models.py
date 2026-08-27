@@ -30,6 +30,7 @@ from qa_copilot_domain.enums import (
     JobStatus,
     JobType,
     Priority,
+    ProjectRole,
     RiskLevel,
     TestType,
 )
@@ -81,16 +82,26 @@ class Organization(Base):
 
 
 class User(Base):
-    """A user of the platform (build bible §10 ``users``; roles at S0.8, §31.3)."""
+    """A user of the platform (build bible §10 ``users``; roles at S0.8, §31.3).
+
+    ``role`` is the user's default role; authorization is decided by the
+    project-scoped ``project_members`` row (``ProjectMember``), which wins.
+    """
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
     email: Mapped[str] = mapped_column(sa.String(320), unique=True)
     role: Mapped[str] = mapped_column(sa.String(32), default="owner")
+    # S0.8: PBKDF2-SHA256 hash from ``qa_copilot_api.auth.hash_password``
+    # (``pbkdf2_sha256$<iter>$<salt>$<digest>``). Nullable so pre-S0.8 rows
+    # keep working; login requires a non-null hash.
+    password_hash: Mapped[str | None] = mapped_column(sa.String(255))
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )
+
+    memberships: Mapped[list[ProjectMember]] = relationship(back_populates="user")
 
 
 class Repository(Base):
@@ -139,6 +150,38 @@ class Project(Base):
     jobs: Mapped[list[Job]] = relationship(back_populates="project")
     knowledge_documents: Mapped[list[KnowledgeDocument]] = relationship(back_populates="project")
     ai_sessions: Mapped[list[AISession]] = relationship(back_populates="project")
+    members: Mapped[list[ProjectMember]] = relationship(back_populates="project")
+
+
+class ProjectMember(Base):
+    """A user's role within one project (build bible §31.3, S0.8 auth baseline).
+
+    Composite primary key ``(project_id, user_id)``; the extra index on
+    ``user_id`` covers the reverse lookup "which projects can this user see".
+    ``role`` stores the :class:`~qa_copilot_domain.enums.ProjectRole` wire
+    string (``owner`` / ``member`` / ``viewer``).
+    """
+
+    __tablename__ = "project_members"
+
+    project_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    role: Mapped[ProjectRole] = mapped_column(_enum_column(ProjectRole))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+    project: Mapped[Project] = relationship(back_populates="members")
+    user: Mapped[User] = relationship(back_populates="memberships")
 
 
 class File(Base):
@@ -286,8 +329,14 @@ class Failure(Base):
     """A failure plus its AI diagnosis (build bible §10, §12, §16)."""
 
     __tablename__ = "failures"
+    # Named so Alembic autogenerate matches the DB constraint by name
+    # (anonymous constraints are misdetected as "removed" on the next
+    # revision — see the S0.8 migration).
     __table_args__ = (
-        sa.CheckConstraint("confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)"),
+        sa.CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
+            name="failures_confidence_check",
+        ),
     )
 
     id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
@@ -432,7 +481,11 @@ class Job(Base):
     """An async AI-backed job (build bible §10 ``jobs``, §11 202 + SSE)."""
 
     __tablename__ = "jobs"
-    __table_args__ = (sa.CheckConstraint("progress >= 0.0 AND progress <= 1.0"),)
+    # Named so Alembic autogenerate matches the DB constraint by name (see
+    # the note on ``Failure.__table_args__``).
+    __table_args__ = (
+        sa.CheckConstraint("progress >= 0.0 AND progress <= 1.0", name="jobs_progress_check"),
+    )
 
     id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
     project_id: Mapped[str | None] = mapped_column(
@@ -493,6 +546,7 @@ __all__ = [
     "KnowledgeDocument",
     "Organization",
     "Project",
+    "ProjectMember",
     "PromptVersion",
     "Repository",
     "Requirement",

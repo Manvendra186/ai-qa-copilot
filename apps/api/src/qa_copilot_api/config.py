@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # --- App under test (Playwright target, §31.11) ---
     app_under_test: str | None = None
 
+    # --- Auth (S0.8, §31.3: dev-mode single user + JWT) ---
+    # HS256 signing secret (16+ chars). No default on purpose: fail loud.
+    auth_token_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AUTH_TOKEN_SECRET"),
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
