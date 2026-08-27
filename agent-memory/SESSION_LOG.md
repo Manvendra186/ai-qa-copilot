@@ -401,3 +401,65 @@
     `apps/web` (flagged S0.7).
 - **Commit:** `6df40a6 S0.8: auth baseline (JWT login + project-scoped RBAC)`.
 - **Next session start:** S0.9 (jobs API: 202 + SSE) — see `STATE.md` §3.
+
+## 2026-08-27 — S0.9 jobs API (async 202 + SSE)
+
+- **Goal:** S0.9 — async job submission (202) + SSE event stream (build bible §19);
+  exit: POST returns 202 with a job id; events stream over `GET /events` in the S0.7
+  shell contract shape (`job.started`/`stage.*`/`progress`/`job.completed`).
+- **Did:**
+  - `apps/api/src/qa_copilot_api/jobs.py` (new): `JobAgent` protocol — the single
+    replaceable seam (S1.x implements it against `qa_copilot_ai` without touching the
+    API) + `StubAgent` (deterministic, no LLM: six §4 stages with `progress` steps and
+    `stage.completed`, ends `job.completed`). Job state machine `queued → running →
+    completed|failed` (`InvalidJobTransition` on illegal edges). `start_job()` inserts
+    the Job row and emits `job.started` BEFORE the agent runs (no event loss), runs the
+    agent in a daemon thread, flips state on completion/failure, emits `job.completed`.
+    `reap_orphans()` — startup recovery of stale `running` jobs (PID-scoped prefix).
+    `sse_stream(scope)` — job/project/`all` scopes, snapshot-replay from DB + live tail
+    via in-process pub/sub (`JobBus`, `threading.Condition`), 15s heartbeat;
+    `sse_frame()` matches the S0.7 mock frame shape byte-for-byte.
+  - `routes.py`: `POST /api/v1/projects/{project_id}/requirements/analyze` (member+;
+    202 `{job_id}`; requirement persisted as `analyzing`, re-analyze idempotent);
+    `GET /api/v1/jobs/{job_id}` (viewer+; non-member → 404 — no existence leak);
+    `GET /api/v1/events?scope=job|project` (SSE; 422 on bad/missing scope params).
+    `main.py`: `create_app` builds `JobBus` + `StubAgent` on `app.state`; lifespan reaps
+    orphans on startup and registers shutdown.
+  - `schemas.py`: `AnalyzeRequest` / `AnalyzeResponse` (202 payload) / `JobResponse`
+    (+`scope`).
+  - `tests/unit/test_jobs.py` (15 tests, function-scoped scratch DB
+    `qa_copilot_jobs_test` migrated per test via Alembic): 202 contract + persisted
+    requirement + idempotent re-analyze · job status transitions + `job.completed`
+    event · non-member 404 / unknown 404 / member 200 · job-scoped SSE timeline (all
+    four event types in order, incl. `progress`) · project-scoped SSE · invalid-scope
+    422 · `reap_orphans` flips stale running → failed, leaves fresh ·
+    `InvalidJobTransition` on illegal edge · stub event contract (stage names = §4,
+    progress 0.0–1.0, `job.completed` last).
+  - Mypy strict cleanup across the configured scope (34 errors → 0, new + S0.8 debt):
+    `jobs.py` `CursorResult` cast for `.rowcount` (SQLAlchemy `Result[Any]` base has no
+    `rowcount`); `routes.py` `assert project_id is not None` narrowing in the project
+    branch; `auth.py` `iterations` → `iterations_str` (str→int reassignment); test
+    fixtures/annotations in `test_jobs.py` + `test_auth.py`; `test_repository.py`
+    iterate `Table.primary_key` directly; 3× `_env_file=None` carry a commented
+    `# type: ignore[call-arg]` — reproduced with a minimal `BaseSettings` subclass:
+    pydantic-settings' private init kwarg is invisible to mypy (stub limitation).
+- **Verified (exit criterion):** `uv run pytest tests/unit -q` → **97 passed** (15 jobs
+  + 82 prior) · `uv run mypy` → **no issues in 34 source files** · `ruff check .` ✓ ·
+  `ruff format --check .` ✓. SSE contract verified in-test by driving
+  `jobs.sse_stream()` directly (a `TestClient` streaming hang on an intentionally
+  open-ended SSE response is a client-side limitation, not a production bug).
+- **Decisions / gotchas (recorded in STATE.md §5/§7):**
+  - `StubAgent` is a placeholder by design — S1.x replaces it through the same
+    `JobAgent` protocol (API surface unchanged).
+  - SSE bus is in-process (single-process uvicorn is the current deployment);
+    multi-worker deploy will need Redis pub/sub (Redis already up per S0.2).
+  - `sse_stream()` typed `AsyncGenerator[str, None]` so `aclose()` typechecks.
+  - pydantic-settings + mypy: `_env_file` private init kwarg not in stubs → targeted
+    ignores (drop when stubs improve — will flag under `warn_unused_ignores`).
+  - Web shell still consumes the mock SSE (`/mock/events`) — pointing `useJobEvents`
+    at the real `GET /events` needs a fetch-based reader (EventSource can't set
+    `Authorization`); queued as a follow-up.
+- **Commit:** `2051749 step S0.9: async jobs API (202 + SSE feed, stub agent, state
+  machine, mypy/ruff/pytest green)`.
+- **Next session start:** S0.10 (demo app v0, separate repo `ai-qa-copilot-demo-app`)
+  — see `STATE.md` §3.

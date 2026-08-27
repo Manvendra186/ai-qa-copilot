@@ -6,43 +6,36 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation
-- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · S0.6 ✓ · S0.7 ✓ · **S0.8 ✓ — next: S0.9**
+- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · S0.6 ✓ · S0.7 ✓ · S0.8 ✓ · **S0.9 ✓ — next: S0.10**
 
 ## 2. Just completed
 
-- 2026-08-27 · **S0.8 — auth baseline** (commit `6df40a6`): `qa_copilot_api.auth` —
-  PBKDF2-SHA256 password hashing (stdlib `hashlib`) + HS256 JWT (PyJWT) + Bearer parsing;
-  `get_current_user()` and `require_role()` dependencies — authorization is
-  **project-scoped** via `project_members.role` (§31.3; `users.role` is a default only);
-  non-members get 403 (checked before project lookup — no existence leak); login runs a
-  dummy hash for unknown users (timing). Routes: `POST /api/v1/auth/login`,
-  `GET /api/v1/auth/me`, `GET /api/v1/projects`, `GET /projects/{id}` (viewer+),
-  `DELETE /projects/{id}` (owner; deletes memberships explicitly first — ORM would
-  otherwise try to null out the composite PK). `AUTH_TOKEN_SECRET` is REQUIRED (no
-  fallback; missing → 500 with readable body); `AUTH_DEV_PASSWORD` sets the dev user's
-  password in seed (`dev@local.dev`, linked as project owner). Migration `2d783f832c48`
-  adds `project_members` (composite PK `(project_id, user_id)`, role = plain VARCHAR of
-  the domain wire string, CASCADE FKs). Tests: `tests/unit/test_auth.py` (21 tests,
-  scratch DB per test, real Postgres, full 401/200/403 matrix) — **82 unit tests green**
-  · ruff check+format ✓ · alembic head ✓ · seed idempotent ✓ · live smoke ✓ (login/me/
-  list/detail + 401/bad-token/bad-password cases via urllib script).
+- 2026-08-27 · **S0.9 — jobs API** (commit `2051749`, details: SESSION_LOG.md):
+  `qa_copilot_api.jobs` — async job submission + SSE (build bible §11/§19).
+  `POST /projects/{id}/requirements/analyze` → **202** `{job_id}` (member+; requirement
+  persisted, re-analyze idempotent) · `GET /jobs/{id}` (viewer+; non-member 404) ·
+  `GET /events?scope=job|project` (SSE in the S0.7 shell shape: `job.started`/`stage.*`/
+  `progress`/`job.completed`; 15s heartbeat). `JobAgent` protocol + `StubAgent`
+  (deterministic six §4 stages — **S1.x swaps in the LLM agent through the same
+  protocol**). State machine queued→running→completed|failed; `reap_orphans()` on
+  startup (PID-scoped). In-process pub/sub bus (multi-worker → Redis, noted).
+  **97 unit tests green** · mypy strict clean (34 files — 34 errors fixed, incl. S0.8
+  debt) · ruff check+format ✓.
+- 2026-08-27 · **S0.8 — auth baseline** (commit `6df40a6`, details: SESSION_LOG.md):
+  `qa_copilot_api.auth` — PBKDF2-SHA256 + HS256 JWT + Bearer; **project-scoped** RBAC via
+  `project_members.role` (non-member 403 before project lookup; `users.role` default
+  only); routes login/me/projects (viewer+), project delete (owner); `AUTH_TOKEN_SECRET`
+  required (missing → 500). Migration `2d783f832c48` (`project_members`,
+  `users.password_hash`); seed links dev user as owner. **82 unit tests green** ·
+  live smoke ✓.
 
-- 2026-08-27 · **S0.7 — React shell** (commit `4d8840b`): pnpm workspace at root
-  (`pnpm-workspace.yaml` + private root `package.json` → one-command
-  `dev/build/preview/lint/format`); `apps/web` = React 18 + Vite 6 + TypeScript
-  (strict; separate `tsconfig.json` / `tsconfig.node.json`) + Tailwind CSS 4
-  (configless, via `@tailwindcss/vite`). ESLint 9 flat config (TS recommended +
-  react-hooks + react-refresh, Prettier-clean) + Prettier 3 (width 100, single
-  quotes) — **S0.1 web half closed**. Shell: `Header` (SSE connection badge),
-  `PipelineView` (six §4 stages, per-stage progress bars, `role=progressbar` +
-  `aria-current=step`), `EventLog` (live feed), `useJobEvents` (native
-  `EventSource` → strict reducer over `job.started`/`stage.started`/`progress`/
-  `stage.completed`/`job.completed`; replay button). Mock SSE: dev-only Vite
-  middleware `GET /mock/events` streaming standard SSE frames — same shape S0.9
-  will serve from `GET /events`; `/api` dev proxy → FastAPI :8000. Verified:
-  `pnpm install` ✓ · `pnpm format:check` ✓ · `pnpm lint` ✓ · `pnpm build` ✓
-  (tsc strict ×2 + vite build) · `pnpm dev` live: shell HTML served + full mock
-  SSE timeline via curl (progress-bar animation is contract-level verified).
+- 2026-08-27 · **S0.7 — React shell** (commit `4d8840b`, details: SESSION_LOG.md): pnpm
+  workspace at root (one-command dev/build/preview/lint/format); `apps/web` = React 18 +
+  Vite 6 + TS strict + Tailwind 4 + ESLint 9/Prettier 3 — **S0.1 web half closed**.
+  Shell: `Header` (SSE badge), `PipelineView` (six §4 stages, a11y progressbars),
+  `EventLog`, `useJobEvents` (native `EventSource` → strict reducer over the §11 event
+  contract). Dev-only mock SSE `GET /mock/events` (same shape as `GET /events`); `/api`
+  dev proxy → :8000. Verified: format/lint/build ✓ · live mock SSE timeline ✓.
 - 2026-08-26 · **S0.6 — AI gateway** (details: SESSION_LOG.md): `qa_copilot_ai`
   gateway/redaction/prompts + DB prompt registry + `ai_actions`; 60 tests green,
   live LM Studio check OK. Open: `VECTOR_DIM = 1536` still provisional (no
@@ -77,14 +70,15 @@
 
 ## 3. NEXT STEP (start here)
 
-**S0.9 — jobs API** (build bible §19): async job submission (202) + SSE event stream.
-- **Exit criterion:** per §19 — job POST returns 202 with id; events stream over
-  `GET /events` in the S0.7 shell contract shape (`job.started`/`stage.*`/`progress`/
-  `job.completed`).
-- Notes: `useJobEvents` (S0.7 shell) already speaks the event contract — point it at the
-  real endpoint and drop the mock SSE. S0.8 landed **header-based JWT**, so the web
-  client needs a fetch-based SSE reader (`EventSource` can't set `Authorization`;
-  flagged in S0.7 session log).
+**S0.10 — demo app v0** (build bible §19, spec §23): separate repo
+`ai-qa-copilot-demo-app` — Express + SQLite + React; `/login /products /cart /checkout`;
+defect-injection via env flags.
+- **Exit criterion:** manual smoke passes; one defect flag changes behavior.
+- Queued follow-ups (not S0.10 blockers): web shell still consumes the mock SSE
+  (`/mock/events`) — point `useJobEvents` at `GET /events` with a fetch-based reader
+  (EventSource can't set `Authorization`; JWT landed S0.8) · `StubAgent` → real LLM
+  agent (S1.1/S1.2) through the `JobAgent` protocol · SSE bus is in-process —
+  multi-worker deploy needs Redis pub/sub.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -130,6 +124,12 @@
   RBAC is **project-scoped** via `project_members.role` — `users.role` is a default only
   (§31.3) · role check precedes project lookup (non-members → 403, no existence leak) ·
   login dummies the hash verify for unknown users (timing)
+- S0.9 jobs: `JobAgent` protocol is the **only** replaceable seam (S1.x swaps in the LLM
+  agent without API changes) · `StubAgent` = deterministic placeholder (six §4 stages) ·
+  state machine queued→running→completed|failed (illegal edge → `InvalidJobTransition`) ·
+  `job.started` emitted before the agent runs (no event loss) · SSE bus in-process
+  pub/sub (multi-worker deploy → Redis) · `sse_stream()` typed `AsyncGenerator` so
+  `aclose()` typechecks
 
 ## 6. Pointers (paths only — no code here)
 
@@ -149,6 +149,9 @@
   (login/me/projects) · `config.py` (`auth_token_secret`) · membership lookups:
   `packages/repository/src/qa_copilot_repository/membership.py` · migration
   `infra/migrations/versions/2d783f832c48_*.py`
+- Jobs (S0.9): `apps/api/src/qa_copilot_api/jobs.py` (JobAgent/StubAgent/JobBus/
+  `sse_stream`/`reap_orphans`) · `routes.py` (analyze/jobs/events) · `schemas.py`
+  (Analyze/JobResponse) · `tests/unit/test_jobs.py`
 
 ## 7. Open questions / gotchas
 
@@ -164,6 +167,9 @@
   they sort in the third-party block, no blank line between `pydantic`/`pytest` and them.
 - **mypy strict + pydantic:** wire-string/negative cases must go through `model_validate` — typed
   constructors are arg-checked (`status="completed"` → arg-type error).
+- **pydantic-settings + mypy (S0.9):** the private `_env_file` init kwarg is invisible to mypy
+  (stub limitation — reproduced with a minimal `BaseSettings` subclass) → test calls carry
+  `# type: ignore[call-arg]` (3× in tests/unit); drop when stubs improve.
 - **SQLAlchemy:** `metadata` is reserved on DeclarativeBase — JSONB `metadata` columns use the
   `metadata_` Python attribute (learned in S0.5).
 - **ruff B023:** factory lambdas in loops must bind the loop vars
