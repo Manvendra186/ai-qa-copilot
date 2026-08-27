@@ -5,11 +5,17 @@
 
 ## 1. Current position
 
-- **Phase:** 0 — Foundation
-- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · S0.6 ✓ · S0.7 ✓ · S0.8 ✓ · **S0.9 ✓ — next: S0.10**
+- **Phase:** 0 — Foundation **complete** → Phase 1 — Requirement → Test Design
+- **Step:** S0.1–S0.9 ✓ · **S0.10 ✓ — next: S1.1**
 
 ## 2. Just completed
 
+- 2026-08-27 · **S0.10 — demo app v0** (separate repo `ai-qa-copilot-demo-app`, commit `43739a5`,
+  details: SESSION_LOG.md): Express 4 + `better-sqlite3` + React 18/Vite 6; `/login /products
+  /cart /checkout`; demo user `qa`/`qa1234`; defect flags 1:1 §16 — `DEFECT_API_500` (checkout
+  500) · `DEFECT_BAD_DATA` (order `items: []`) · `DEFECT_FLAKY` (300ms–3s) · `DEFECT_LOCATOR_DRIFT`
+  (client-side id rename/removal via `GET /api/config`). **Smoke 11/11 · defect-check 7/7 ·
+  build ✓ · SPA serve ✓.** Phase 0 done.
 - 2026-08-27 · **S0.9 — jobs API** (commit `2051749`, details: SESSION_LOG.md):
   `qa_copilot_api.jobs` — async job submission + SSE (build bible §11/§19).
   `POST /projects/{id}/requirements/analyze` → **202** `{job_id}` (member+; requirement
@@ -21,64 +27,20 @@
   startup (PID-scoped). In-process pub/sub bus (multi-worker → Redis, noted).
   **97 unit tests green** · mypy strict clean (34 files — 34 errors fixed, incl. S0.8
   debt) · ruff check+format ✓.
-- 2026-08-27 · **S0.8 — auth baseline** (commit `6df40a6`, details: SESSION_LOG.md):
-  `qa_copilot_api.auth` — PBKDF2-SHA256 + HS256 JWT + Bearer; **project-scoped** RBAC via
-  `project_members.role` (non-member 403 before project lookup; `users.role` default
-  only); routes login/me/projects (viewer+), project delete (owner); `AUTH_TOKEN_SECRET`
-  required (missing → 500). Migration `2d783f832c48` (`project_members`,
-  `users.password_hash`); seed links dev user as owner. **82 unit tests green** ·
-  live smoke ✓.
-
-- 2026-08-27 · **S0.7 — React shell** (commit `4d8840b`, details: SESSION_LOG.md): pnpm
-  workspace at root (one-command dev/build/preview/lint/format); `apps/web` = React 18 +
-  Vite 6 + TS strict + Tailwind 4 + ESLint 9/Prettier 3 — **S0.1 web half closed**.
-  Shell: `Header` (SSE badge), `PipelineView` (six §4 stages, a11y progressbars),
-  `EventLog`, `useJobEvents` (native `EventSource` → strict reducer over the §11 event
-  contract). Dev-only mock SSE `GET /mock/events` (same shape as `GET /events`); `/api`
-  dev proxy → :8000. Verified: format/lint/build ✓ · live mock SSE timeline ✓.
-- 2026-08-26 · **S0.6 — AI gateway** (details: SESSION_LOG.md): `qa_copilot_ai`
-  gateway/redaction/prompts + DB prompt registry + `ai_actions`; 60 tests green,
-  live LM Studio check OK. Open: `VECTOR_DIM = 1536` still provisional (no
-  embedding model served locally yet).
-- 2026-08-26 · **S0.5 — SQLAlchemy + Alembic + seed** (commit this session):
-  `qa_copilot_repository` — `models.py` (18 §10 core tables + `prompt_versions`, typed
-  `sa.Uuid(as_uuid=False)` → `str` ids, `metadata_` attr / `metadata` col, enums as
-  plain `VARCHAR(32)` of domain wire values), `db.py` (`get_database_url()` → env/.env
-  fallback, `make_engine()`, `session_scope()`); `infra/migrations` (Alembic, `env.py`
-  reads URL via `db.get_database_url()`); initial migration `60fa1027d8d2` enables pgvector
-  (`CREATE EXTENSION IF NOT EXISTS vector`) — **not dropped on downgrade**; `scripts/seed.py`
-  idempotent (natural-key lookups; deterministic `uuid5` ids). Verified: `alembic upgrade head`
-  ✓, `alembic current` → head, seed ×2 no duplicates, live vector ops ✓, **41 tests green**
-  (incl. 2 DB smoke tests) · ruff ✓ · mypy strict ✓.
-  Open: `VECTOR_DIM = 1536` provisional until the embedding model is chosen (S0.6).
-- 2026-08-26 · **S0.4 — domain package** (commit `f2fccea`): `qa_copilot_domain` now holds the
-  §10 core model as pydantic v2 — `enums.py` (TestType, Priority, RiskLevel, JobType, JobStatus,
-  FailureCategory (§16), ArtifactType; all `StrEnum`, snake_case wire values matching §12) +
-  `entities.py` (Project, Requirement, TestCase, Failure, Artifact, Job) + `base.DomainModel`
-  (`extra="forbid"`, `from_attributes`); `NonBlankStr` = `StringConstraints(min_length=1,
-  strip_whitespace=True)`; `confidence`/`progress` bounded 0.0–1.0; ids `str | None` (server-assigned);
-  `TestCase.requirement_refs` mirrors the §10 M:N join. `pydantic>=2.9` added to domain deps;
-  `TestCase`/`TestType` carry `__test__ = False` (pytest). **31 tests green · ruff ✓ · mypy strict ✓.**
-- 2026-08-26 · **S0.3 — FastAPI skeleton** (commit `cbd623d`): `create_app(settings)` factory +
-  module `app`; `Settings` (pydantic-settings, `.env` + fallbacks); stdlib JSON structured logging
-  with uvicorn routed through it; `GET /health` → **200 verified live**; `py.typed`. 14 tests green.
-- 2026-08-26 · **S0.2 — compose infra up** (commit `4446f1a`): native PG16 kept on 5432 → compose db
-  on **5433** (`.env`); redis :6379; both healthy; pgvector **0.8.6** available (extension at S0.5).
-- 2026-08-26 · **S0.1 — Monorepo skeleton (python half)** (commit `ed6dcaf`): uv workspace
-  (7 members), ruff + mypy strict + pytest, pre-commit, `.env.example`.
-- 2026-08-26 · Bootstrap: build bible **v1.1** (canonical) + `agent-memory/` + `README.md`.
+- 2026-08-26/27 · **S0.1–S0.8** (details: SESSION_LOG.md): monorepo skeleton (uv+pnpm) · compose
+  infra (PG16+pgvector :5433, Redis) · FastAPI skeleton · domain package · SQLAlchemy+Alembic+seed ·
+  AI gateway (LM Studio live ✓) · React shell (mock SSE) · auth baseline (JWT + project RBAC).
 
 ## 3. NEXT STEP (start here)
 
-**S0.10 — demo app v0** (build bible §19, spec §23): separate repo
-`ai-qa-copilot-demo-app` — Express + SQLite + React; `/login /products /cart /checkout`;
-defect-injection via env flags.
-- **Exit criterion:** manual smoke passes; one defect flag changes behavior.
-- Queued follow-ups (not S0.10 blockers): web shell still consumes the mock SSE
+**S1.1 — Requirement Agent** (build bible §19 Phase 1): prompt v1 (registry §31.6) +
+schema-validated output through the S0.6 gateway; runs inside the S0.9 job pipeline
+(`JobAgent` seam — `StubAgent` is the placeholder to replace).
+- **Exit criterion:** 10 fixture requirements → 10/10 schema-valid.
+- Queued follow-ups (not S1.1 blockers): web shell still consumes the mock SSE
   (`/mock/events`) — point `useJobEvents` at `GET /events` with a fetch-based reader
-  (EventSource can't set `Authorization`; JWT landed S0.8) · `StubAgent` → real LLM
-  agent (S1.1/S1.2) through the `JobAgent` protocol · SSE bus is in-process —
-  multi-worker deploy needs Redis pub/sub.
+  (EventSource can't set `Authorization`; JWT landed S0.8) · SSE bus is in-process —
+  multi-worker deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1).
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -136,7 +98,8 @@ defect-injection via env flags.
 - Build bible: `docs/AI_QA_Copilot_Build_Bible_v1.1.md`
 - Session history: `agent-memory/SESSION_LOG.md`
 - v1.0 original (PDF, historical): `c:\Users\manve\Desktop\AI_QA_Copilot_Build_Bible.pdf`
-- Demo app (later, S0.10): separate repo `ai-qa-copilot-demo-app`
+- Demo app (S0.10 ✓): `c:\Users\manve\Workspace\ai-qa-copilot-demo-app` (separate repo;
+  `pnpm dev` · `pnpm smoke` · `pnpm defect-check` · demo user `qa`/`qa1234` · server :4000)
 - Domain entities: `packages/domain/src/qa_copilot_domain/{base,enums,entities}.py`
 - ORM models: `packages/repository/src/qa_copilot_repository/models.py` (18 core tables)
 - Migrations: `infra/migrations/` (initial: `60fa1027d8d2_initial_core_schema.py`)
@@ -155,6 +118,11 @@ defect-injection via env flags.
 
 ## 7. Open questions / gotchas
 
+- **node:sqlite (S0.10):** experimental on Node 22 (warning + stderr noise) — demo app uses
+  `better-sqlite3` (prebuilds OK; approve in `pnpm-workspace.yaml` `onlyBuiltDependencies`/`allowBuilds`).
+- **PowerShell NativeCommandError (S0.10):** any child-process stderr (pnpm progress, node
+  warnings) makes the tool shell report failure — read the actual output/exit code; use
+  `git --no-pager`; background servers via `Start-Process -PassThru` + `Stop-Process -Id`.
 - **PATH gotcha:** docker CLI lives on the USER PATH (per-user install) — terminals opened before
   install don't see it; refresh `$env:Path` from Machine+User (or open a new shell).
 - **pnpm 11:** the `pnpm` field in `package.json` is IGNORED — settings like

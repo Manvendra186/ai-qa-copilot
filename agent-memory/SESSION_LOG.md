@@ -463,3 +463,38 @@
   machine, mypy/ruff/pytest green)`.
 - **Next session start:** S0.10 (demo app v0, separate repo `ai-qa-copilot-demo-app`)
   — see `STATE.md` §3.
+
+## 2026-08-27 — S0.10 Demo app v0 (separate repo)
+
+- **Goal:** S0.10 — demo app v0 in a separate repo `ai-qa-copilot-demo-app` (build bible §19/§23):
+  Express + SQLite + React; `/login /products /cart /checkout`; defect injection via env flags.
+  Exit: manual smoke passes; one defect flag changes behavior.
+- **Did:**
+  - New repo `c:\Users\manve\Workspace\ai-qa-copilot-demo-app` (git init, pnpm workspace:
+    `server` + `client`).
+  - `server/`: Express 4 + `better-sqlite3` (prebuilds; `node:sqlite` rejected — experimental on
+    Node 22). `createApp({db, defects})` factory; routes: auth (`POST /api/login`, demo user
+    `qa`/`qa1234`, Bearer token in SQLite `sessions`), products (4 seeded), cart (per-session),
+    orders (`POST /api/checkout` → 201, `GET /api/orders[/:id]`); `GET /api/config` exposes active
+    defect flags; `GET /health`; serves `client/dist` + SPA fallback in prod mode.
+  - `client/`: React 18 + Vite 6 + react-router 6; pages Login/Products/Cart/Checkout; `data-testid`
+    vocabulary in pure `src/testids.js` (BASE vs DRIFTED maps); drift applied at runtime from
+    `GET /api/config` (one server env flag changes the rendered ids).
+  - Defect flags (`server/src/defects.js`, 1:1 with §16 taxonomy): `DEFECT_API_500` (checkout → 500,
+    product defect) · `DEFECT_BAD_DATA` (order `items: []`, test-data defect) · `DEFECT_FLAKY`
+    (300ms–3s delay on `/api/*`, flaky behavior) · `DEFECT_LOCATOR_DRIFT` (renamed/removed test ids,
+    automation defect).
+  - `scripts/smoke.mjs` (11-check happy path) + `scripts/defect_check.mjs` (spawns the server per
+    flag, in-memory DB, verifies all 4 flags). `Dockerfile` for the S3.1 compose service
+    (not build-verified yet).
+- **Verified (exit criteria):** `pnpm install` ✓ (esbuild + better-sqlite3 builds approved via
+  `allowBuilds`) · `pnpm build` ✓ (37 modules) · **smoke: 11/11 PASS** · **defect-check: 7/7 PASS**
+  (500 on checkout; `items: []` on checkout + order detail; 1206ms flaky delay; drift flag + id
+  renames/removals) · prod single-process: `/` + `/checkout` SPA → 200.
+- **Commit:** `43739a5 step S0.10: demo app v0 (Express + SQLite + React, /login /products /cart
+  /checkout, defect-injection env flags)` (separate repo).
+- **Decisions / gotchas:** `better-sqlite3` over `node:sqlite` (experimental warning + stderr
+  noise) · `DEFECT_LOCATOR_DRIFT` applied client-side at runtime via `/api/config` (one server flag
+  changes the UI) · server :4000, client dev :5174 (5173 = copilot web shell) · PowerShell treats
+  child-process stderr as an error (NativeCommandError) — read the actual output.
+- **Next session start:** S1.1 (Requirement Agent — prompt v1, schema validation) — see `STATE.md` §3.
