@@ -119,3 +119,38 @@ class JobOut(BaseModel):
     created_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
+
+
+# --- S1.3: persisted requirement + test cases read-back (§10, §12) -------------
+
+
+class TestCaseOut(BaseModel):
+    """One structured test case (§12 vocabulary; enum values as wire strings)."""
+
+    id: str
+    title: str
+    type: str
+    priority: str
+    preconditions: list[str]
+    steps: list[str]
+    expected_results: list[str]
+    risk: str
+    created_at: datetime | None
+
+
+class RequirementOut(BaseModel):
+    """``GET /api/v1/requirements/{id}`` (S1.3 read-back).
+
+    The ``test_case_generation`` job stores the requirement id in its
+    ``output_ref`` (§11); this is what the shell renders after the job
+    completes. ``test_cases`` are the §10 rows linked via the M:N join.
+    """
+
+    id: str
+    project_id: str
+    title: str
+    content: str
+    acceptance_criteria: list[str]
+    risk: str
+    created_at: datetime | None
+    test_cases: list[TestCaseOut]

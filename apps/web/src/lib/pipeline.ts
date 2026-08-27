@@ -1,7 +1,7 @@
 /**
  * Pipeline contract (build bible §4): the six stages every requirement
- * passes through. The mock SSE server (`vite.config.ts`) and the shell
- * agree on this list; S0.9 serves the same shape from the real API.
+ * passes through. The real jobs API (`qa_copilot_api.jobs`) emits the same
+ * event names; the shell's `useJobEvents` reduces the stream into this shape.
  */
 export const PIPELINE_STAGES = [
   'requirement',
@@ -32,12 +32,20 @@ export interface StageState {
   progress: number;
 }
 
-/** Payload shape of every SSE event (S0.7 mock and the future S0.9 API). */
+/**
+ * Payload shape of every SSE event (build bible §11; `qa_copilot_api.jobs`).
+ * Terminal fields: `job.completed` carries `output_ref` (for
+ * `test_case_generation` jobs: the persisted requirement id — S1.3);
+ * `job.failed` carries `error`.
+ */
 export interface SsePayload {
   job_id: string;
+  project_id?: string;
   stage?: string;
   value?: number;
   stages?: string[];
+  output_ref?: string;
+  error?: string;
 }
 
 export interface EventLogEntry {

@@ -1,10 +1,16 @@
 import type { EventLogEntry } from '../lib/pipeline';
 
-export function EventLog({ entries, done }: { entries: EventLogEntry[]; done: boolean }) {
+interface Props {
+  entries: EventLogEntry[];
+  done: boolean;
+  failed?: boolean;
+}
+
+export function EventLog({ entries, done, failed = false }: Props) {
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/40">
       <header className="border-b border-slate-800 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
-        Live event stream (mocked SSE)
+        Live event stream (SSE)
       </header>
       <ol
         className="max-h-64 overflow-y-auto px-4 py-3 font-mono text-xs leading-6"
@@ -23,8 +29,11 @@ export function EventLog({ entries, done }: { entries: EventLogEntry[]; done: bo
         )}
         {done && (
           <li className="text-emerald-300">
-            job completed — press “Replay run” to run the mock again
+            job completed — the persisted test cases are rendered above
           </li>
+        )}
+        {failed && (
+          <li className="text-rose-300">stream ended with an error — submit again to retry</li>
         )}
       </ol>
     </section>

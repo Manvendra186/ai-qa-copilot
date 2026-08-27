@@ -12,6 +12,7 @@ S0.9: async jobs API (§11, §31.2) — the mandatory ``202 + job_id`` pattern:
 
 - ``POST /api/v1/requirements/analyze`` → **202 + {job_id}** (``member`` or above)
 - ``POST /api/v1/requirements/test-cases`` → **202 + {job_id}** (S1.2, ``member``+)
+- ``GET /api/v1/requirements/{id}``  — persisted requirement + test cases (S1.3, ``viewer``+)
 - ``GET /api/v1/jobs/{job_id}``         — job status/progress/result refs (``viewer``+)
 - ``GET /api/v1/events``                — SSE stream of job progress events
                                           (``viewer``+ on the job's/project's project)
@@ -20,6 +21,7 @@ S0.9: async jobs API (§11, §31.2) — the mandatory ``202 + job_id`` pattern:
 from __future__ import annotations
 
 import json
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from qa_copilot_domain.enums import JobType, ProjectRole, role_at_least
@@ -248,6 +250,53 @@ def design_test_cases(
 
     response.headers["Location"] = f"/api/v1/jobs/{job.id}"
     return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@requirements_router.get("/{requirement_id}", response_model=schemas.RequirementOut)
+def get_requirement(
+    requirement_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.RequirementOut:
+    """Read a persisted requirement + its designed test cases (S1.3, §10/§12).
+
+    The ``test_case_generation`` job stores the requirement id in its
+    ``output_ref`` — this is the endpoint the shell calls to render the
+    suite. ``viewer`` or above on the requirement's project (§31.3);
+    unknown ids 404.
+    """
+    try:
+        uuid.UUID(requirement_id)
+    except ValueError:
+        # Not a UUID → can't be a row: 404 without a DB round-trip.
+        raise HTTPException(status_code=404, detail="requirement not found") from None
+    requirement = db.get(models.Requirement, requirement_id)
+    if requirement is None:
+        raise HTTPException(status_code=404, detail="requirement not found")
+    _require_project_role(db, user, requirement.project_id, ProjectRole.VIEWER)
+    return schemas.RequirementOut(
+        id=requirement.id,
+        project_id=requirement.project_id,
+        title=requirement.title,
+        content=requirement.content,
+        acceptance_criteria=list(requirement.acceptance_criteria),
+        risk=requirement.risk.value,
+        created_at=requirement.created_at,
+        test_cases=[
+            schemas.TestCaseOut(
+                id=case.id,
+                title=case.title,
+                type=case.type.value,
+                priority=case.priority.value,
+                preconditions=list(case.preconditions),
+                steps=list(case.steps),
+                expected_results=list(case.expected_results),
+                risk=case.risk.value,
+                created_at=case.created_at,
+            )
+            for case in requirement.test_cases
+        ],
+    )
 
 
 @jobs_router.get("/{job_id}", response_model=schemas.JobOut)

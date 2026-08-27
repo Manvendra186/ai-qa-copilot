@@ -7,8 +7,16 @@ const STATUS_META: Record<ConnectionStatus, { label: string; dot: string }> = {
   closed: { label: 'Stream closed', dot: 'bg-slate-400' },
 };
 
-export function Header({ connection }: { connection: ConnectionStatus }) {
-  const meta = STATUS_META[connection];
+interface Props {
+  user?: string;
+  project?: string;
+  /** Live job stream status — hidden until a job starts. */
+  status?: ConnectionStatus | null;
+  onLogout?: () => void;
+}
+
+export function Header({ user, project, status, onLogout }: Props) {
+  const meta = status ? STATUS_META[status] : null;
   return (
     <header className="border-b border-slate-800 bg-slate-900/60">
       <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-6 py-4">
@@ -24,11 +32,23 @@ export function Header({ connection }: { connection: ConnectionStatus }) {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm text-slate-300">Demo project</span>
-          <span className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
-            <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
-            {meta.label}
-          </span>
+          {project && <span className="text-sm text-slate-300">{project}</span>}
+          {user && <span className="text-xs text-slate-400">{user}</span>}
+          {meta && (
+            <span className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
+              <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+              {meta.label}
+            </span>
+          )}
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+            >
+              Sign out
+            </button>
+          )}
         </div>
       </div>
     </header>

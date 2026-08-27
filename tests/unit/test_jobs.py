@@ -805,3 +805,100 @@ def test_test_design_agent_persists_suite_and_returns_requirement_id(env: dict[s
         assert action is not None
         assert "TC-001" in (action.output_ref or "")
         assert "valid login succeeds" in (action.output_ref or "")
+
+
+# --- S1.3: GET /requirements/{id} read-back (§10, §12) --------------------------
+
+
+def _persist_requirement(env: dict[str, Any]) -> str:
+    """Persist one requirement + a two-case suite as §10 rows (job-shaped).
+
+    Writes through the same entry point ``TestDesignJobAgent`` uses
+    (``persist_requirement_with_suite``), so the read endpoint is tested
+    against realistic rows without re-driving the fake LLM.
+    """
+    from qa_copilot_ai import TestCase as AITestCase
+    from qa_copilot_ai import TestSuite
+    from qa_copilot_repository import requirements as repo_requirements
+
+    suite = TestSuite(
+        test_cases=[
+            AITestCase(
+                id="TC-001",
+                title="valid login succeeds",
+                type="functional",
+                priority="high",
+                preconditions=["a registered user exists"],
+                steps=["enter email + password", "submit"],
+                expected_results=["redirected to /home"],
+            ),
+            AITestCase(
+                id="TC-002",
+                title="empty password rejected",
+                type="negative",
+                priority="medium",
+                steps=["submit an empty password"],
+                expected_results=["an error is shown"],
+            ),
+        ]
+    )
+    with db.make_session_factory(env["engine"])() as session:
+        persisted = repo_requirements.persist_requirement_with_suite(
+            session,
+            project_id=ACME_ID,
+            title="Order history",  # mirrors DESIGN_BODY (kept literal for mypy)
+            content="Users can view their order history.",
+            acceptance_criteria=["Orders are listed newest first", "Each order shows status"],
+            suite=suite,
+        )
+        session.commit()
+    return persisted.requirement_id
+
+
+def test_get_requirement_returns_persisted_suite(client: TestClient, env: dict[str, Any]) -> None:
+    """S1.3 read-back: the shell renders the suite the job persisted via ``output_ref``."""
+    req_id = _persist_requirement(env)
+    r = client.get(f"/api/v1/requirements/{req_id}", headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"] == req_id
+    assert body["project_id"] == ACME_ID
+    assert body["title"] == DESIGN_BODY["title"]
+    assert body["content"] == DESIGN_BODY["content"]
+    assert body["acceptance_criteria"] == DESIGN_BODY["acceptance_criteria"]
+    assert body["risk"] == "medium"  # RiskLevel.MEDIUM default
+    assert body["created_at"]
+
+    cases = body["test_cases"]
+    assert len(cases) == 2
+    assert {case["title"] for case in cases} == {
+        "valid login succeeds",
+        "empty password rejected",
+    }
+    for case in cases:
+        # DB row identity (uuid), not the suite-local TC-### id
+        assert case["id"]
+        assert case["created_at"]
+        assert case["steps"] and case["expected_results"]
+        assert case["type"] in {"functional", "negative"}
+    functional = next(c for c in cases if c["title"] == "valid login succeeds")
+    assert functional["priority"] == "high"
+    assert functional["preconditions"] == ["a registered user exists"]
+    assert functional["steps"] == ["enter email + password", "submit"]
+    assert functional["expected_results"] == ["redirected to /home"]
+
+
+def test_get_requirement_rbac_and_404(client: TestClient, env: dict[str, Any]) -> None:
+    """viewer+ may read; non-members 403 (no existence leak); unknown ids 404 (§31.3)."""
+    req_id = _persist_requirement(env)
+    # unauthenticated
+    assert client.get(f"/api/v1/requirements/{req_id}").status_code == 401
+    # viewer may read
+    assert client.get(f"/api/v1/requirements/{req_id}", headers=_auth("carol")).status_code == 200
+    # non-member: 403, not 404 — no existence leak
+    assert client.get(f"/api/v1/requirements/{req_id}", headers=_auth("dave")).status_code == 403
+    # unknown (but valid-uuid) id: 404
+    ghost = str(uuid5(NS, "ghost-requirement"))
+    assert client.get(f"/api/v1/requirements/{ghost}", headers=_auth("alice")).status_code == 404
+    # malformed id: 404 without a 500
+    assert client.get("/api/v1/requirements/not-a-uuid", headers=_auth("alice")).status_code == 404

@@ -1,4 +1,5 @@
-import { useEffect, useReducer, useState } from 'react';
+import { useCallback, useEffect, useReducer, useState } from 'react';
+import { streamJobEvents } from '../lib/api';
 import {
   PIPELINE_STAGES,
   STAGE_LABELS,
@@ -9,27 +10,36 @@ import {
 } from '../lib/pipeline';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'error' | 'closed';
+export type JobOutcome = 'running' | 'completed' | 'failed';
 
 export interface JobState {
   jobId: string | null;
   connection: ConnectionStatus;
-  done: boolean;
+  outcome: JobOutcome;
+  /** Terminal `output_ref` (for `test_case_generation` jobs: requirement id). */
+  outputRef: string | null;
+  /** Terminal or stream error message, if any. */
+  error: string | null;
   stages: StageState[];
   log: EventLogEntry[];
 }
 
 export interface JobEvents extends JobState {
-  replay: () => void;
+  /** Open the SSE stream for the given job (resets the run state). */
+  start: (jobId: string) => void;
 }
 
 type Action =
+  | { type: 'run.start'; jobId: string }
   | { type: 'connection'; status: ConnectionStatus }
-  | { type: 'job.started'; payload: SsePayload }
+  | { type: 'job.started' }
   | { type: 'stage.started'; stage: StageId }
   | { type: 'progress'; stage: StageId; value: number }
   | { type: 'stage.completed'; stage: StageId }
-  | { type: 'job.completed' }
-  | { type: 'reset' };
+  | { type: 'job.completed'; outputRef: string | null }
+  | { type: 'job.failed'; error: string }
+  | { type: 'stream.error'; message: string }
+  | { type: 'stream.done' };
 
 const MAX_LOG_ENTRIES = 40;
 const STAGE_IDS: readonly string[] = PIPELINE_STAGES;
@@ -38,7 +48,9 @@ function initialState(): JobState {
   return {
     jobId: null,
     connection: 'connecting',
-    done: false,
+    outcome: 'running',
+    outputRef: null,
+    error: null,
     stages: PIPELINE_STAGES.map((id) => ({ id, status: 'pending', progress: 0 })),
     log: [],
   };
@@ -66,15 +78,13 @@ function withStage(
 
 function reducer(state: JobState, action: Action): JobState {
   switch (action.type) {
+    case 'run.start':
+      return { ...initialState(), jobId: action.jobId, connection: 'connecting' };
     case 'connection':
+      if (state.connection === action.status) return state;
       return { ...state, connection: action.status };
     case 'job.started':
-      return {
-        ...state,
-        jobId: action.payload.job_id,
-        done: false,
-        log: withLog(state, 'job.started', `job ${action.payload.job_id}`),
-      };
+      return { ...state, log: withLog(state, 'job.started', `job ${state.jobId ?? ''}`) };
     case 'stage.started':
       return {
         ...state,
@@ -114,59 +124,107 @@ function reducer(state: JobState, action: Action): JobState {
     case 'job.completed':
       return {
         ...state,
-        done: true,
+        outcome: 'completed',
         connection: 'closed',
+        outputRef: action.outputRef,
         stages: state.stages.map((s) => ({ ...s, status: 'done', progress: 1 })),
-        log: withLog(state, 'job.completed', 'pipeline finished'),
+        log: withLog(
+          state,
+          'job.completed',
+          action.outputRef ? `requirement ${action.outputRef}` : 'pipeline finished',
+        ),
       };
-    case 'reset':
-      return initialState();
+    case 'job.failed':
+      return {
+        ...state,
+        outcome: 'failed',
+        connection: 'error',
+        error: action.error,
+        log: withLog(state, 'job.failed', action.error),
+      };
+    case 'stream.error':
+      return {
+        ...state,
+        outcome: 'failed',
+        connection: 'error',
+        error: action.message,
+        log: withLog(state, 'stream.error', action.message),
+      };
+    case 'stream.done':
+      // Server closed without a terminal event (defensive — shouldn't happen).
+      if (state.outcome !== 'running') return state;
+      return {
+        ...state,
+        connection: 'closed',
+        log: withLog(state, 'stream.closed', 'stream ended without a terminal event'),
+      };
   }
 }
 
 /**
- * Subscribes to an SSE endpoint (mocked in S0.7; the real jobs API from
- * S0.9) and reduces the stream into pipeline stage state + an event log.
+ * Live job feed (build bible §11): `start(jobId)` opens
+ * `GET /api/v1/events?job_id=...` (fetch + streaming reader with the Bearer
+ * header — see `lib/api.ts`) and reduces the event stream into pipeline
+ * stage state, an event log, and the terminal `output_ref`
+ * (the persisted requirement id for `test_case_generation` jobs).
  */
-export function useJobEvents(url: string = '/mock/events'): JobEvents {
+export function useJobEvents(): JobEvents {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
-  const [runId, setRunId] = useState(0);
+  const [active, setActive] = useState<{ jobId: string; run: number } | null>(null);
+
+  const start = useCallback((jobId: string) => {
+    // `run` counter: re-starting the *same* job id still re-runs the effect.
+    setActive((prev) => ({ jobId, run: (prev?.run ?? 0) + 1 }));
+  }, []);
 
   useEffect(() => {
-    const source = new EventSource(url);
-    const parse = (event: MessageEvent<string>): SsePayload => JSON.parse(event.data) as SsePayload;
+    if (active === null) return;
+    const controller = new AbortController();
+    dispatch({ type: 'run.start', jobId: active.jobId });
 
-    const on = (name: string, handler: (payload: SsePayload) => void) => {
-      source.addEventListener(name, (event) => handler(parse(event as MessageEvent<string>)));
-    };
-
-    on('job.started', (p) => dispatch({ type: 'job.started', payload: p }));
-    on('stage.started', (p) => {
-      if (isStage(p.stage)) dispatch({ type: 'stage.started', stage: p.stage });
-    });
-    on('progress', (p) => {
-      if (isStage(p.stage) && typeof p.value === 'number') {
-        dispatch({ type: 'progress', stage: p.stage, value: p.value });
+    void (async () => {
+      try {
+        await streamJobEvents(active.jobId, controller.signal, (event, data) => {
+          dispatch({ type: 'connection', status: 'open' });
+          const payload = data as unknown as SsePayload;
+          switch (event) {
+            case 'job.started':
+              dispatch({ type: 'job.started' });
+              break;
+            case 'stage.started':
+              if (isStage(payload.stage)) dispatch({ type: 'stage.started', stage: payload.stage });
+              break;
+            case 'progress':
+              if (isStage(payload.stage) && typeof payload.value === 'number') {
+                dispatch({ type: 'progress', stage: payload.stage, value: payload.value });
+              }
+              break;
+            case 'stage.completed':
+              if (isStage(payload.stage)) dispatch({ type: 'stage.completed', stage: payload.stage });
+              break;
+            case 'job.completed':
+              dispatch({
+                type: 'job.completed',
+                outputRef: typeof payload.output_ref === 'string' ? payload.output_ref : null,
+              });
+              break;
+            case 'job.failed':
+              dispatch({ type: 'job.failed', error: payload.error ?? 'job failed' });
+              break;
+            default:
+              break;
+          }
+        });
+        dispatch({ type: 'stream.done' });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        const message = err instanceof Error ? err.message : String(err);
+        dispatch({ type: 'stream.error', message });
       }
-    });
-    on('stage.completed', (p) => {
-      if (isStage(p.stage)) dispatch({ type: 'stage.completed', stage: p.stage });
-    });
-    on('job.completed', () => {
-      dispatch({ type: 'job.completed' });
-      source.close();
-    });
+    })();
 
-    source.onopen = () => dispatch({ type: 'connection', status: 'open' });
-    source.onerror = () => dispatch({ type: 'connection', status: 'error' });
+    return () => controller.abort();
+  }, [active]);
 
-    return () => source.close();
-  }, [url, runId]);
-
-  const replay = () => {
-    dispatch({ type: 'reset' });
-    setRunId((id) => id + 1);
-  };
-
-  return { ...state, replay };
+  return { ...state, start };
 }

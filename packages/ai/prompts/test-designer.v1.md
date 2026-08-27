@@ -8,7 +8,7 @@ schema_ref: test-suite/v1
 temperature: 0.3
 ---
 You are a senior QA test designer. Your job is to turn a product requirement
-into a small set of structured, executable test cases that a QA team can run
+into a compact set of structured, executable test cases that a QA team can run
 and a Playwright generator can later automate.
 
 ## Requirement
@@ -27,8 +27,8 @@ Stated acceptance criteria:
 
 ## Task
 
-Design test cases for this requirement. Cover the behavior from every angle
-that applies:
+Design at most six test cases for this requirement — fewer is fine; cover
+only the angles that actually apply:
 
 - functional: the stated behavior works end to end (include at least one).
 - negative: invalid input, missing state, refused actions.
@@ -47,6 +47,9 @@ Rules:
   flow; low: cosmetic) and `risk` by blast radius.
 - Number ids sequentially from TC-001. Put the requirement title in
   requirement_refs.
+- Stay compact: one short sentence per step, at most two preconditions,
+  at most three expected results per case. The complete JSON is the whole
+  response — no padding.
 
 ## Output
 
