@@ -45,7 +45,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
-from qa_copilot_ai.agents import RequirementAgent, RequirementAgentResult, RequirementInput
+from qa_copilot_ai.agents import (
+    RequirementAgent,
+    RequirementAgentResult,
+    RequirementInput,
+    TestDesignAgent,
+    TestDesignAgentResult,
+    TestDesignInput,
+)
 from qa_copilot_domain.enums import JobStatus, JobType
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import models
@@ -61,6 +68,7 @@ __all__ = [
     "JobSnapshot",
     "RequirementJobAgent",
     "StubAgent",
+    "TestDesignJobAgent",
     "TERMINAL_EVENTS",
     "format_sse",
     "sse_stream",
@@ -310,6 +318,61 @@ class RequirementJobAgent:
                     latency_ms=cast(int, audit["latency_ms"]),
                     input_hash=audit.get("input_hash"),
                     output_ref=analysis_json[:1024],
+                )
+            )
+
+
+class TestDesignJobAgent:
+    """S1.2 test design agent: real LLM-backed design on the :class:`JobAgent` protocol.
+
+    Replaces :class:`StubAgent` for ``test_case_generation`` jobs. Runs the
+    pure :class:`qa_copilot_ai.agents.TestDesignAgent` (prompt registry +
+    gateway, §31.6/§31.1), records the ``ai_actions`` audit row against the
+    job's ``ai_sessions`` anchor (§31.5), and returns the validated
+    :class:`~qa_copilot_ai.agents.TestSuite` JSON as the ``output_ref``.
+    """
+
+    stages: tuple[str, ...] = ("test_design",)
+
+    def __init__(self, agent: TestDesignAgent, engine: Engine) -> None:
+        self._agent = agent
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        """Design the test suite; return the suite JSON as ``output_ref``."""
+        input_data = ctx.input
+        requirement = TestDesignInput(
+            title=input_data.get("title", ""),
+            content=input_data.get("content", ""),
+            acceptance_criteria=tuple(input_data.get("acceptance_criteria", [])),
+        )
+        await ctx.emit("stage.started", {"stage": "test_design"})
+        await ctx.emit("progress", {"stage": "test_design", "value": 0.5})
+        result = await self._agent.run(requirement)
+        suite_json = json.dumps(result.suite.model_dump(), separators=(",", ":"))
+        await ctx.emit("progress", {"stage": "test_design", "value": 1.0})
+        await ctx.emit("stage.completed", {"stage": "test_design"})
+        self._record_action(ctx, result, suite_json)
+        return suite_json[:1024]
+
+    def _record_action(
+        self, ctx: JobContext, result: TestDesignAgentResult, suite_json: str
+    ) -> None:
+        """Record the ``ai_actions`` audit row against the job's session anchor."""
+        if ctx.ai_session_id is None:
+            return
+        audit = result.call.audit_dict()
+        with repo_db.session_scope(self._engine) as session:
+            session.add(
+                models.AIAction(
+                    session_id=ctx.ai_session_id,
+                    agent=str(audit["agent"]),
+                    model=str(audit["model"]),
+                    tokens_in=cast(int, audit["tokens_in"]),
+                    tokens_out=cast(int, audit["tokens_out"]),
+                    latency_ms=cast(int, audit["latency_ms"]),
+                    input_hash=audit.get("input_hash"),
+                    output_ref=suite_json[:1024],
                 )
             )
 

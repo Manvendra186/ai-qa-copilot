@@ -28,7 +28,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from fastapi import FastAPI
-from qa_copilot_ai import FilePromptStore, LLMGateway, RequirementAgent
+from qa_copilot_ai import FilePromptStore, LLMGateway, RequirementAgent, TestDesignAgent
 from sqlalchemy import Engine
 
 from qa_copilot_api import jobs, routes
@@ -88,6 +88,26 @@ def _build_jobs_agent(settings: Settings, engine: Engine) -> jobs.JobAgent:
     return jobs.RequirementJobAgent(agent, engine)
 
 
+def _build_test_design_jobs_agent(settings: Settings, engine: Engine) -> jobs.JobAgent:
+    """Build the S1.2 test-design job agent: real LLM-backed when configured,
+    stub otherwise.
+
+    S1.2: when ``llm_base_url`` and ``llm_model`` are set, wire the
+    :class:`TestDesignJobAgent` (``test-designer`` prompt registry + gateway,
+    §31.6/§31.1). Otherwise fall back to the :class:`StubAgent` (S0.9 dev
+    pacing) so the 202/SSE contract stays verifiable without a model.
+    """
+    if not settings.llm_base_url or not settings.llm_model:
+        logger.info("LLM not configured; using StubAgent for test_case_generation")
+        return jobs.StubAgent(tick_delay=settings.job_tick_delay_s)
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "packages" / "ai" / "prompts"
+    store = FilePromptStore(prompts_dir)
+    gateway = LLMGateway(base_url=settings.llm_base_url, model=settings.llm_model)
+    agent = TestDesignAgent(store, gateway)
+    logger.info("LLM configured (model=%s); using TestDesignJobAgent", settings.llm_model)
+    return jobs.TestDesignJobAgent(agent, engine)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Application factory; settings injectable for tests and overrides."""
     settings = settings or get_settings()
@@ -113,6 +133,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs_bus = jobs.EventBus()
     app.state.jobs_runner = jobs.JobRunner(app.state.engine, app.state.jobs_bus)
     app.state.jobs_agent = _build_jobs_agent(settings, app.state.engine)
+    # S1.2: the Test Design Agent job (test_case_generation).
+    app.state.jobs_test_design_agent = _build_test_design_jobs_agent(settings, app.state.engine)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

@@ -11,6 +11,7 @@ S0.8: auth baseline (§31.3) — ``POST /api/v1/auth/login``,
 S0.9: async jobs API (§11, §31.2) — the mandatory ``202 + job_id`` pattern:
 
 - ``POST /api/v1/requirements/analyze`` → **202 + {job_id}** (``member`` or above)
+- ``POST /api/v1/requirements/test-cases`` → **202 + {job_id}** (S1.2, ``member``+)
 - ``GET /api/v1/jobs/{job_id}``         — job status/progress/result refs (``viewer``+)
 - ``GET /api/v1/events``                — SSE stream of job progress events
                                           (``viewer``+ on the job's/project's project)
@@ -195,6 +196,52 @@ def analyze_requirement(
     state = request.app.state
     if not state.jobs_runner.start(
         job.id, agent=state.jobs_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@requirements_router.post("/test-cases", status_code=202, response_model=schemas.JobCreated)
+def design_test_cases(
+    body: schemas.TestDesignRequest,
+    request: Request,
+    response: Response,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """Design test cases for a requirement: **202 + job_id** (S1.2, §11).
+
+    No AI work runs in this request (§31.2) — the Test Design Agent runs as a
+    ``test_case_generation`` job; track it via ``GET /api/v1/jobs/{job_id}``
+    or the SSE feed ``GET /api/v1/events?job_id=...``. ``member`` or above on
+    the target project; unknown projects 403 (no existence leak, §31.3).
+    """
+    project = db.get(models.Project, body.project_id)
+    if project is None:
+        # 403, not 404: a non-member must not be able to tell whether the
+        # project exists (§31.3).
+        raise HTTPException(status_code=403, detail="no role for this project")
+    _require_project_role(db, user, project.id, ProjectRole.MEMBER)
+
+    job_input = {
+        "title": body.title,
+        "content": body.content,
+        "acceptance_criteria": body.acceptance_criteria,
+    }
+    job = models.Job(
+        project_id=project.id,
+        type=JobType.TEST_CASE_GENERATION,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_test_design_agent, user_id=user.id, job_input=job_input
     ):
         # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
         raise HTTPException(status_code=409, detail="job is already running")

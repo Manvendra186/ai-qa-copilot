@@ -7,15 +7,28 @@ go through :class:`LLMGateway`** — agents never call the model directly
 
 S1.1: the Requirement Agent (build bible §19 Phase 1) — prompt v1 +
 schema-validated output through the gateway.
+
+S1.2: the Test Design Agent (build bible §19 Phase 1) — prompt v1 +
+schema-validated :class:`TestSuite` (the §12 test-case schema) through the
+gateway.
 """
 
 from .agents import (
     AGENT_NAME,
+    PRIORITIES,
+    RISK_LEVELS,
     SUGGESTED_TEST_TYPES,
+    TEST_CASE_TYPES,
+    TEST_DESIGNER_NAME,
     RequirementAgent,
     RequirementAgentResult,
     RequirementAnalysis,
     RequirementInput,
+    TestCase,
+    TestDesignAgent,
+    TestDesignAgentResult,
+    TestDesignInput,
+    TestSuite,
 )
 from .gateway import (
     AICallResult,
@@ -48,12 +61,14 @@ __all__ = [
     "InMemoryPromptStore",
     "LLMError",
     "LLMGateway",
+    "PRIORITIES",
     "PromptError",
     "PromptNotFound",
     "PromptRenderError",
     "PromptSpec",
     "PromptStore",
     "REDACTED",
+    "RISK_LEVELS",
     "RedactResult",
     "Redactor",
     "RequirementAgent",
@@ -61,6 +76,13 @@ __all__ = [
     "RequirementAnalysis",
     "RequirementInput",
     "SUGGESTED_TEST_TYPES",
+    "TEST_CASE_TYPES",
+    "TEST_DESIGNER_NAME",
+    "TestDesignAgent",
+    "TestDesignAgentResult",
+    "TestDesignInput",
+    "TestCase",
+    "TestSuite",
     "TokenUsage",
     "load_prompt_file",
     "render_prompt",

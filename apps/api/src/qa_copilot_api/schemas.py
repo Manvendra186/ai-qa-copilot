@@ -84,6 +84,20 @@ class AnalyzeRequest(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
 
 
+class TestDesignRequest(BaseModel):
+    """``POST /api/v1/requirements/test-cases`` (S1.2, §11).
+
+    The requirement the Test Design Agent builds a test suite for. Same
+    shape as :class:`AnalyzeRequest`; the S1.1 analysis can be chained in a
+    later milestone.
+    """
+
+    project_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+
+
 class JobCreated(BaseModel):
     """202 body (§11): job id + initial status (``Location`` points at ``GET /jobs/{id}``)."""
 

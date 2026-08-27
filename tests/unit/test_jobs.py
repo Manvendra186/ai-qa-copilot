@@ -70,6 +70,13 @@ ANALYZE_BODY = {
     "acceptance_criteria": ["valid credentials -> 200", "invalid password -> 401"],
 }
 
+DESIGN_BODY = {
+    "project_id": ACME_ID,
+    "title": "Order history",
+    "content": "Users can view their order history.",
+    "acceptance_criteria": ["Orders are listed newest first", "Each order shows status"],
+}
+
 STAGES = (
     "requirement",
     "test_design",
@@ -202,6 +209,15 @@ def _analyze(client: TestClient, user: str, body: dict[str, Any] | None = None) 
     return data
 
 
+def _design(client: TestClient, user: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    r = client.post(
+        "/api/v1/requirements/test-cases", json=body or DESIGN_BODY, headers=_auth(user)
+    )
+    assert r.status_code == 202, r.text
+    data: dict[str, Any] = r.json()
+    return data
+
+
 def _wait_terminal(
     client: TestClient, user: str, job_id: str, timeout: float = 10.0
 ) -> dict[str, Any]:
@@ -310,6 +326,79 @@ def test_analyze_validation(client: TestClient) -> None:
         ).status_code
         == 422
     )
+
+
+# --- S1.2 test_case_generation endpoint (same 202 + SSE contract) -------------
+
+
+def test_design_returns_202_job_and_location(client: TestClient) -> None:
+    r = client.post("/api/v1/requirements/test-cases", json=DESIGN_BODY, headers=_auth("alice"))
+    assert r.status_code == 202
+    body = r.json()
+    job_id = body["job_id"]
+    assert job_id
+    assert body["status"] == "pending"
+    assert r.headers["location"] == f"/api/v1/jobs/{job_id}"  # §11
+
+    job = _wait_terminal(client, "alice", job_id)
+    assert job["status"] == "completed"
+    assert job["type"] == "test_case_generation"
+    assert job["project_id"] == ACME_ID
+    assert job["progress"] == 1.0
+    assert job["output_ref"] == "stub-output/test_case_generation"
+    assert job["error"] is None
+
+
+def test_design_requires_auth_and_member_role(client: TestClient) -> None:
+    assert client.post("/api/v1/requirements/test-cases", json=DESIGN_BODY).status_code == 401
+    # viewer may read jobs but not start work (§31.3)
+    assert (
+        client.post(
+            "/api/v1/requirements/test-cases", json=DESIGN_BODY, headers=_auth("carol")
+        ).status_code
+        == 403
+    )
+    # non-member of the project
+    assert (
+        client.post(
+            "/api/v1/requirements/test-cases", json=DESIGN_BODY, headers=_auth("dave")
+        ).status_code
+        == 403
+    )
+    # unknown project: 403, not 404 — no existence leak (§31.3)
+    ghost = dict(DESIGN_BODY, project_id=str(uuid5(NS, "ghost-project-design")))
+    assert (
+        client.post(
+            "/api/v1/requirements/test-cases", json=ghost, headers=_auth("alice")
+        ).status_code
+        == 403
+    )
+
+
+def test_design_validation(client: TestClient) -> None:
+    assert (
+        client.post(
+            "/api/v1/requirements/test-cases",
+            json=dict(DESIGN_BODY, title=""),
+            headers=_auth("alice"),
+        ).status_code
+        == 422
+    )
+
+
+def test_design_completed_job_leaves_ai_session_completed(
+    env: dict[str, Any], client: TestClient
+) -> None:
+    job_id = _design(client, "alice")["job_id"]
+    _wait_terminal(client, "alice", job_id)
+    with db.make_session_factory(env["engine"])() as session:
+        rows = session.scalars(select(models.AISession)).all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == "completed"
+    assert row.task_type == "test_case_generation"
+    assert row.project_id == ACME_ID
+    assert row.user_id == ALICE_ID  # the requesting user, for the audit trail
 
 
 def test_get_job_viewer_ok_nonmember_403_no_leak(client: TestClient) -> None:
