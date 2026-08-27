@@ -283,3 +283,63 @@
     fallback, not the norm.
 - **Next session start:** S0.7 React shell — **blocked on Node LTS install** (see
   `STATE.md` §3/§7).
+
+## 2026-08-27 — S0.7 — React shell (Node LTS unblocked 2026-08-26)
+
+- **Goal:** S0.7 — React shell (Vite): layout + pipeline view + SSE client (mocked).
+  Exit criterion: shell renders; mocked SSE updates a progress bar. Also closes the
+  S0.1 web half (pnpm workspace + ESLint + Prettier + `pnpm lint`).
+- **Did:**
+  - Root: `pnpm-workspace.yaml` (`packages: [apps/*]` + `onlyBuiltDependencies:
+    [esbuild]`) and a private root `package.json` (one-command `dev`/`build`/
+    `preview`/`lint`/`format` via `pnpm --filter qa-copilot-web`; `packageManager:
+    pnpm@11.24.0`; node ≥ 22.12) — bible §29 "one-command up: `pnpm dev`".
+  - `apps/web`: React 18.3 + Vite 6.4 + TypeScript 5.8 (strict; `tsconfig.json`
+    for `src`, `tsconfig.node.json` for `vite.config.ts`; build = `tsc --noEmit` ×2
+    + `vite build`) + Tailwind CSS 4 (configless, `@import 'tailwindcss'` +
+    `@tailwindcss/vite`).
+  - ESLint 9 flat config (`eslint.config.js`): JS recommended + typescript-eslint
+    recommended + react-hooks + react-refresh + eslint-config-prettier; Prettier 3
+    (`.prettierrc.json`: printWidth 100 to match ruff, single quotes) +
+    `.prettierignore` (node_modules, dist).
+  - Shell components: `Header` (branding + SSE connection badge), `PipelineView`
+    (six §4 stages — requirement → test design → automation → execution → failure
+    analysis → fix — per-stage progress bars, `role=progressbar`,
+    `aria-current=step`), `EventLog` (live event feed, `aria-live=polite`),
+    `useJobEvents` hook (native `EventSource`, strict `StageId` validation,
+    reducer over the SSE stream, capped event log, replay button),
+    `src/lib/pipeline.ts` (single source for the stage contract).
+  - Mock SSE: dev-only Vite middleware plugin (`qa-copilot:mock-sse`,
+    `apply: 'serve'`) at `GET /mock/events` — standard SSE framing
+    (`event:`/`data:` JSON): `job.started` → per stage `stage.started`,
+    `progress` ×4 (0.25→1.0), `stage.completed` → `job.completed`; client
+    disconnect handled. Same shape the S0.9 jobs API will serve (`GET /events`),
+    so the browser client is contract-compatible.
+  - `vite.config.ts`: `/api` dev proxy → FastAPI :8000 (S0.9+).
+  - Docs: `apps/web/README.md` rewritten (scripts/layout); root README quickstart
+    gains step 5 (web).
+- **Verified (exit criterion):**
+  - `pnpm install` ✓ (192 packages; esbuild postinstall approved via
+    `onlyBuiltDependencies` — pnpm 11 blocks build scripts by default).
+  - `pnpm format` + `pnpm format:check` ✓ (17 files) · `pnpm lint` ✓ (exit 0, no
+    findings).
+  - `pnpm build` ✓ — tsc strict on both projects + Vite production build
+    (32 modules; dist ≈ 164 kB raw / ≈ 52 kB gzip).
+  - `pnpm dev` live: `curl http://localhost:5173/` → shell HTML (`#root`,
+    react-refresh, `/@vite/client`, `<title>AI QA Copilot</title>`);
+    `curl http://localhost:5173/mock/events` → full SSE timeline
+    (`job.started` → `requirement` 25/50/75/100% → `stage.completed` →
+    `test_design` …). Progress-bar animation is contract-level verified
+    (mock frames ↔ hook handlers match exactly); visual check needs a browser.
+- **Decisions / gotchas (recorded in STATE.md §7):**
+  - pnpm 11: the `pnpm` field in `package.json` is IGNORED — settings like
+    `onlyBuiltDependencies` belong in `pnpm-workspace.yaml`.
+  - Vite dev server binds `[::1]:5173` — `curl http://127.0.0.1:5173` → connection
+    refused; use `http://localhost:5173`.
+  - SSE client uses native `EventSource` (no custom parser) — matches an
+    `EventSourceResponse`-style S0.9 contract; cookie auth (S0.8) works with it,
+    but header-based JWT would need a fetch-based reader (flagged for S0.9).
+- **Commit:** `4d8840b step S0.7: React shell (pnpm workspace, React18+Vite+TS+
+  Tailwind, mocked SSE pipeline view)`.
+- **Next session start:** S0.8 (auth baseline: dev user, JWT middleware, project
+  roles owner/member/viewer; exit: 401/200/403 matrix tested) — see `STATE.md` §3.

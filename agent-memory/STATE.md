@@ -6,28 +6,30 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation
-- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · **S0.6 ✓ — next: S0.7**
-  (React shell — **blocked on Node LTS install**, see §7)
+- **Step:** S0.1 ✓ · S0.2 ✓ · S0.3 ✓ · S0.4 ✓ · S0.5 ✓ · S0.6 ✓ · **S0.7 ✓ — next: S0.8**
 
 ## 2. Just completed
 
-- 2026-08-26 · **S0.6 — AI gateway** (commit this session): `qa_copilot_ai` — `gateway.py`
-  (async `LLMGateway` over OpenAI-compatible `/chat/completions`: `chat()` +
-  `chat_stream()` NDJSON/SSE, `usage` from server w/ char-count estimate fallback,
-  120 s timeout, one retry on transport errors only, hard `LLMError` w/ status
-  otherwise — no silent model-swap; per-call `ai_call` log record with
-  `agent/model/tokens_in/tokens_out/latency_ms/retries/redactions/input_hash`),
-  `redaction.py` (bearer/GitHub/OpenAI/AWS/JWT/DSN-password/key-value patterns →
-  `***REDACTED***`, idempotent, applied to wire + logs; §31.7 leaks=0), `prompts.py`
-  (`PromptSpec`, `PromptStore` protocol, `InMemoryPromptStore`, strict `{{var}}`
-  rendering — missing var raises). Repository: `prompts.load_prompt()` (DB-backed
-  registry, §31.6) + `audit.record_ai_action()/record_ai_call()` → `ai_actions`.
-  Runtime fixed: **LM Studio :8080, Qwen3.8-27B Q4_K_M** (27.3B params, n_ctx 100,096,
-  completion-only) → `.env` + §31.1 note. Verified: **60 tests green** (fake-server
-  unit tests + 3 live DB), `scripts/llm_live_check.py` → 2 live `ai_call` records
-  (`usage_source: "reported"`, reply "QA copilot S0.6 live check OK") · ruff ✓ ·
-  mypy strict ✓ (27 files).
-  Open: `VECTOR_DIM = 1536` still provisional (no embedding model served locally yet).
+- 2026-08-27 · **S0.7 — React shell** (commit `4d8840b`): pnpm workspace at root
+  (`pnpm-workspace.yaml` + private root `package.json` → one-command
+  `dev/build/preview/lint/format`); `apps/web` = React 18 + Vite 6 + TypeScript
+  (strict; separate `tsconfig.json` / `tsconfig.node.json`) + Tailwind CSS 4
+  (configless, via `@tailwindcss/vite`). ESLint 9 flat config (TS recommended +
+  react-hooks + react-refresh, Prettier-clean) + Prettier 3 (width 100, single
+  quotes) — **S0.1 web half closed**. Shell: `Header` (SSE connection badge),
+  `PipelineView` (six §4 stages, per-stage progress bars, `role=progressbar` +
+  `aria-current=step`), `EventLog` (live feed), `useJobEvents` (native
+  `EventSource` → strict reducer over `job.started`/`stage.started`/`progress`/
+  `stage.completed`/`job.completed`; replay button). Mock SSE: dev-only Vite
+  middleware `GET /mock/events` streaming standard SSE frames — same shape S0.9
+  will serve from `GET /events`; `/api` dev proxy → FastAPI :8000. Verified:
+  `pnpm install` ✓ · `pnpm format:check` ✓ · `pnpm lint` ✓ · `pnpm build` ✓
+  (tsc strict ×2 + vite build) · `pnpm dev` live: shell HTML served + full mock
+  SSE timeline via curl (progress-bar animation is contract-level verified).
+- 2026-08-26 · **S0.6 — AI gateway** (details: SESSION_LOG.md): `qa_copilot_ai`
+  gateway/redaction/prompts + DB prompt registry + `ai_actions`; 60 tests green,
+  live LM Studio check OK. Open: `VECTOR_DIM = 1536` still provisional (no
+  embedding model served locally yet).
 - 2026-08-26 · **S0.5 — SQLAlchemy + Alembic + seed** (commit this session):
   `qa_copilot_repository` — `models.py` (18 §10 core tables + `prompt_versions`, typed
   `sa.Uuid(as_uuid=False)` → `str` ids, `metadata_` attr / `metadata` col, enums as
@@ -58,12 +60,13 @@
 
 ## 3. NEXT STEP (start here)
 
-**S0.7 — React shell** (build bible §19): React 18 + Vite + TypeScript + Tailwind,
-pnpm, ESLint + Prettier — **Node is installed now** (see §4); also unblocks S0.1 web
-linting.
-- **Exit criterion:** `pnpm dev` serves the shell; `pnpm lint` + `pnpm build` clean.
-- **If Node is still missing:** next doable work is S0.8 auth prep or the S0.9 jobs
-  layer (202 + SSE) against the existing API — check with the user which to take.
+**S0.8 — Auth baseline** (build bible §19): dev user, JWT middleware, project roles
+owner/member/viewer.
+- **Exit criterion:** 401/200/403 matrix tested.
+- Notes: S0.9 (jobs: 202 + SSE) slots straight into the shell — `useJobEvents`
+  already speaks the event contract; point it at the real endpoint and drop the
+  mock. `EventSource` is cookie-friendly; if S0.8 lands header-based JWT, the web
+  client needs a fetch-based SSE reader (see SESSION_LOG, S0.7).
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -77,6 +80,8 @@ linting.
 - **Node (installed 2026-08-26):** `node v22.23.2` (LTS; `%LOCALAPPDATA%\hermes\node`,
   first on user PATH) + backup `v24.19.0` (winget `OpenJS.NodeJS.LTS`, user scope) ·
   `npm 12.0.2` · `pnpm 11.24.0` (npm -g, prefix = hermes node dir)
+- **Web toolchain (S0.7):** pnpm 11 workspace at repo root · `apps/web` =
+  React 18.3 + Vite 6.4 + TS 5.8 (strict) + Tailwind 4 · ESLint 9 (flat) + Prettier 3
 - Toolchain in `.venv`: ruff 0.16.4 · mypy 2.3.1 · pytest 9.1.1 · pre-commit 4.6.2
 - LLM (verified S0.6): **LM Studio (llama.cpp) `http://localhost:8080/v1`** · model id
   `.\Models\lmstudio-community\Qwen3.8-27B-GGUF\Qwen3.8-27B-Q4_K_M.gguf` · 27.3B params ·
@@ -115,13 +120,17 @@ linting.
 - DB URL: `packages/repository/src/qa_copilot_repository/db.py` (env → `.env` → default)
 - AI gateway: `packages/ai/src/qa_copilot_ai/{gateway,prompts,redaction}.py` · live check:
   `scripts/llm_live_check.py` · `ai_actions` writer: `qa_copilot_repository.audit`
+- Web shell: `apps/web/` (React 18 + Vite 6 + TS + Tailwind 4; mock SSE:
+  `vite.config.ts` → `GET /mock/events`; pipeline contract: `src/lib/pipeline.ts`)
 
 ## 7. Open questions / gotchas
 
 - **PATH gotcha:** docker CLI lives on the USER PATH (per-user install) — terminals opened before
   install don't see it; refresh `$env:Path` from Machine+User (or open a new shell).
-- **S0.1 web half pending:** pnpm workspace + ESLint + Prettier + `pnpm lint` (Node is
-  now installed — ready when S0.7 scaffolds the web workspace).
+- **pnpm 11:** the `pnpm` field in `package.json` is IGNORED — settings like
+  `onlyBuiltDependencies` (esbuild, needed by Vite) go in `pnpm-workspace.yaml`.
+- **Vite dev binds `[::1]:5173`:** `curl http://127.0.0.1:5173` → connection refused;
+  use `http://localhost:5173`.
 - **pydantic v2:** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg (mypy strict
   rejects it) — use `Annotated[str, StringConstraints(...)]` (learned in S0.4).
 - **ruff isort:** `qa_copilot_*` packages are NOT detected as first-party (src-layout workspace) —
