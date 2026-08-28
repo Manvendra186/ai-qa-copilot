@@ -5,6 +5,7 @@ secrets never live in code.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,7 +19,10 @@ class Settings(BaseSettings):
     so endpoints can report their context instead of guessing.
     """
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[4] / ".env",
+        extra="ignore",
+    )
 
     env: str = Field(
         default="development",
