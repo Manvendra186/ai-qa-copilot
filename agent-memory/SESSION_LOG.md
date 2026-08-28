@@ -949,3 +949,75 @@
 - **Next session start:** S3.1 — execution worker (Playwright run,
   trace/screenshot/video/console/network capture; exit: 1 test on the demo app
   → all artifacts stored) — see `STATE.md` §3.
+
+## 2026-08-28 — S3.1 Execution worker (Playwright run + §15 artifacts) — exit met
+
+- **Goal:** build bible §19 S3.1 — execution worker: Playwright run,
+  trace/screenshot/video/console/network capture. **Exit: 1 test on the demo
+  app → all artifacts stored.**
+- **Did:**
+  - `qa_copilot_execution` (new package, database-free per §15/§31.11):
+    - `store.py` — `ArtifactStore`: §31.11 layout `runs/{run_id}/{test_id}/{name}`,
+      segment-validated (`check_segment`: alnum + `._-`, no `..`/slashes),
+      overwrites rejected; `ArtifactStoreError` on any layout violation.
+    - `report.py` — frozen worker contract: `RunReport` / `TestResultReport` /
+      `ArtifactReport` / `RunTotals` (durations in milliseconds).
+    - `runner.py` — `run_playwright(PlaywrightConfig)`: spawns the target
+      repo's `node_modules/.bin/playwright(.cmd) test [--filter]
+      --reporter=json` (`_resolve_command` — PATH `playwright` only as
+      fallback), reads the JSON report from stdout (tolerates leading log
+      noise) or `PLAYWRIGHT_JSON_OUTPUT_FILE`; status semantics: `completed`
+      = Playwright produced a JSON report (even with failing tests — outcomes
+      are per-test data), `failed` = the worker itself could not get a report
+      (spawn error / timeout / no JSON); captures the §15 artifact set
+      (trace/screenshot/video/console/network/dom/log) into the store.
+    - `cli.py` + `__main__.py` — `python -m qa_copilot_execution <target-dir>
+      [--filter TEXT] [--timeout S] [--store PATH] [--run-id ID] [--json]`;
+      exit 0 = all tests pass · 1 = run completed with test failures ·
+      2 = usage error · 3 = worker failed. The CLI is database-free.
+  - `qa_copilot_repository.runs` — `persist_run` maps a `RunReport` onto the
+    §10 `test_runs`/`test_results`/`artifacts` rows: one run row, one result
+    per test (`duration` in *seconds* — converted from `duration_ms`), one
+    artifact row per artifact (URI only, never contents — §15); flushed, not
+    committed (caller owns the transaction — same convention as
+    `generated_tests`). Domain S3.1 enums (`RunStatus`, `TestResultStatus`,
+    `ArtifactType`) added to `qa_copilot_domain.enums` + exports.
+  - Demo app (`ai-qa-copilot-demo-app`) gained a Playwright e2e suite:
+    `e2e/demo.spec.js`, `e2e/fixtures.js`, `playwright.config.js` (its
+    `webServer` block boots the demo servers), `test:e2e` / `test:e2e:headed`
+    scripts — which updated the S2.2 conventions golden for the demo app
+    (`tests/unit/test_conventions.py`: `test_file_patterns=["*.spec.js"]`,
+    locator styles, fixture file, test config, e2e scripts).
+  - Tests: `tests/unit/test_execution.py` (store layout/escape/overwrite
+    rejections, report parsing incl. JSON with leading noise and the report
+    FILE path, run/test status semantics, CLI exit codes 0/1/2/3 — the CLI
+    tests use a fake target repo whose `playwright` shim writes a prepared
+    JSON report to `PLAYWRIGHT_JSON_OUTPUT_FILE`, so no real Playwright
+    launches, but the real worker path is exercised: spawn → read report →
+    classify → store → exit code) + `tests/unit/test_repository.py`
+    (`persist_run`: row counts, statuses, duration ms→s, artifact URIs,
+    `metadata_` column).
+- **Verified (gates):** `uv run pytest -q` → **288 passed** (S3.1 targeted:
+  **59 passed** in `test_execution.py` + `test_repository.py`) ·
+  `ruff check` + `ruff format --check` clean on the new/updated files ·
+  `mypy packages apps tests` → **Success: no issues found in 71 source
+  files** — this session also fixed the 18 pre-existing errors in
+  `tests/unit/test_automation_agent.py` (missing return annotations on
+  `_agent_run`/`_do`; `object`-indexed JSON body; `file_path_pattern`
+  `str | None` narrowing; `TOOLCHAIN is not None` asserts in the
+  `@GATE_SKIP` tests + `_eval_run`; `_FakeLLMServer` typed subclass for the
+  `seen_bodies` capture list). The mypy gate now passes fully.
+- **Live run (exit criterion):** worker against `ai-qa-copilot-demo-app` →
+  **exit 0, Playwright 1/1 passed, 5 artifacts stored** under
+  `data/artifacts/runs/s31-live-verify`. Local Playwright 1.62.1 + Chromium
+  available; the worker used the demo app's own `playwright.cmd` shim and
+  its `webServer` block to start the demo servers.
+- **Gotchas:** Windows — the target's `node_modules/.bin/playwright(.cmd)`
+  shim is NOT the PATH-level `playwright`; resolve per target. Windows
+  text-mode writes gain `\r\n` → on-disk size ≠ bytes written (assert the
+  on-disk size). SQLAlchemy artifact column is `metadata_`, not `metadata`.
+  mypy — parameterized generics cannot be used in `isinstance` checks;
+  `ThreadingHTTPServer` extras need a subclass annotation (a declared
+  return type widens away inner-class attributes).
+- **Next session start:** S3.2 — Runs API + run history + artifacts UI
+  (exit: a run is visible with its artifacts) — see `STATE.md` §3.

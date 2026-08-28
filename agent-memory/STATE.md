@@ -6,11 +6,29 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
-  Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution (next)
-- **Step:** S0.1–S2.4 ✓ (S2.4 = generated-test review: diff review + human approval) ·
-  **S3.1 next** (execution worker: Playwright run + artifacts)
+  Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution (S3.1 ✓)
+- **Step:** S0.1–S3.1 ✓ (S3.1 = execution worker: Playwright run + §15 artifacts) ·
+  **S3.2 next** (Runs API + run history + artifacts UI)
 
 ## 2. Just completed
+
+- 2026-08-28 · **S3.1 (execution worker) — live exit PASS** (1 test on demo app →
+  all artifacts stored): `qa_copilot_execution` (database-free) — `run_playwright`
+  spawns the target repo's `playwright test --reporter=json` (resolved via the
+  target's `node_modules/.bin` shim; the config's `webServer` boots the demo
+  servers) → parses the JSON report → §15 artifact set (trace/screenshot/video/
+  console/network/dom/log) → `ArtifactStore` under §31.11 layout
+  `runs/{run_id}/{test_id}/{name}` (segment-validated, no overwrites) → frozen
+  `RunReport` · `qa_copilot_repository.runs.persist_run` maps it onto
+  `test_runs`/`test_results`/`artifacts` (flush-only; `duration` ms→s) ·
+  CLI `python -m qa_copilot_execution <target-dir> [--filter TEXT] [--store PATH]
+  [--run-id ID] [--json]` — exit 0 (all pass) / 1 (tests failed) / 2 (usage) /
+  3 (worker failed: spawn/timeout/no JSON) · demo-app e2e suite now also feeds
+  the S2.2 conventions golden (`test_conventions.py` updated: `e2e/*.spec.js`,
+  `playwright.config.js`, `e2e/fixtures.js`) · **live: demo app 1/1 pass,
+  exit 0, 5 artifacts stored under `data/artifacts/runs/s31-live-verify`** ·
+  **288 tests ✓ · mypy strict (71 files incl. tests) ✓ — also fixed the 18
+  pre-existing errors in `test_automation_agent.py` ✓ · ruff ✓.**
 
 - 2026-08-28 · **S2.4 (generated-test review) — apply + reject flows tested** (commit `d52b8f7`):
   `generated_tests` review rows — state machine `pending → approved → applied` /
@@ -72,9 +90,10 @@
 
 ## 3. NEXT STEP (start here)
 
-**S3.1 — Execution worker** (build bible §19 Phase 3): run Playwright tests,
-capture trace/screenshot/video/console/network. **Exit: 1 test on the demo
-app → all artifacts stored.**
+**S3.2 — Runs API + run history + artifacts UI** (build bible §19 Phase 3):
+a run is visible with its artifacts. Wire `persist_run` into an API job
+(S2.4-style 202 + job), list run history per project, fetch artifact
+contents by URI from the store.
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
   needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
   artifacts live in gitignored `reports/` — commit one baseline after each
@@ -264,3 +283,14 @@ app → all artifacts stored.**
   its own `except FileExistsError` clause for the 409 (else it leaks a 500).
 - **mypy strict + `db.get` (S2.4):** `Session.get()` returns `Model | None` —
   pass the already-typed row through instead (or narrow) to satisfy strict mode.
+- **Windows Playwright shim (S3.1):** `shutil.which("playwright")` finds a
+  PATH-level shim, not the target repo's own CLI — resolve the target's
+  `node_modules/.bin/playwright(.cmd)` first (runner `_resolve_command`).
+- **Windows text-mode CRLF (S3.1):** writes in text mode gain `\r\n` → on-disk
+  size ≠ bytes written; artifact-store tests assert the on-disk size.
+- **mypy `isinstance` + generics (S3.1):** parameterized generics are rejected
+  in `isinstance` ("cannot be used with class or instance checks") — narrow
+  with plain `list`/`dict`, then index.
+- **typed `ThreadingHTTPServer` extras (S3.1):** attach a capture list via a
+  subclass with a class-level annotation, not a dynamic attribute (mypy
+  `attr-defined`; the declared return type widens away inner-class attrs).
