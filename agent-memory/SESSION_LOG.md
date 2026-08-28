@@ -762,3 +762,58 @@
   36 files, 1089 insertions.
 - **Next session start:** S2.2 (convention extractor — locators, page objects,
   fixtures, helpers; exit: golden outputs match on 2 repos) — see `STATE.md` §3.
+
+## 2026-08-28 — S2.2 Convention extractor (deterministic, LLM-free)
+
+- **Goal:** build bible §19 S2.2 — extract the target repo's test conventions
+  (locators, page objects, fixtures, helpers) on top of the S2.1 scanner.
+  Exit: golden outputs match on 2 repos.
+- **Did:**
+  - `packages/repository/src/qa_copilot_repository/conventions.py` (new):
+    `extract_conventions(root) -> TestConventions` + CLI
+    `python -m qa_copilot_repository.conventions <root>` → JSON. Reuses the
+    scanner's safety rules (pruned walk, 50k file cap, 512KB capped reads,
+    symlink-safe) and its test-file detection.
+  - Domain (S2.3/§10 shared contract): `LocatorStyle`, `TestScript`,
+    `TestConventions` in `qa_copilot_domain.entities` (both `Test*` classes
+    carry `__test__ = False` — pytest collection gotcha) · exported from
+    `qa_copilot_domain` and `qa_copilot_repository` (`extract_conventions`).
+  - Scanner refactor: `read_text_capped()` and `is_test_file()` promoted to
+    public helpers; `SKIP_DIRS`/`MAX_FILES`/`TEST_EXTENSIONS` exposed for reuse
+    (S2.1 behavior unchanged — all 16 scanner tests still green).
+  - `tests/unit/test_conventions.py` (18 tests): **golden outputs on 2 real repos** —
+    `js-web-app` (Vitest + Playwright: `*.test.*`/`*.spec.*` patterns,
+    `getByRole` > `locator` > `getByTestId` ordering, `e2e/helpers.ts` helper,
+    `playwright.config.ts` config) and the demo app `ai-qa-copilot-demo-app`
+    (Playwright `test.extend` fixture, `data-testid` vocabulary, `baseURL` from
+    `playwright.config.js`); synthetic Playwright (locator ordering,
+    `base.extend`, `page-objects/`, `data-testid` quoted-usage only); synthetic
+    pytest (pytest fixtures, `conftest.py`, `tests/unit` + `tests/integration`
+    test-tree dirs, `test_*.py`/`conftest.py` patterns); `package.json` test
+    scripts (filter + monorepo dedupe); no-framework repo (empty conventions +
+    note); determinism; str-root; missing root → ValueError; empty repo;
+    `node_modules`/`.git` pruning; `src/__tests__` NOT a test-tree dir
+    (name-gated rule).
+- **Verified (exit criterion):** golden outputs match on 2 repos ✓ (CLI run on
+  `js-web-app` + `ai-qa-copilot-demo-app`, values hand-checked against the repos)
+  · `uv run pytest -q` → **179 passed** (18 new) · `uv run mypy` → no issues in
+  50 source files · `ruff check .` ✓ · `ruff format --check .` ✓.
+- **Decisions / gotchas (also in STATE.md §5/§7):**
+  - **Test-tree name gate:** the demo app has `src/__tests__/` — the ancestor
+    rule must not classify `src` as a test-tree dir (explicitly excluded);
+    `tests/unit` + `tests/integration` ARE test-tree dirs.
+  - **`data-testid` false-positive guard:** only quoted attribute usage
+    (`data-testid="..."` / `data-testid: '...'`) is captured — a test-ID object
+    map (`testids.js`) must not leak its keys into the vocabulary.
+  - **Fixture detection:** both `test.extend(...)` and `base.extend(...)`
+    (Playwright) + pytest `@pytest.fixture`; `conftest.py` always a fixture file.
+  - **Locator attribution:** `getByRole`/`getByTestId`/… attributed to
+    `playwright` or `testing-library` when the file imports that toolkit, else
+    `generic`; ordered count-desc then name.
+  - **`package.json` scripts:** only test-related names/commands (vitest,
+    playwright, cypress, mocha, jest, pytest, …) captured, deduped by name
+    across monorepo manifests.
+- **Commit:** `c9d41f2 step S2.2: add deterministic test convention extractor (…)`.
+- **Next session start:** S2.3 (Automation Agent — generate tests using the
+  extracted conventions; exit: generated code passes lint + type ≥ 95%) — see
+  `STATE.md` §3.

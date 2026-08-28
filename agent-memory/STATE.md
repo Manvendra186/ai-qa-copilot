@@ -7,10 +7,21 @@
 
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
   Phase 2 — Playwright Copilot (in progress)
-- **Step:** S0.1–S2.1 ✓ (S2.1 = repository scanner + 3 golden samples) · **S2.2 next**
+- **Step:** S0.1–S2.2 ✓ (S2.2 = test-conventions extractor) · **S2.3 next** (automation agent)
 
 ## 2. Just completed
 
+- 2026-08-28 · **S2.2 (conventions extractor) — deterministic, LLM-free** (commit `c9d41f2`):
+  `qa_copilot_repository.conventions` (on top of the S2.1 scanner) →
+  `qa_copilot_domain.TestConventions` — test-file patterns · locator styles
+  (Playwright/testing-library/generic, ordered by usage) · page objects ·
+  fixtures (`conftest.py`, `test.extend`/`base.extend`) · helpers · test configs ·
+  `data-testid` vocabulary (quoted attribute usage only) · Playwright `baseURL` ·
+  test-related `package.json` scripts (deduped across monorepo manifests) ·
+  scanner refactor: `read_text_capped`/`is_test_file` shared helpers ·
+  CLI `python -m qa_copilot_repository.conventions <root>` → JSON ·
+  **exit: golden outputs match on 2 repos ✓** (js-web-app: Vitest+Playwright;
+  demo app: Playwright + `data-testid`) · **179 tests ✓ · mypy strict (50) ✓ · ruff ✓.**
 - 2026-08-28 · **S2.1 (repo scanner) — deterministic repository scan** (commit `aa47408`):
   `qa_copilot_repository.scanner` (LLM-free) → `qa_copilot_domain.RepositoryProfile` —
   languages (count desc, then name) · frameworks (npm/Python/Go/Ruby/Rust/Spring
@@ -24,36 +35,23 @@
   (js-web-app: React+Vite+TS/Vitest+Playwright · python-api: FastAPI+uv/pytest ·
   js-monorepo: pnpm workspaces, no tests) · **exit: 161 tests ✓ · mypy strict (48) ✓
   · ruff ✓ · real-repo sanity scans ✓.**
-- 2026-08-27 · **S1.4 (Eval)** (commit `74a733d`, details: SESSION_LOG.md):
-  `qa_copilot_ai.eval` runner CLI + 12-fixture `packages/ai/golden/golden_v1.json`
-  (S1.2/S1.4 shared truth) + `scripts/eval_run.py`; §31.7 gates 0.99/0.85; live
-  LM Studio run → `reports/eval_v1.json`.
-- 2026-08-27 · **S1.3 (UI flow)** (commit `8c0ed5b`, details: SESSION_LOG.md): web
-  shell on the real API — login, 202+SSE, persisted read-back
-  `GET /api/v1/requirements/{id}`; test-designer prompt capped (≤6 cases) for
-  Qwen-27B's output budget; live E2E green.
-- 2026-08-27 · **S1.3 (persistence)** (commit `022fb6b`): AI suite → §10 rows
-  (`persist_requirement_with_suite` + M:N join); job `output_ref` = requirement id.
-- 2026-08-27 · **S1.2 — Test Design Agent** (commit `bb5bb2f`, details: SESSION_LOG.md):
-  `TestDesignAgent` + `POST /api/v1/requirements/test-cases` job. **Exit: 10 fixtures →
-  schema-valid + step coverage ≥ 85% vs oracle ✓.**
-- 2026-08-27 · **S1.1 — Requirement Agent** (commit `6a1bf88`): `RequirementAgent` +
-  schema-validated `RequirementAnalysis` on the S0.9 seam. **Exit: 10/10 schema-valid ✓.**
-- 2026-08-27 · **S0.9 — jobs API** (commit `2051749`): 202 + `GET /jobs/{id}` + SSE
-  `/events` (15s heartbeat) + `JobAgent`/`StubAgent` seam + state machine + reaper.
-- 2026-08-27 · **S0.10 — demo app v0** (repo `ai-qa-copilot-demo-app`, `43739a5`):
-  Express + better-sqlite3 + React; user `qa`/`qa1234`; **smoke 11/11 · defects 7/7 ✓.**
-- 2026-08-26/27 · **S0.1–S0.8**: monorepo (uv+pnpm) · compose infra (PG16+pgvector
-  :5433, Redis) · FastAPI · domain · SQLAlchemy+Alembic+seed · AI gateway (LM Studio
-  live) · React shell · auth baseline (JWT + project RBAC).
+- 2026-08-27 · **S1.4 (Eval)** (`74a733d`): `qa_copilot_ai.eval` CLI + 12-fixture `packages/ai/golden/golden_v1.json` (S1.2/S1.4 shared truth) + `scripts/eval_run.py`; §31.7 gates 0.99/0.85; live LM Studio run → `reports/eval_v1.json`.
+- 2026-08-27 · **S1.3 (UI flow)** (`8c0ed5b`): web shell on the real API — login, 202+SSE, persisted read-back `GET /api/v1/requirements/{id}`; test-designer prompt capped (≤6 cases) for Qwen-27B's output budget; live E2E green.
+- 2026-08-27 · **S1.3 (persistence)** (`022fb6b`): AI suite → §10 rows (`persist_requirement_with_suite` + M:N join); job `output_ref` = requirement id.
+- 2026-08-27 · **S1.2 — Test Design Agent** (`bb5bb2f`): `TestDesignAgent` + `POST /api/v1/requirements/test-cases` job; exit: 10 fixtures → schema-valid + step coverage ≥ 85% vs oracle ✓.
+- 2026-08-27 · **S1.1 — Requirement Agent** (`6a1bf88`): `RequirementAgent` + schema-validated `RequirementAnalysis` on the S0.9 seam; exit: 10/10 schema-valid ✓.
+- 2026-08-27 · **S0.9 — jobs API** (`2051749`): 202 + `GET /jobs/{id}` + SSE `/events` (15s heartbeat) + `JobAgent`/`StubAgent` seam + state machine + reaper.
+- 2026-08-27 · **S0.10 — demo app v0** (repo `ai-qa-copilot-demo-app`, `43739a5`): Express + better-sqlite3 + React; user `qa`/`qa1234`; smoke 11/11 · defects 7/7 ✓.
+- 2026-08-26/27 · **S0.1–S0.8**: monorepo (uv+pnpm) · compose infra (PG16+pgvector :5433, Redis) · FastAPI · domain · SQLAlchemy+Alembic+seed · AI gateway (LM Studio live) · React shell · auth baseline (JWT + project RBAC). *(details: SESSION_LOG.md)*
 
 ## 3. NEXT STEP (start here)
 
-**S2.2 — Convention extractor** (build bible §19 Phase 2): extract the target repo's
-test conventions — locators, page objects, fixtures, helpers — on top of
-`qa_copilot_repository.scanner` + `RepositoryProfile`. **Exit: golden outputs match
-on 2 repos.** (Golden candidates: S2.1 sample `js-web-app` (Vitest + Playwright)
-and/or the demo app `ai-qa-copilot-demo-app`.)
+**S2.3 — Automation Agent** (build bible §19 Phase 2): generate test code that
+matches the target repo's conventions, consuming `RepositoryProfile` (S2.1) +
+`TestConventions` (S2.2 extractor output) through the AI gateway seam.
+**Exit: generated code passes lint + type ≥ 95%.** (Golden candidates:
+S2.1 sample `js-web-app` (Vitest + Playwright) and/or the demo app
+`ai-qa-copilot-demo-app`.)
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
   needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
   artifacts live in gitignored `reports/` — commit one baseline after each
@@ -114,6 +112,12 @@ and/or the demo app `ai-qa-copilot-demo-app`.)
   source files classified by name only, never read · `languages` ordered count desc
   → name, all other lists sorted · `scanned_at` is the only time-varying field
   (tests strip it before comparing)
+- S2.2 conventions: extractor stays **deterministic/LLM-free** (pure scan) ·
+  test-tree is name-gated (`tests` dirs only — `src` never, even with `__tests__`
+  inside) · `data-testid` from quoted attribute usage only (test-ID object maps
+  like `testids.js` must not leak) · `package.json` scripts filtered to
+  test-related commands, deduped across monorepo manifests · locator attribution:
+  import-based (playwright/testing-library) else `generic`
 
 ## 6. Pointers (paths only — no code here)
 
@@ -165,6 +169,12 @@ and/or the demo app `ai-qa-copilot-demo-app`.)
   samples `packages/repository/samples/sample_repos/{js-web-app,python-api,js-monorepo}`
   · `tests/unit/test_repository_scanner.py` (16 tests: golden profiles, determinism,
   pruning, pnpm-workspace regression)
+- Conventions extractor (S2.2): `packages/repository/src/qa_copilot_repository/conventions.py`
+  (`extract_conventions` + CLI `python -m qa_copilot_repository.conventions <root>` → JSON) ·
+  `qa_copilot_domain.TestConventions` (+ `LocatorStyle`, `TestScript` — shared S2.3
+  contract) · `tests/unit/test_conventions.py` (18 tests: golden js-web-app + demo
+  app, synthetic Playwright/pytest, locator/fixture/helper/page-object detection,
+  `data-testid` false-positive guard, `package.json` scripts, edge cases)
 
 ## 7. Open questions / gotchas
 
@@ -183,8 +193,9 @@ and/or the demo app `ai-qa-copilot-demo-app`.)
 - **Vite dev binds `[::1]:5173`:** `curl http://127.0.0.1:5173` refused — use `http://localhost:5173`.
 - **pydantic v2 (S0.4):** `Field(..., strip_whitespace=True)` is a deprecated v1 kwarg — use `Annotated[str, StringConstraints(...)]`.
 - **ruff isort (S1.1):** `qa_copilot_*` is NOT first-party (src-layout workspace) — sorts in the third-party block.
-- **pytest collection (S1.2):** non-test classes named `Test*` (`TestCase`, `TestSuite`,
-  `TestDesignInput`) need `__test__ = False` or pytest warns it cannot collect them.
+- **pytest collection (S1.2/S2.2):** non-test classes named `Test*` (`TestCase`, `TestSuite`,
+  `TestDesignInput`, S2.2's `TestConventions`/`TestScript`) need `__test__ = False`
+  or pytest warns it cannot collect them.
 - **oracle gate (S1.2):** the oracle is the independent reference — when a fixture
   missed the 85% step-coverage gate, extend the fake model output (it stands in for a
   competent LLM), never trim the oracle to fit the output.
