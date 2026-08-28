@@ -202,6 +202,32 @@ def test_redaction_applied_to_wire_and_counted() -> None:
     assert result.redactions == 1
 
 
+def test_chat_extra_body_merged_into_request() -> None:
+    """``extra_body`` fields reach the wire; canonical fields always win
+    (e.g. Qwen3 thinking off: ``chat_template_kwargs.enable_thinking``)."""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json=_assistant("ok"))
+
+    async def run() -> None:
+        gateway = LLMGateway(
+            "http://llm.test/v1",
+            "fake-model",
+            transport=_AsyncMockTransport(handler),
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}, "model": "evil"},
+        )
+        try:
+            await gateway.chat(MESSAGES, agent="unit-test")
+        finally:
+            await gateway.aclose()
+
+    asyncio.run(run())
+    assert seen["chat_template_kwargs"] == {"enable_thinking": False}
+    assert seen["model"] == "fake-model"  # canonical field not overridden
+
+
 # --- gateway: streaming (build bible §31.1 "stream responses") ----------------
 
 

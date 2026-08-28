@@ -19,7 +19,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 
 import httpx
@@ -121,6 +121,11 @@ class LLMGateway:
 
     Inject a ``transport`` (e.g. ``httpx.MockTransport``) for tests; in
     production the default transport hits ``LLM_BASE_URL``.
+
+    ``extra_body`` merges server-specific fields into every request body
+    (e.g. llama.cpp/LM Studio's ``chat_template_kwargs`` to disable Qwen3
+    thinking); canonical fields (``model``, ``messages``, ``stream`` …)
+    always win over it.
     """
 
     def __init__(
@@ -133,6 +138,7 @@ class LLMGateway:
         connect_timeout: float = CONNECT_TIMEOUT_S,
         max_retries: int = 1,
         transport: httpx.AsyncBaseTransport | None = None,
+        extra_body: Mapping[str, object] | None = None,
     ) -> None:
         if max_retries < 0:
             raise ValueError("max_retries must be >= 0")
@@ -144,6 +150,7 @@ class LLMGateway:
         self._timeout = httpx.Timeout(timeout, connect=connect_timeout)
         self._max_retries = max_retries
         self._transport = transport
+        self._extra_body: dict[str, object] = dict(extra_body) if extra_body is not None else {}
         self._client: httpx.AsyncClient | None = None
 
     @property
@@ -270,13 +277,16 @@ class LLMGateway:
         max_tokens: int,
     ) -> tuple[dict[str, object], list[dict[str, str]], int]:
         redacted_messages, redactions = self._redactor.redact_messages(messages)
-        body: dict[str, object] = {
-            "model": self.model,
-            "messages": redacted_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": stream,
-        }
+        body: dict[str, object] = dict(self._extra_body)
+        body.update(
+            {
+                "model": self.model,
+                "messages": redacted_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+            }
+        )
         if stream:
             body["stream_options"] = {"include_usage": True}
         return body, redacted_messages, redactions

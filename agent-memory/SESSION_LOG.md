@@ -817,3 +817,52 @@
 - **Next session start:** S2.3 (Automation Agent — generate tests using the
   extracted conventions; exit: generated code passes lint + type ≥ 95%) — see
   `STATE.md` §3.
+
+## 2026-08-28 — S2.3 Automation agent — live evaluation closed (gate PASS)
+
+- **Exit criterion met:** live S2.3 eval vs LM Studio `Qwen3.8-27B-Q4_K_M`
+  (`http://127.0.0.1:8080/v1`): **2/2 fixtures pass on every axis**
+  (schema ✓, conventions ✓, ESLint ✓, strict tsc ✓) —
+  `lint_type_pass_fraction = 1.0 ≥ 0.95` → report `passed: true` (exit 0).
+  Artifact: `reports/s23_live_report.json` (2026-08-28T07:47Z; ~11 s/fixture;
+  176–226 completion tokens — no thinking bloat).
+- **Root cause of the earlier empty-output failures (and the fix):** Qwen3.8
+  thinking mode consumed the entire 4000-token budget (prompt spec
+  `test-automator@1` `output_budget`) in `reasoning_content`, leaving
+  `content` empty → loud schema failure. Verified both levers: `/no_think`
+  in-prompt works; body param `chat_template_kwargs: {"enable_thinking":
+  false}` is honored by LM Studio (llama.cpp) with `reasoning_content` empty.
+  Chose the body param so the versioned prompt stays untouched. Raising
+  `max_tokens` was rejected: thinking needs 10k–30k+ tokens.
+- **Gateway/CLI:** new opt-in `LLMGateway(extra_body: Mapping[str, object] |
+  None)` — server-specific fields merged into every chat-completions body;
+  canonical fields (`model`, `messages`, `stream`, …) always win. CLI flag
+  `--extra-body '<json object>'` (validated: JSON object or exit 2). Live
+  invocation: `python -m qa_copilot_ai.automation.cli … --extra-body
+  '{"chat_template_kwargs": {"enable_thinking": false}}'`.
+- **Convention-expectation fix (eval-design bug, not a model failure):**
+  golden v1 pinned the reference answer's exact file names
+  (`counter-increment.spec.ts` / `counter-initial.spec.ts`), but
+  test-automator@1 rule 1 leaves `<name>` to the model
+  (`e2e/<name>.spec.ts`) — the live model's `e2e/counter.spec.ts` conformed.
+  `AutomationExpectations` now supports exact `file_path` **or**
+  `file_path_pattern` (fnmatch; validator requires one); golden v1 switched
+  to `e2e/*.spec.ts`; `conventions_respected()` checks accordingly. New tests
+  pin both directions (conforming name passes; wrong dir fails).
+- **Matcher question resolved:** `toHaveTextContent` is a **Cypress**
+  assertion, not a Playwright one — the stub's omission is *correct* (real
+  `@playwright/test` types reject it; Playwright uses `toHaveText` /
+  `toContainText`). Kept the stub as-is; documented in the stub
+  (`index.d.ts` note) and the negative-probe test docstring.
+- **Verified (gates):** `uv run pytest tests -q` → **231 passed** (was 228;
+  +3: `extra_body` wire test, `--extra-body` config test, conforming-name
+  convention test) · `ruff check packages tests` ✓ ·
+  `ruff format --check packages tests` ✓ · `mypy packages apps` → no issues
+  in 48 source files.
+- **Gotchas:** CLI module is `qa_copilot_ai.automation.cli` (no
+  `__main__.py`; old docstrings in `cli.py`/`golden.py` said
+  `qa_copilot_ai.automation` — fixed). `Start-Process -ArgumentList` mangles
+  JSON args (splits on spaces, drops quotes) — for live runs, pass argv via a
+  small Python launcher (`scripts/_s23_live.py`, deleted after the run).
+- **Next session start:** S2.4 — diff review UI + human approval (apply /
+  reject flows) — see `STATE.md` §3.

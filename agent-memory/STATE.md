@@ -7,9 +7,20 @@
 
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
   Phase 2 — Playwright Copilot (in progress)
-- **Step:** S0.1–S2.2 ✓ (S2.2 = test-conventions extractor) · **S2.3 next** (automation agent)
+- **Step:** S0.1–S2.3 ✓ (S2.3 = automation agent, live gate 1.0) ·
+  **S2.4 next** (diff review UI + human approval)
 
 ## 2. Just completed
+
+- 2026-08-28 · **S2.3 (automation agent) — live gate PASS**: `AutomationAgent`
+  (test-automator@1) + §21 gate runner (`python -m qa_copilot_ai.automation.cli`):
+  golden v1 (2 fixtures, `js-web-app`) scored by schema + conventions + real
+  `tsc --strict`/ESLint. Live vs LM Studio Qwen3.8-27B: **2/2 pass,
+  lint+type fraction 1.0 ≥ 0.95** (artifact `reports/s23_live_report.json`).
+  Qwen3 thinking disabled via gateway `extra_body` / CLI `--extra-body`
+  (`chat_template_kwargs.enable_thinking=false`) — do NOT raise `max_tokens`.
+  Expectations now accept `file_path_pattern` (test-automator@1 rule 1 leaves
+  `<name>` to the model). **231 tests ✓ · mypy (48) ✓ · ruff ✓.**
 
 - 2026-08-28 · **S2.2 (conventions extractor) — deterministic, LLM-free** (commit `c9d41f2`):
   `qa_copilot_repository.conventions` (on top of the S2.1 scanner) →
@@ -46,12 +57,9 @@
 
 ## 3. NEXT STEP (start here)
 
-**S2.3 — Automation Agent** (build bible §19 Phase 2): generate test code that
-matches the target repo's conventions, consuming `RepositoryProfile` (S2.1) +
-`TestConventions` (S2.2 extractor output) through the AI gateway seam.
-**Exit: generated code passes lint + type ≥ 95%.** (Golden candidates:
-S2.1 sample `js-web-app` (Vitest + Playwright) and/or the demo app
-`ai-qa-copilot-demo-app`.)
+**S2.4 — Diff review UI + human approval** (build bible §19 Phase 2): review
+generated tests (S2.3 output) as a diff, then apply to the workspace or
+reject. **Exit: apply + reject flows tested.**
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
   needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
   artifacts live in gitignored `reports/` — commit one baseline after each
@@ -212,3 +220,12 @@ S2.1 sample `js-web-app` (Vitest + Playwright) and/or the demo app
 - **Alembic + pgvector (S0.5):** migrations import `pgvector.sqlalchemy` by *attribute* — add `import pgvector.sqlalchemy` at top.
 - **Postgres UUID columns (S0.8):** fixtures must seed real UUIDs (`uuid5`) — string ids → `invalid input syntax for type uuid`.
 - **PowerShell + curl.exe (S0.8):** JSON bodies get mangled through the tool shell — use a Python (urllib) script for API smoke.
+- **Qwen3 thinking mode (S2.3):** LM Studio's Qwen3.8 spends the whole `max_tokens`
+  budget in `reasoning_content` → empty `content` → loud schema failure. Raising
+  `max_tokens` is the wrong fix (thinking needs 10k–30k+). Fix: gateway
+  `LLMGateway(extra_body=...)` / CLI `--extra-body` with
+  `{"chat_template_kwargs": {"enable_thinking": false}}` (or `/no_think` in the
+  prompt). Verified 2026-08-28: 176–245 completion tokens, clean contract.
+- **Playwright matchers (S2.3):** `toHaveTextContent` is a **Cypress** API — not in
+  real `@playwright/test` and deliberately absent from the type stub
+  (`tests/unit/support/playwright-test/index.d.ts`); the gate must reject it.

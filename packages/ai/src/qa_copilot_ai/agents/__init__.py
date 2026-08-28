@@ -1,5 +1,15 @@
-"""LLM-backed agents (S1.x). S1.1 ships the Requirement Agent; S1.2 the Test Design Agent."""
+"""LLM-backed agents. S1.1 Requirement, S1.2 Test Design, S2.3 Automation."""
 
+from .automation import (
+    AUTOMATOR_NAME,
+    FRAMEWORKS,
+    LANGUAGES,
+    AutomationAgent,
+    AutomationAgentResult,
+    AutomationInput,
+    GeneratedTest,
+    parse_generated_test,
+)
 from .requirement import (
     AGENT_NAME,
     SUGGESTED_TEST_TYPES,
@@ -22,11 +32,18 @@ from .test_design import (
 
 __all__ = [
     "AGENT_NAME",
+    "AUTOMATOR_NAME",
+    "FRAMEWORKS",
+    "LANGUAGES",
     "PRIORITIES",
     "RISK_LEVELS",
     "SUGGESTED_TEST_TYPES",
     "TEST_CASE_TYPES",
     "TEST_DESIGNER_NAME",
+    "AutomationAgent",
+    "AutomationAgentResult",
+    "AutomationInput",
+    "GeneratedTest",
     "RequirementAgent",
     "RequirementAgentResult",
     "RequirementAnalysis",
@@ -36,4 +53,5 @@ __all__ = [
     "TestDesignInput",
     "TestCase",
     "TestSuite",
+    "parse_generated_test",
 ]

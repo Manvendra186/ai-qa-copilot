@@ -1,0 +1,8 @@
+{
+  "name": "@playwright/test",
+  "version": "1.48.0",
+  "description": "Faithful type stub of @playwright/test ^1.48.0 for the S2.3 lint/type gate (offline workspace — see index.d.ts)",
+  "types": "index.d.ts",
+  "main": "index.js",
+  "license": "Apache-2.0"
+}

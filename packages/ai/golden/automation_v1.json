@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "name": "S2.3 test automation golden set",
+  "version": "v1",
+  "description": "Build Bible §22 evaluation dataset, v1: approved test cases over the sample repositories, each paired with a golden automation output — a competent model's reference answer in the test-automator@1 output contract (single-line JSON metadata + one fenced code block), validated by the §21 GeneratedTest schema. Consumed by the S2.3 unit tests (fake model = golden model_output) and the S2.3 live eval (real local LLM), which scores every output: schema + convention expectations + real tsc --strict / ESLint. Exit gate per §19 S2.3: lint + type pass fraction ≥ 95%. v1 scope is JS/TS fixtures: the §21 gate runs the workspace tsc/ESLint toolchain over @playwright/test-stubbed specs (see tests/unit/support/playwright-test).",
+  "source": {
+    "build_bible": "docs/AI_QA_Copilot_Build_Bible_v1.1.md",
+    "step": "S2.3",
+    "prompt": "test-automator@1"
+  },
+  "targets": {
+    "lint_type_pass_min": 0.95
+  },
+  "fixtures": [
+    {
+      "id": "AUTO-001",
+      "repo": "js-web-app",
+      "category": "e2e-functional",
+      "test_case": {
+        "id": "TC-001",
+        "title": "Counter increments once per click",
+        "type": "functional",
+        "priority": "high",
+        "preconditions": [
+          "The js-web-app dev server is running at http://localhost:5173"
+        ],
+        "steps": [
+          "Open the home page",
+          "Verify the counter button shows \"Count: 0\"",
+          "Click the counter button three times"
+        ],
+        "expected_results": [
+          "The counter button reads \"Count: 1\" after the first click",
+          "The counter button reads \"Count: 3\" after the third click"
+        ],
+        "risk": "medium"
+      },
+      "model_output": "{\"file_path\": \"e2e/counter-increment.spec.ts\", \"language\": \"typescript\", \"framework\": \"playwright\"}\n\n```ts\nimport { expect, test } from \"@playwright/test\";\n\ntest(\"increments the counter once per click\", async ({ page }) => {\n  await page.goto(\"/\");\n  const button = page.getByRole(\"button\", { name: /count:/ });\n  await expect(button).toHaveText(\"Count: 0\");\n  await button.click();\n  await expect(button).toHaveText(\"Count: 1\");\n  await button.click();\n  await button.click();\n  await expect(button).toHaveText(\"Count: 3\");\n});\n```",
+      "expectations": {
+        "file_path_pattern": "e2e/*.spec.ts",
+        "language": "typescript",
+        "framework": "playwright",
+        "must_use": ["@playwright/test", "getByRole", "toHaveText"],
+        "must_not_use": ["querySelector", "innerHTML"]
+      }
+    },
+    {
+      "id": "AUTO-002",
+      "repo": "js-web-app",
+      "category": "e2e-boundary",
+      "test_case": {
+        "id": "TC-002",
+        "title": "Counter starts at zero before any interaction",
+        "type": "boundary",
+        "priority": "medium",
+        "preconditions": [
+          "The js-web-app dev server is running at http://localhost:5173",
+          "No interaction with the counter has occurred"
+        ],
+        "steps": [
+          "Open the home page",
+          "Read the counter button without clicking it"
+        ],
+        "expected_results": [
+          "The counter button reads \"Count: 0\" on first load"
+        ],
+        "risk": "low"
+      },
+      "model_output": "{\"file_path\": \"e2e/counter-initial.spec.ts\", \"language\": \"typescript\", \"framework\": \"playwright\"}\n\n```ts\nimport { expect, test } from \"@playwright/test\";\n\ntest(\"counter starts at zero before any interaction\", async ({ page }) => {\n  await page.goto(\"/\");\n  const button = page.getByRole(\"button\", { name: /count:/ });\n  await expect(button).toHaveText(\"Count: 0\");\n});\n```",
+      "expectations": {
+        "file_path_pattern": "e2e/*.spec.ts",
+        "language": "typescript",
+        "framework": "playwright",
+        "must_use": ["@playwright/test", "getByRole", "toHaveText"],
+        "must_not_use": ["querySelector", "innerHTML"]
+      }
+    }
+  ]
+}

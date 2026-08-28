@@ -1025,12 +1025,14 @@ source = { editable = "packages/ai" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "qa-copilot-domain" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "qa-copilot-domain", editable = "packages/domain" },
 ]
 
 [[package]]

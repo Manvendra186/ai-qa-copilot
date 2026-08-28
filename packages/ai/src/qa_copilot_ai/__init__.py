@@ -11,15 +11,27 @@ schema-validated output through the gateway.
 S1.2: the Test Design Agent (build bible §19 Phase 1) — prompt v1 +
 schema-validated :class:`TestSuite` (the §12 test-case schema) through the
 gateway.
+
+S2.3: the Automation Agent (build bible §19 Phase 2) — prompt v1 +
+schema-validated :class:`GeneratedTest` from ``RepositoryProfile`` (S2.1) +
+``TestConventions`` (S2.2); the §21 lint/type gate and the golden-set eval
+live in :mod:`qa_copilot_ai.automation`.
 """
 
 from .agents import (
     AGENT_NAME,
+    AUTOMATOR_NAME,
+    FRAMEWORKS,
+    LANGUAGES,
     PRIORITIES,
     RISK_LEVELS,
     SUGGESTED_TEST_TYPES,
     TEST_CASE_TYPES,
     TEST_DESIGNER_NAME,
+    AutomationAgent,
+    AutomationAgentResult,
+    AutomationInput,
+    GeneratedTest,
     RequirementAgent,
     RequirementAgentResult,
     RequirementAnalysis,
@@ -29,6 +41,7 @@ from .agents import (
     TestDesignAgentResult,
     TestDesignInput,
     TestSuite,
+    parse_generated_test,
 )
 from .gateway import (
     AICallResult,
@@ -56,9 +69,16 @@ __all__ = [
     "AGENT_NAME",
     "AIChunk",
     "AICallResult",
+    "AUTOMATOR_NAME",
+    "AutomationAgent",
+    "AutomationAgentResult",
+    "AutomationInput",
     "DEFAULT_REDACTOR",
+    "FRAMEWORKS",
     "FilePromptStore",
+    "GeneratedTest",
     "InMemoryPromptStore",
+    "LANGUAGES",
     "LLMError",
     "LLMGateway",
     "PRIORITIES",
@@ -85,5 +105,6 @@ __all__ = [
     "TestSuite",
     "TokenUsage",
     "load_prompt_file",
+    "parse_generated_test",
     "render_prompt",
 ]
