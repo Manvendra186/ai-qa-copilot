@@ -3,7 +3,10 @@ name = "qa-copilot-execution"
 version = "0.1.0"
 description = "Playwright execution and artifacts (build bible §31.11)"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["qa-copilot-domain>=0.1.0", "pydantic>=2.7"]
+
+[tool.uv.sources]
+qa-copilot-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

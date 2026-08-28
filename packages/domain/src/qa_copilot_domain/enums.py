@@ -121,6 +121,38 @@ class ArtifactType(StrEnum):
     LOG = "log"
 
 
+class RunStatus(StrEnum):
+    """Test-run lifecycle (build bible §10 ``test_runs``, §15).
+
+    Values follow the job state machine (§31.2): ``pending`` →
+    ``running`` → terminal ``completed`` / ``failed``. ``completed`` means
+    the execution worker ran the suite and produced results — individual
+    tests may have failed (that is per-test data, :class:`TestResultStatus`);
+    ``failed`` means the worker itself failed (spawn error, timeout, no
+    report).
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class TestResultStatus(StrEnum):
+    """Outcome of one test within a run (build bible §10 ``test_results``, §15).
+
+    ``passed`` / ``failed`` are the terminal outcomes; ``flaky`` is a test
+    that failed then passed on retry (Playwright ``flaky``); ``skipped``
+    never ran; ``pending`` is the pre-execution placeholder (S0.5 default).
+    """
+
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+    FLAKY = "flaky"
+    SKIPPED = "skipped"
+
+
 class ProjectRole(StrEnum):
     """Project-scoped role (build bible §31.3 — V1 auth baseline).
 

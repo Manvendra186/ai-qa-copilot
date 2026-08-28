@@ -25,6 +25,10 @@ S2.2: convention extractor — locators, page objects, fixtures, helpers
 S2.4: generated-test review persistence — the S2.3 agent output as a
 ``generated_tests`` row + approve/apply/reject transitions
 (:mod:`qa_copilot_repository.generated_tests`, build bible §19 S2.4).
+
+S3.1: execution-run persistence — the worker's ``RunReport`` mapped onto
+``test_runs`` / ``test_results`` / ``artifacts`` rows + read helpers
+(:mod:`qa_copilot_repository.runs`, build bible §10, §15).
 """
 
 from . import (
@@ -36,6 +40,7 @@ from . import (
     models,
     prompts,
     requirements,
+    runs,
     scanner,
 )
 from .conventions import extract_conventions
@@ -54,6 +59,7 @@ __all__ = [
     "models",
     "prompts",
     "requirements",
+    "runs",
     "scan_repository",
     "scanner",
 ]

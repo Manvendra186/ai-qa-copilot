@@ -60,6 +60,7 @@ import pytest
 from pydantic import ValidationError
 from qa_copilot_ai import (
     AutomationAgent,
+    AutomationAgentResult,
     AutomationInput,
     FilePromptStore,
     GeneratedTest,
@@ -190,10 +191,10 @@ def _agent_run(
     handler: Handler,
     input_: AutomationInput,
     specs: list[PromptSpec] | None = None,
-):
+) -> AutomationAgentResult:
     """Run the agent once against the fake gateway; return the result."""
 
-    async def _do():
+    async def _do() -> AutomationAgentResult:
         store = InMemoryPromptStore(specs if specs is not None else [PROMPT_SPEC])
         gateway = _gateway(handler)
         try:
@@ -276,6 +277,7 @@ def test_agent_run_sends_rendered_prompt_and_file_settings() -> None:
     assert seen["temperature"] == 0.2
     assert seen["max_tokens"] == 4000
     messages = seen["messages"]
+    assert isinstance(messages, list)
     assert messages[0]["role"] == "user"
     prompt = str(messages[0]["content"])
     # The shared S2.x contract is actually rendered into the prompt.
@@ -458,6 +460,7 @@ def test_golden_set_loads_v1() -> None:
         if expected.file_path is not None:
             assert test.file_path == expected.file_path
         else:
+            assert expected.file_path_pattern is not None
             assert fnmatch.fnmatchcase(test.file_path, expected.file_path_pattern)
         assert test.language == expected.language
         assert test.framework == fixture.expectations.framework
@@ -568,6 +571,7 @@ def test_find_toolchain_resolves_workspace_toolchain() -> None:
 
 @GATE_SKIP
 def test_golden_fixtures_pass_local_gate(tmp_path: pathlib.Path) -> None:
+    assert TOOLCHAIN is not None
     for fixture in GOLDEN.fixtures:
         generated = parse_generated_test(fixture.model_output)
         sandbox = tmp_path / fixture.id
@@ -621,6 +625,7 @@ def test_gate_catches_unknown_page_method_and_matcher(tmp_path: pathlib.Path) ->
     Playwright matcher surface (``toHaveText`` / ``toContainText``) and
     deliberately omits ``toHaveTextContent`` — real Playwright has no
     such assertion, so the gate must reject it too."""
+    assert TOOLCHAIN is not None
     sandbox = tmp_path / "probe"
     prepare_sandbox(sandbox, _PROBE_INVALID_API, TOOLCHAIN)
     result = check_generated_file(sandbox, _PROBE_INVALID_API.file_path, TOOLCHAIN)
@@ -648,6 +653,7 @@ _PROBE_IMPLICIT_ANY = GeneratedTest(
 
 @GATE_SKIP
 def test_gate_catches_implicit_any_binding(tmp_path: pathlib.Path) -> None:
+    assert TOOLCHAIN is not None
     sandbox = tmp_path / "probe"
     prepare_sandbox(sandbox, _PROBE_IMPLICIT_ANY, TOOLCHAIN)
     result = check_generated_file(sandbox, _PROBE_IMPLICIT_ANY.file_path, TOOLCHAIN)
@@ -675,6 +681,7 @@ _PROBE_UNUSED = GeneratedTest(
 
 @GATE_SKIP
 def test_gate_catches_unused_binding(tmp_path: pathlib.Path) -> None:
+    assert TOOLCHAIN is not None
     sandbox = tmp_path / "probe"
     prepare_sandbox(sandbox, _PROBE_UNUSED, TOOLCHAIN)
     result = check_generated_file(sandbox, _PROBE_UNUSED.file_path, TOOLCHAIN)
@@ -713,6 +720,8 @@ def _eval_run(
     toolchain: Toolchain | None = None,
 ) -> AutomationReport:
     """One full golden-set run on the fake gateway (the real gate included)."""
+    resolved = toolchain if toolchain is not None else TOOLCHAIN
+    assert resolved is not None, "the gate requires a toolchain"
     store = InMemoryPromptStore([PROMPT_SPEC])
     gateway = _gateway(_golden_handler(broken))
     agent = AutomationAgent(store, gateway)
@@ -725,7 +734,7 @@ def _eval_run(
                 model="fake-model",
                 prompt_ref="test-automator@1",
                 contexts=contexts,
-                toolchain=toolchain if toolchain is not None else TOOLCHAIN,
+                toolchain=resolved,
                 sandbox_root=tmp_path / "sandbox",
             )
         finally:
@@ -841,7 +850,13 @@ def test_cli_missing_toolchain_exits_2(
     assert "workspace toolchain not found" in err
 
 
-def _fake_llm_server(broken: frozenset[str] = frozenset()) -> ThreadingHTTPServer:
+class _FakeLLMServer(ThreadingHTTPServer):
+    """``ThreadingHTTPServer`` carrying the captured request bodies."""
+
+    seen_bodies: list[dict[str, object]]
+
+
+def _fake_llm_server(broken: frozenset[str] = frozenset()) -> _FakeLLMServer:
     """In-process OpenAI-compatible endpoint (POST /chat/completions).
 
     Every request body is captured on ``server.seen_bodies`` for assertions."""
@@ -874,7 +889,7 @@ def _fake_llm_server(broken: frozenset[str] = frozenset()) -> ThreadingHTTPServe
         def log_message(self, fmt: str, *args: object) -> None:  # http.server API
             """Keep the test output clean."""
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    server = _FakeLLMServer(("127.0.0.1", 0), _Handler)
     server.seen_bodies = seen_bodies
     return server
 

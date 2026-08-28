@@ -33,6 +33,8 @@ from qa_copilot_domain.enums import (
     Priority,
     ProjectRole,
     RiskLevel,
+    RunStatus,
+    TestResultStatus,
     TestType,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -348,9 +350,11 @@ class TestRun(Base):
         index=True,
     )
     commit_sha: Mapped[str | None] = mapped_column(sa.String(64))
-    # Status vocabulary lands with the domain package at S3.x (§15); values
-    # follow the §31.2 job state machine (pending/running/completed/failed).
-    status: Mapped[str] = mapped_column(sa.String(32), default="running")
+    # Status vocabulary from the domain package (S3.1, §15); values follow
+    # the §31.2 job state machine (pending/running/completed/failed).
+    status: Mapped[RunStatus] = mapped_column(
+        _enum_column(RunStatus), default=RunStatus.RUNNING
+    )
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -377,7 +381,9 @@ class TestResult(Base):
         index=True,
     )
     test_case_id: Mapped[str | None] = mapped_column(sa.Uuid(as_uuid=False), index=True)
-    status: Mapped[str] = mapped_column(sa.String(32), default="pending")
+    status: Mapped[TestResultStatus] = mapped_column(
+        _enum_column(TestResultStatus), default=TestResultStatus.PENDING
+    )
     duration: Mapped[float | None] = mapped_column(sa.Double)
     failure_id: Mapped[str | None] = mapped_column(sa.Uuid(as_uuid=False))
 

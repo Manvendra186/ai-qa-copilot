@@ -73,25 +73,30 @@ def test_golden_js_web_app() -> None:
     }
 
 
-# --- golden 2: demo app (no test files; conventions from scripts only) --------
+# --- golden 2: demo app (Playwright E2E, added by S3.1) -------------------------
 
 
 @pytest.mark.skipif(not DEMO_APP.is_dir(), reason="demo app not present on this machine")
 def test_golden_demo_app() -> None:
     assert _dump(extract_conventions(DEMO_APP)) == {
-        "test_file_patterns": [],
-        "locator_styles": [],
+        "test_file_patterns": ["*.spec.js"],
+        "locator_styles": [
+            {"api": "getByTestId", "framework": "generic", "count": 3},
+            {"api": "getByRole", "framework": "generic", "count": 2},
+            {"api": "locator", "framework": "generic", "count": 2},
+        ],
         "page_object_files": [],
-        "fixture_files": [],
+        "fixture_files": ["e2e/fixtures.js"],
         "helper_files": [],
-        "test_configs": [],
+        "test_configs": ["playwright.config.js"],
         "test_ids": [],
         "base_url": None,
-        "test_scripts": [{"name": "smoke", "command": "node scripts/smoke.mjs"}],
-        "notes": [
-            "no test framework detected in manifests/configs",
-            "no test files found (conventions limited to scripts/configs)",
+        "test_scripts": [
+            {"name": "smoke", "command": "node scripts/smoke.mjs"},
+            {"name": "test:e2e", "command": "playwright test"},
+            {"name": "test:e2e:headed", "command": "playwright test --headed"},
         ],
+        "notes": [],
     }
 
 

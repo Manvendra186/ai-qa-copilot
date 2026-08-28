@@ -320,3 +320,77 @@ def test_persist_requirement_with_suite_writes_rows_and_join() -> None:
             assert join_count == 3
     finally:
         engine.dispose()
+
+
+def test_persist_run_writes_run_result_and_artifact_rows() -> None:
+    """S3.1: the execution worker's RunReport lands as §10 test_runs/test_results/artifacts."""
+    from qa_copilot_domain.enums import ArtifactType, RunStatus, TestResultStatus
+    from qa_copilot_execution.report import (
+        ArtifactReport,
+        RunReport,
+        RunTotals,
+        TestResultReport,
+    )
+    from qa_copilot_repository import runs as repo_runs
+
+    engine = _engine_or_skip()
+    if engine is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    slug = "demo-login-products-signs-in-and-sees-the-product-catalog"
+    report = RunReport(
+        status=RunStatus.COMPLETED,
+        target_dir="/tmp/demo",
+        started_at="2026-08-28T00:00:00.000+00:00",
+        completed_at="2026-08-28T00:00:08.500+00:00",
+        duration_ms=8500,
+        totals=RunTotals(total=1, passed=1),
+        results=[
+            TestResultReport(
+                title="signs in and sees the product catalog",
+                file="demo.spec.js",
+                status=TestResultStatus.PASSED,
+                duration_ms=450,
+                slug=slug,
+                artifacts=[
+                    ArtifactReport(
+                        type=ArtifactType.VIDEO,
+                        uri=f"runs/s31-test/{slug}/video",
+                        metadata={"size_bytes": 67633},
+                    ),
+                    ArtifactReport(
+                        type=ArtifactType.SCREENSHOT,
+                        uri=f"runs/s31-test/{slug}/screenshot",
+                    ),
+                ],
+            )
+        ],
+    )
+    try:
+        with db.session_scope(engine) as session:
+            org = models.Organization(name="S3.1 persistence test org")
+            session.add(org)
+            session.flush()
+            project = models.Project(name="S3.1 persistence test project", organization_id=org.id)
+            session.add(project)
+            session.flush()
+            persisted = repo_runs.persist_run(session, project_id=project.id, report=report)
+
+        with db.session_scope(engine) as session:
+            run = repo_runs.get_run(session, persisted.id)
+            assert run is not None
+            assert run.project_id == project.id
+            assert run.status == RunStatus.COMPLETED
+            assert run.started_at is not None
+
+            results = list(repo_runs.list_results(session, persisted.id))
+            assert len(results) == 1
+            assert results[0].status == TestResultStatus.PASSED
+            assert results[0].duration == pytest.approx(0.45)
+
+            artifacts = list(repo_runs.list_artifacts(session, persisted.id))
+            assert {a.type for a in artifacts} == {ArtifactType.VIDEO, ArtifactType.SCREENSHOT}
+            video = next(a for a in artifacts if a.type is ArtifactType.VIDEO)
+            assert video.uri == f"runs/s31-test/{slug}/video"
+            assert video.metadata_ == {"size_bytes": 67633}
+    finally:
+        engine.dispose()
