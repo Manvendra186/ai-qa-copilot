@@ -157,6 +157,98 @@ export function getRequirement(id: string): Promise<RequirementOut> {
   return request<RequirementOut>(`/requirements/${encodeURIComponent(id)}`);
 }
 
+// --- S3.2: run history, results, artifacts (§10, §15) -------------------------
+
+export interface FailureOut {
+  id: string;
+  category: string;
+  root_cause: string | null;
+  confidence: number | null;
+  evidence: string[];
+  suggested_fix: string | null;
+  needs_human_approval: boolean;
+}
+
+export interface ArtifactOut {
+  id: string;
+  test_result_id: string;
+  type: string;
+  uri: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  /** API path that streams the file bytes (`/api/v1/runs/{id}/artifacts/{id}/content`). */
+  download_url: string | null;
+}
+
+export interface TestResultOut {
+  id: string;
+  run_id: string;
+  test_case_id: string | null;
+  status: string;
+  duration: number | null;
+  failure: FailureOut | null;
+  artifacts: ArtifactOut[];
+}
+
+export interface RunListItem {
+  id: string;
+  project_id: string;
+  commit_sha: string | null;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface RunDetail {
+  id: string;
+  project_id: string;
+  commit_sha: string | null;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  duration_s: number | null;
+  totals: Record<string, number>;
+  results: TestResultOut[];
+  artifacts: ArtifactOut[];
+}
+
+/** `GET /projects/{id}/runs` — a project's runs, newest first (S3.2). */
+export function listRuns(projectId: string): Promise<RunListItem[]> {
+  return request<RunListItem[]>(`/projects/${encodeURIComponent(projectId)}/runs`);
+}
+
+/** `GET /runs/{id}` — run + results + artifacts (S3.2). */
+export function getRun(runId: string): Promise<RunDetail> {
+  return request<RunDetail>(`/runs/${encodeURIComponent(runId)}`);
+}
+
+/** `GET /runs/{id}/results` — per-test outcomes + diagnosis (S3.2). */
+export function listResults(runId: string): Promise<TestResultOut[]> {
+  return request<TestResultOut[]>(`/runs/${encodeURIComponent(runId)}/results`);
+}
+
+/** `GET /runs/{id}/artifacts` — artifact rows (S3.2). */
+export function listArtifacts(runId: string): Promise<ArtifactOut[]> {
+  return request<ArtifactOut[]>(`/runs/${encodeURIComponent(runId)}/artifacts`);
+}
+
+/**
+ * Fetch an artifact's file bytes through its Bearer-authenticated `download_url`.
+ *
+ * A plain `<a href>` / `<img src>` cannot send the `Authorization` header
+ * (dev-mode auth is a Bearer token, not a cookie), so the bytes are fetched
+ * with the shared `headers()` and the caller turns the blob into an object URL
+ * (inline preview) or a download.
+ */
+export async function fetchArtifactBlob(artifact: ArtifactOut): Promise<Blob> {
+  if (!artifact.download_url) throw new ApiError(400, 'this artifact has no download_url');
+  const res = await fetch(artifact.download_url, { headers: headers() });
+  if (!res.ok) throw new ApiError(res.status, await errorBody(res));
+  return res.blob();
+}
+
 // --- SSE ------------------------------------------------------------------------
 
 /**

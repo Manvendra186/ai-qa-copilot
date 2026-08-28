@@ -146,6 +146,9 @@ class TestResultStatus(StrEnum):
     never ran; ``pending`` is the pre-execution placeholder (S0.5 default).
     """
 
+    # Prevents pytest from trying to collect this non-test enum (name is Test*).
+    __test__ = False
+
     PENDING = "pending"
     PASSED = "passed"
     FAILED = "failed"

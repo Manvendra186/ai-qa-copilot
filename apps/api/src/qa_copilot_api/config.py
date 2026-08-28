@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # --- App under test (Playwright target, §31.11) ---
     app_under_test: str | None = None
 
+    # --- Artifacts (S3.1, §15: local store root; S3.2 read/download) ---
+    # Root of the execution artifact store. ``ArtifactStore.resolve`` maps a
+    # store-relative URI (``runs/{run_id}/{test_id}/{name}``) under this path;
+    # ``ARTIFACT_STORE_ROOT`` relocates it (defaults to ``data/artifacts``).
+    artifact_store_root: str | None = None
+
     # --- Auth (S0.8, §31.3: dev-mode single user + JWT) ---
     # HS256 signing secret (16+ chars). No default on purpose: fail loud.
     auth_token_secret: str | None = Field(

@@ -24,11 +24,20 @@ S2.4: automation generation + generated-test review (§19 S2.4):
 - ``POST /api/v1/generated-tests/{id}/approve`` (``member``+, audit)
 - ``POST /api/v1/generated-tests/{id}/reject``  (``member``+, audit)
 - ``POST /api/v1/generated-tests/{id}/apply``   (``member``+; writes the file, audit)
+
+S3.2: run history, results, artifacts (§10, §15):
+
+- ``GET /api/v1/projects/{id}/runs`` — the project's runs, newest first (``viewer``+)
+- ``GET /api/v1/runs/{id}``          — run + results + artifacts (``viewer``+)
+- ``GET /api/v1/runs/{id}/results``  — the run's test outcomes (``viewer``+)
+- ``GET /api/v1/runs/{id}/artifacts`` — the run's artifact rows (``viewer``+)
+- ``GET /api/v1/runs/{id}/artifacts/{artifact_id}/content`` — file bytes (``viewer``+)
 """
 
 from __future__ import annotations
 
 import json
+import mimetypes
 import uuid
 from pathlib import Path
 
@@ -37,14 +46,17 @@ from qa_copilot_domain.enums import (
     GeneratedTestStatus,
     JobType,
     ProjectRole,
+    TestResultStatus,
     role_at_least,
 )
+from qa_copilot_execution import ArtifactStore, ArtifactStoreError
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import membership, models
+from qa_copilot_repository import runs as repo_runs
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
-from starlette.responses import StreamingResponse
+from starlette.responses import FileResponse, StreamingResponse
 
 from . import auth, jobs, schemas
 from .db import get_db
@@ -56,6 +68,7 @@ jobs_router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 events_router = APIRouter(prefix="/api/v1/events", tags=["events"])
 automation_router = APIRouter(prefix="/api/v1/automation", tags=["automation"])
 generated_tests_router = APIRouter(prefix="/api/v1/generated-tests", tags=["generated-tests"])
+runs_router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
 
 def _user_out(user: models.User) -> schemas.UserOut:
@@ -714,3 +727,194 @@ def apply_generated_test(
     _record_review_audit(db, row.project_id, user, action="applied", generated_test_id=row.id)
     db.commit()
     return _generated_test_out(row)
+
+
+# --- S3.2: run history, results, artifacts (§10, §15) -------------------------
+
+
+def _failure_out(failure: models.Failure) -> schemas.FailureOut:
+    """ORM failure row → API schema (enum values as wire strings)."""
+    return schemas.FailureOut(
+        id=failure.id,
+        category=failure.category.value,
+        root_cause=failure.root_cause,
+        confidence=failure.confidence,
+        evidence=list(failure.evidence),
+        suggested_fix=failure.suggested_fix,
+        needs_human_approval=failure.needs_human_approval,
+    )
+
+
+def _artifact_out(run_id: str, artifact: models.Artifact) -> schemas.ArtifactOut:
+    """One artifact row, with its ``/content`` download endpoint for the UI."""
+    return schemas.ArtifactOut(
+        id=artifact.id,
+        test_result_id=artifact.test_result_id,
+        type=artifact.type.value,
+        uri=artifact.uri,
+        metadata=dict(artifact.metadata_ or {}),
+        created_at=artifact.created_at,
+        download_url=f"/api/v1/runs/{run_id}/artifacts/{artifact.id}/content",
+    )
+
+
+def _result_out(run_id: str, result: models.TestResult) -> schemas.TestResultOut:
+    """One test outcome + its diagnosis + artifacts."""
+    return schemas.TestResultOut(
+        id=result.id,
+        run_id=result.run_id,
+        test_case_id=result.test_case_id,
+        status=result.status.value,
+        duration=result.duration,
+        failure=_failure_out(result.failure) if result.failure is not None else None,
+        artifacts=[_artifact_out(run_id, artifact) for artifact in result.artifacts],
+    )
+
+
+def _duration_s(run: models.TestRun) -> float | None:
+    """Run wall-clock duration in seconds (``None`` when timestamps are absent)."""
+    if run.started_at is None or run.completed_at is None:
+        return None
+    return max(0.0, (run.completed_at - run.started_at).total_seconds())
+
+
+def _run_list_item(run: models.TestRun) -> schemas.RunListItem:
+    """ORM run row → list schema (S3.2 run-history list row)."""
+    return schemas.RunListItem(
+        id=run.id,
+        project_id=run.project_id,
+        commit_sha=run.commit_sha,
+        status=run.status.value,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        created_at=run.created_at,
+    )
+
+
+def _run_detail(run: models.TestRun, results: list[models.TestResult]) -> schemas.RunDetail:
+    """Run + results + artifacts; totals and duration computed here (not stored)."""
+    totals = {
+        "total": len(results),
+        "passed": sum(1 for r in results if r.status == TestResultStatus.PASSED),
+        "failed": sum(1 for r in results if r.status == TestResultStatus.FAILED),
+        "flaky": sum(1 for r in results if r.status == TestResultStatus.FLAKY),
+        "skipped": sum(1 for r in results if r.status == TestResultStatus.SKIPPED),
+        "pending": sum(1 for r in results if r.status == TestResultStatus.PENDING),
+    }
+    return schemas.RunDetail(
+        id=run.id,
+        project_id=run.project_id,
+        commit_sha=run.commit_sha,
+        status=run.status.value,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        created_at=run.created_at,
+        duration_s=_duration_s(run),
+        totals=totals,
+        results=[_result_out(run.id, result) for result in results],
+        artifacts=[
+            _artifact_out(run.id, artifact) for result in results for artifact in result.artifacts
+        ],
+    )
+
+
+def _get_run_for_read(db: Session, user: models.User, run_id: str) -> models.TestRun:
+    """Fetch one run + enforce the ``viewer`` floor (S3.2 read path, §31.3).
+
+    Non-members and below-``viewer`` roles get 403 (never 404) — the build
+    bible's no-existence-leak rule. A non-UUID id is a 404 without a round-trip.
+    """
+    try:
+        uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found") from None
+    run = db.get(models.TestRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    _require_project_role(db, user, run.project_id, ProjectRole.VIEWER)
+    return run
+
+
+@projects_router.get("/{project_id}/runs", response_model=list[schemas.RunListItem])
+def list_runs(
+    project_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.RunListItem]:
+    """A project's runs, newest first (S3.2 run history, ``viewer`` or above)."""
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    _require_project_role(db, user, project.id, ProjectRole.VIEWER)
+    return [_run_list_item(run) for run in repo_runs.list_runs(db, project.id)]
+
+
+@runs_router.get("/{run_id}", response_model=schemas.RunDetail)
+def get_run(
+    run_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.RunDetail:
+    """One run + its results and artifacts (S3.2, ``viewer`` or above)."""
+    run = _get_run_for_read(db, user, run_id)
+    return _run_detail(run, list(repo_runs.list_results(db, run.id)))
+
+
+@runs_router.get("/{run_id}/results", response_model=list[schemas.TestResultOut])
+def list_results(
+    run_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.TestResultOut]:
+    """A run's test outcomes (S3.2, ``viewer`` or above)."""
+    run = _get_run_for_read(db, user, run_id)
+    return [_result_out(run.id, result) for result in repo_runs.list_results(db, run.id)]
+
+
+@runs_router.get("/{run_id}/artifacts", response_model=list[schemas.ArtifactOut])
+def list_artifacts(
+    run_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.ArtifactOut]:
+    """A run's artifact rows (S3.2, ``viewer`` or above)."""
+    run = _get_run_for_read(db, user, run_id)
+    return [
+        _artifact_out(run.id, artifact) for artifact in repo_runs.list_artifacts(db, run.id)
+    ]
+
+
+@runs_router.get("/{run_id}/artifacts/{artifact_id}/content")
+def get_artifact_content(
+    run_id: str,
+    artifact_id: str,
+    request: Request,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> FileResponse:
+    """Stream an artifact's file bytes (S3.2 download, ``viewer`` or above).
+
+    The file is resolved through :class:`ArtifactStore` (never a raw path): a
+    store-relative URI resolves under the store root; anything that escapes the
+    root, or that is missing on disk (e.g. a seed ``file://`` placeholder),
+    yields 404.
+    """
+    run = _get_run_for_read(db, user, run_id)
+    artifact = db.scalar(
+        select(models.Artifact)
+        .join(models.TestResult, models.Artifact.test_result_id == models.TestResult.id)
+        .where(models.Artifact.id == artifact_id, models.TestResult.run_id == run.id)
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+
+    store_root = request.app.state.settings.artifact_store_root or "data/artifacts"
+    store = ArtifactStore(store_root)
+    try:
+        path = store.resolve(artifact.uri)
+    except ArtifactStoreError:
+        raise HTTPException(status_code=404, detail="artifact not found in store") from None
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found in store")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=path.name)

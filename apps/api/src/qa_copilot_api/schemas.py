@@ -206,3 +206,80 @@ class GeneratedTestReviewIn(BaseModel):
     """Optional reviewer note for approve / reject / apply (audit, §31.1)."""
 
     note: str | None = Field(default=None, max_length=2000)
+
+
+# --- S3.2: run history, results, artifacts (§10, §15) -------------------------
+
+
+class FailureOut(BaseModel):
+    """A failure plus its AI diagnosis (§10 ``failures``, §16)."""
+
+    id: str
+    category: str
+    root_cause: str | None
+    confidence: float | None
+    evidence: list[str]
+    suggested_fix: str | None
+    needs_human_approval: bool
+
+
+class ArtifactOut(BaseModel):
+    """One execution artifact row (§10 ``artifacts``, §15).
+
+    ``uri`` is the store-relative reference (or an external ``file://`` /
+    ``http://`` link in seed data); ``download_url`` is the API endpoint that
+    streams the file bytes for artifacts living in the local store.
+    """
+
+    id: str
+    test_result_id: str
+    type: str
+    uri: str
+    metadata: dict[str, Any]
+    created_at: datetime
+    download_url: str | None = None
+
+
+class TestResultOut(BaseModel):
+    """Outcome of one test in a run (§10 ``test_results``, §15)."""
+
+    id: str
+    run_id: str
+    test_case_id: str | None
+    status: str
+    duration: float | None
+    failure: FailureOut | None = None
+    artifacts: list[ArtifactOut] = Field(default_factory=list)
+
+
+class RunListItem(BaseModel):
+    """One run in a project's run history (S3.2 list row)."""
+
+    id: str
+    project_id: str
+    commit_sha: str | None
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class RunDetail(BaseModel):
+    """``GET /api/v1/runs/{id}`` (S3.2): the run, its results and artifacts.
+
+    ``totals`` is computed from the run's test results and ``duration_s`` from
+    the run timestamps — neither is stored on the ``test_runs`` row (§10 keeps
+    outcomes per test result, not as per-run aggregates).
+    """
+
+    id: str
+    project_id: str
+    commit_sha: str | None
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    duration_s: float | None = None
+    totals: dict[str, int]
+    results: list[TestResultOut]
+    artifacts: list[ArtifactOut]

@@ -6,11 +6,25 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
-  Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution (S3.1 ✓)
-- **Step:** S0.1–S3.1 ✓ (S3.1 = execution worker: Playwright run + §15 artifacts) ·
-  **S3.2 next** (Runs API + run history + artifacts UI)
+  Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution (S3.1 ✓, S3.2 ✓)
+- **Step:** S0.1–S3.2 ✓ (S3.2 = Runs API + run history/results/artifacts UI) ·
+  **next:** remaining Phase 3 steps per build bible §19
 
 ## 2. Just completed
+
+- 2026-08-28 · **S3.2 (Runs API + run history / results / artifacts UI)**:
+  backend read endpoints complete + registered — `GET /projects/{id}/runs`,
+  `GET /runs/{id}`, `GET /runs/{id}/results`, `GET /runs/{id}/artifacts`,
+  `GET /runs/{id}/artifacts/{artifact_id}/content` (Bearer `download_url` for
+  bytes; run **totals + duration computed in the API layer**, not stored on
+  `TestRun`) · **303 tests ✓** (`tests/unit/test_runs.py`: 15) · mypy strict ✓ ·
+  ruff ✓ · **web Runs UI** — `RunsView` (project run list → auto-select newest →
+  run detail: status, commit SHA, timestamps, duration, totals → per-test results
+  + failure diagnosis → artifact list) + artifact **inline image preview** and
+  **download** via `fetchArtifactBlob` (dev auth is a Bearer header, so a plain
+  `<a href>`/`<img src>` can't send `Authorization` — bytes are fetched with the
+  shared `headers()` → object URL) · `App.tsx` "Test design" / "Runs" tab switcher
+  · **web prettier format ✓ · eslint ✓ · tsc + vite build ✓ (38 modules).**
 
 - 2026-08-28 · **S3.1 (execution worker) — live exit PASS** (1 test on demo app →
   all artifacts stored): `qa_copilot_execution` (database-free) — `run_playwright`

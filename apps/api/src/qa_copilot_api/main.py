@@ -188,6 +188,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # S2.4: automation generation + generated-test review (§19 S2.4).
     app.include_router(routes.automation_router)
     app.include_router(routes.generated_tests_router)
+    # S3.2: run history, results, artifacts (§10, §15).
+    app.include_router(routes.runs_router)
 
     return app
 

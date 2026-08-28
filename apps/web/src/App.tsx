@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { LoginForm } from './components/LoginForm';
 import { PipelineView } from './components/PipelineView';
 import { RequirementForm } from './components/RequirementForm';
+import { RunsView } from './components/RunsView';
 import { TestCaseList } from './components/TestCaseList';
 import { useAuth } from './hooks/useAuth';
 import { useJobEvents } from './hooks/useJobEvents';
@@ -27,6 +28,7 @@ export default function App() {
   const [requirement, setRequirement] = useState<RequirementOut | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [tab, setTab] = useState<'design' | 'runs'>('design');
 
   // S1.3 read-back: once the job completes, the terminal `output_ref` is the
   // persisted requirement id — fetch it and render the suite.
@@ -114,62 +116,95 @@ export default function App() {
         onLogout={auth.logout}
       />
       <main className="mx-auto w-full max-w-5xl flex-1 space-y-8 px-6 py-8">
-        <section className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Test design</h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Describe a requirement — the Test Design Agent runs it as a job (202 + job_id, build
-              bible §11) and the persisted suite is rendered when the job completes (S1.3).
-            </p>
-          </div>
-          {job.jobId !== null && (
-            <span className="font-mono text-xs text-slate-500">job {job.jobId}</span>
-          )}
-        </section>
+        <nav
+          className="flex gap-1 rounded-xl border border-slate-800 bg-slate-900/40 p-1"
+          aria-label="Views"
+        >
+          <button
+            type="button"
+            onClick={() => setTab('design')}
+            className={`rounded-lg px-4 py-1.5 text-sm transition ${
+              tab === 'design'
+                ? 'bg-slate-800 text-slate-100'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Test design
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('runs')}
+            className={`rounded-lg px-4 py-1.5 text-sm transition ${
+              tab === 'runs' ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Runs
+          </button>
+        </nav>
 
-        <RequirementForm
-          projectId={auth.project.id}
-          disabled={running}
-          error={submitError}
-          onSubmit={handleSubmit}
-        />
-
-        {job.jobId !== null && <PipelineView stages={job.stages} />}
-
-        {failed && job.error !== null && (
-          <section className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
-            Job failed: {job.error}
-          </section>
-        )}
-
-        {completed && job.outputRef !== null && requirement === null && fetchError === null && (
-          <p className="text-sm text-slate-400">Fetching the persisted test cases…</p>
-        )}
-
-        {completed && fetchError !== null && (
-          <section className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
-            Could not read back the suite (job succeeded): {fetchError}
-          </section>
-        )}
-
-        {completed && requirement !== null && (
-          <section className="space-y-4">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-100">{requirement.title}</h3>
-              <p className="mt-1 text-sm text-slate-400">{requirement.content}</p>
-              {requirement.acceptance_criteria.length > 0 && (
-                <ul className="mt-2 list-inside list-disc space-y-0.5 text-xs text-slate-400">
-                  {requirement.acceptance_criteria.map((criterion, i) => (
-                    <li key={i}>{criterion}</li>
-                  ))}
-                </ul>
+        {tab === 'design' && (
+          <>
+            <section className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight">Test design</h2>
+                <p className="mt-1 max-w-2xl text-sm text-slate-400">
+                  Describe a requirement — the Test Design Agent runs it as a job (202 + job_id,
+                  build bible §11) and the persisted suite is rendered when the job completes
+                  (S1.3).
+                </p>
+              </div>
+              {job.jobId !== null && (
+                <span className="font-mono text-xs text-slate-500">job {job.jobId}</span>
               )}
-            </div>
-            <TestCaseList cases={requirement.test_cases} />
-          </section>
+            </section>
+
+            <RequirementForm
+              projectId={auth.project.id}
+              disabled={running}
+              error={submitError}
+              onSubmit={handleSubmit}
+            />
+
+            {job.jobId !== null && <PipelineView stages={job.stages} />}
+
+            {failed && job.error !== null && (
+              <section className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
+                Job failed: {job.error}
+              </section>
+            )}
+
+            {completed && job.outputRef !== null && requirement === null && fetchError === null && (
+              <p className="text-sm text-slate-400">Fetching the persisted test cases…</p>
+            )}
+
+            {completed && fetchError !== null && (
+              <section className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
+                Could not read back the suite (job succeeded): {fetchError}
+              </section>
+            )}
+
+            {completed && requirement !== null && (
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-100">{requirement.title}</h3>
+                  <p className="mt-1 text-sm text-slate-400">{requirement.content}</p>
+                  {requirement.acceptance_criteria.length > 0 && (
+                    <ul className="mt-2 list-inside list-disc space-y-0.5 text-xs text-slate-400">
+                      {requirement.acceptance_criteria.map((criterion, i) => (
+                        <li key={i}>{criterion}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <TestCaseList cases={requirement.test_cases} />
+              </section>
+            )}
+
+            <EventLog entries={job.log} done={completed} failed={failed} />
+          </>
         )}
 
-        <EventLog entries={job.log} done={completed} failed={failed} />
+        {tab === 'runs' && <RunsView projectId={auth.project.id} />}
       </main>
       <footer className="border-t border-slate-800 px-6 py-4 text-center text-xs text-slate-500">
         {FOOTER}
