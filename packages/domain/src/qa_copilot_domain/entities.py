@@ -94,6 +94,60 @@ class RepositoryProfile(DomainModel):
     scanned_at: datetime | None = None
 
 
+class LocatorStyle(DomainModel):
+    """One observed UI locator API and how often the repo's test code uses it
+    (build bible §19 S2.2).
+
+    ``api`` is the locator method (``"getByRole"``, ``"getByTestId"``,
+    ``"locator"``, …). ``framework`` attributes the usage: ``"playwright"`` or
+    ``"testing-library"`` when the file imports that toolkit, otherwise
+    ``"generic"``. ``count`` is occurrences in the test files.
+    """
+
+    api: NonBlankStr
+    framework: str
+    count: int = Field(default=0, ge=0)
+
+
+class TestScript(DomainModel):
+    """A ``package.json`` script that launches tests (build bible §19 S2.2)."""
+
+    # Prevents pytest from trying to collect this non-test class (name is Test*).
+    __test__ = False
+
+    name: NonBlankStr
+    command: NonBlankStr
+
+
+class TestConventions(DomainModel):
+    """Extracted test conventions of a target repository (build bible §19 S2.2).
+
+    Produced by :func:`qa_copilot_repository.conventions.extract_conventions` —
+    deterministic, LLM-free, on top of the S2.1 scanner. This is the shared
+    contract the S2.3 automation agent consumes to generate code that matches
+    how the repo already tests.
+
+    File paths are repo-relative POSIX, de-duplicated and sorted.
+    ``locator_styles`` is ordered by usage (most-used first, then name);
+    ``test_scripts`` by name. ``scanned_at`` is the only time-varying field.
+    """
+
+    # Prevents pytest from trying to collect this non-test class (name is Test*).
+    __test__ = False
+
+    test_file_patterns: list[str] = Field(default_factory=list)
+    locator_styles: list[LocatorStyle] = Field(default_factory=list)
+    page_object_files: list[str] = Field(default_factory=list)
+    fixture_files: list[str] = Field(default_factory=list)
+    helper_files: list[str] = Field(default_factory=list)
+    test_configs: list[str] = Field(default_factory=list)
+    test_ids: list[str] = Field(default_factory=list)
+    base_url: str | None = None
+    test_scripts: list[TestScript] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    scanned_at: datetime | None = None
+
+
 class Requirement(DomainModel):
     """A product requirement with acceptance criteria (build bible §10)."""
 

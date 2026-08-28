@@ -198,14 +198,17 @@ def _note(acc: _Accumulator, text: str) -> None:
         acc.notes.append(text)
 
 
-def _read_text(path: Path, acc: _Accumulator) -> str | None:
-    """Read a manifest/config with a size cap; count failures, never raise."""
+def read_text_capped(path: Path) -> str | None:
+    """Read a manifest/config with a size cap; never raises.
+
+    Returns ``None`` when the file exceeds :data:`MAX_READ_BYTES` or cannot be
+    read — callers count the miss (e.g. ``acc.skipped_manifests``).
+    """
     try:
         if path.stat().st_size > MAX_READ_BYTES:
-            raise OSError("file exceeds read cap")
+            return None
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        acc.skipped_manifests += 1
         return None
 
 
@@ -250,7 +253,7 @@ def _config_framework(name: str) -> str | None:
     return None
 
 
-def _is_test_file(name: str, parent_dirname: str) -> bool:
+def is_test_file(name: str, parent_dirname: str) -> bool:
     """Test-file conventions: pytest (``test_*.py`` / ``*_test.py``), Go
     (``*_test.go``), JS/TS (``*.test.*`` / ``*.spec.*`` or ``__tests__/``)."""
     lower = name.lower()
@@ -272,8 +275,9 @@ def _apply_playwright_testdir(
     acc: _Accumulator,
 ) -> None:
     """Pick up ``testDir`` from a Playwright config (relative to that config)."""
-    text = _read_text(config_path, acc)
+    text = read_text_capped(config_path)
     if text is None:
+        acc.skipped_manifests += 1
         return
     match = re.search(r"testDir\s*[:=]\s*['\"]([^'\"]+)['\"]", text)
     if match is None:
@@ -290,8 +294,9 @@ def _apply_playwright_testdir(
 def _apply_text_markers(
     path: Path, markers: tuple[tuple[str, str], ...], acc: _Accumulator
 ) -> None:
-    text = _read_text(path, acc)
+    text = read_text_capped(path)
     if text is None:
+        acc.skipped_manifests += 1
         return
     for marker, framework in markers:
         if marker in text:
@@ -305,8 +310,9 @@ def _test_framework_for_dep(dep_lower: str) -> str | None:
 
 
 def _apply_package_json(path: Path, acc: _Accumulator) -> None:
-    text = _read_text(path, acc)
+    text = read_text_capped(path)
     if text is None:
+        acc.skipped_manifests += 1
         return
     try:
         data = json.loads(text)
@@ -376,8 +382,9 @@ def _pyproject_dep_names(data: object) -> list[str]:
 
 
 def _apply_pyproject(path: Path, acc: _Accumulator) -> None:
-    text = _read_text(path, acc)
+    text = read_text_capped(path)
     if text is None:
+        acc.skipped_manifests += 1
         return
     try:
         data = tomllib.loads(text)
@@ -408,8 +415,9 @@ def _apply_pyproject(path: Path, acc: _Accumulator) -> None:
 
 
 def _apply_requirements(path: Path, acc: _Accumulator) -> None:
-    text = _read_text(path, acc)
+    text = read_text_capped(path)
     if text is None:
+        acc.skipped_manifests += 1
         return
     for line in text.splitlines():
         line = line.strip()
@@ -452,7 +460,9 @@ def _root_signals(root: Path, acc: _Accumulator) -> set[str]:
     pnpm_ws = root / "pnpm-workspace.yaml"
     if pnpm_ws.is_file():
         acc.monorepo = True
-        text = _read_text(pnpm_ws, acc)
+        text = read_text_capped(pnpm_ws)
+        if text is None:
+            acc.skipped_manifests += 1
         globs = _pnpm_workspace_globs(text or "")
         if globs:
             _note(acc, f"pnpm workspaces: {', '.join(globs)}")
@@ -523,7 +533,7 @@ def _classify_file(
     elif _is_requirements_txt(lower):
         _apply_requirements(dirpath / name, acc)
 
-    is_test = _is_test_file(name, dirpath.name)
+    is_test = is_test_file(name, dirpath.name)
     if is_test:
         test_dirs.add(dirpath.relative_to(root).as_posix() or ".")
     return is_test

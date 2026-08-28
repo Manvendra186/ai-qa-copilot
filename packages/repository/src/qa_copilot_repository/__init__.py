@@ -17,9 +17,23 @@ S1.3: suite persistence — requirement + test-case rows + the §10 M:N join
 S2.1: deterministic repository scanner — languages, frameworks, test
 structure (:mod:`qa_copilot_repository.scanner`), producing
 :class:`qa_copilot_domain.RepositoryProfile`.
+
+S2.2: convention extractor — locators, page objects, fixtures, helpers
+(:mod:`qa_copilot_repository.conventions`), producing
+:class:`qa_copilot_domain.TestConventions`.
 """
 
-from . import audit, db, membership, models, prompts, requirements, scanner
+from . import (
+    audit,
+    conventions,
+    db,
+    membership,
+    models,
+    prompts,
+    requirements,
+    scanner,
+)
+from .conventions import extract_conventions
 from .scanner import scan_repository
 
 __version__ = "0.1.0"
@@ -27,7 +41,9 @@ __version__ = "0.1.0"
 __all__ = [
     "__version__",
     "audit",
+    "conventions",
     "db",
+    "extract_conventions",
     "membership",
     "models",
     "prompts",
