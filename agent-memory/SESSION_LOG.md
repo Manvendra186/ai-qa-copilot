@@ -944,8 +944,8 @@
   apps` → no issues in 49 source files · `ruff check packages apps tests` ✓ ·
   `ruff format --check packages apps tests` ✓ · web: `npm run build` ✓ ·
   `npm run lint` ✓ · `npm run format:check` ✓.
-- **Commit:** `step S2.4: generated-test review (…)` — hash in the follow-up
-  agent-memory commit.
+- **Commit:** `d52b8f7 step S2.4: generated-test review (…)` — 24 files,
+  1745 insertions.
 - **Next session start:** S3.1 — execution worker (Playwright run,
   trace/screenshot/video/console/network capture; exit: 1 test on the demo app
   → all artifacts stored) — see `STATE.md` §3.

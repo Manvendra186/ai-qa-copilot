@@ -12,7 +12,7 @@
 
 ## 2. Just completed
 
-- 2026-08-28 · **S2.4 (generated-test review) — apply + reject flows tested** (commit `…`):
+- 2026-08-28 · **S2.4 (generated-test review) — apply + reject flows tested** (commit `d52b8f7`):
   `generated_tests` review rows — state machine `pending → approved → applied` /
   `pending|approved → rejected` (applied/rejected terminal; migration `7e9a4b2c1d3f`) ·
   `POST /api/v1/automation/generate` → 202 + `automation_generation` job (S2.3 agent,
