@@ -200,7 +200,8 @@ export function useJobEvents(): JobEvents {
               }
               break;
             case 'stage.completed':
-              if (isStage(payload.stage)) dispatch({ type: 'stage.completed', stage: payload.stage });
+              if (isStage(payload.stage))
+                dispatch({ type: 'stage.completed', stage: payload.stage });
               break;
             case 'job.completed':
               dispatch({

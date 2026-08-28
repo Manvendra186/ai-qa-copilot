@@ -27,6 +27,7 @@ import sqlalchemy as sa
 from qa_copilot_domain.enums import (
     ArtifactType,
     FailureCategory,
+    GeneratedTestStatus,
     JobStatus,
     JobType,
     Priority,
@@ -151,6 +152,7 @@ class Project(Base):
     knowledge_documents: Mapped[list[KnowledgeDocument]] = relationship(back_populates="project")
     ai_sessions: Mapped[list[AISession]] = relationship(back_populates="project")
     members: Mapped[list[ProjectMember]] = relationship(back_populates="project")
+    generated_tests: Mapped[list[GeneratedTest]] = relationship(back_populates="project")
 
 
 class ProjectMember(Base):
@@ -273,6 +275,65 @@ class TestCase(Base):
     requirements: Mapped[list[Requirement]] = relationship(
         secondary=RequirementTestCase.__table__, back_populates="test_cases"
     )
+
+
+class GeneratedTest(Base):
+    """A generated test file awaiting human review (build bible §19 S2.4).
+
+    The S2.3 Automation Agent produces one of these per approved test case;
+    the S2.4 review flow transitions ``status`` (the domain
+    :class:`~qa_copilot_domain.enums.GeneratedTestStatus` state machine:
+    ``pending → approved → applied`` / ``pending|approved → rejected``) and
+    records who reviewed it and why. ``apply`` writes ``content`` to
+    ``<repository_path>/<file_path>`` (API side effect, not a DB column).
+    ``applied`` and ``rejected`` are terminal — re-generating creates a new
+    row (§19 S2.4: every AI output needs human review before it ships).
+    """
+
+    __tablename__ = "generated_tests"
+
+    id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    # The automation job that produced this test (audit trail, §31.1).
+    job_id: Mapped[str | None] = mapped_column(
+        sa.Uuid(as_uuid=False), sa.ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    # The approved test case the test automates (the S1.2/S2.3 handoff).
+    test_case_id: Mapped[str | None] = mapped_column(
+        sa.Uuid(as_uuid=False), sa.ForeignKey("test_cases.id", ondelete="SET NULL")
+    )
+    file_path: Mapped[str] = mapped_column(sa.String(512))
+    file_path_pattern: Mapped[str | None] = mapped_column(sa.String(512))
+    language: Mapped[str] = mapped_column(sa.String(32))
+    framework: Mapped[str] = mapped_column(sa.String(64))
+    content: Mapped[str] = mapped_column(sa.Text)
+    notes: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # The target repository checkout apply() writes into (server-local path).
+    repository_path: Mapped[str | None] = mapped_column(sa.String(2048))
+    status: Mapped[GeneratedTestStatus] = mapped_column(
+        _enum_column(GeneratedTestStatus), default=GeneratedTestStatus.PENDING
+    )
+    # Reviewer trail (§31.1 approval persistence; the ai_actions row carries
+    # the audit detail, these columns are the row-level human decision).
+    reviewed_by: Mapped[str | None] = mapped_column(
+        sa.Uuid(as_uuid=False), sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()
+    )
+
+    project: Mapped[Project] = relationship(back_populates="generated_tests")
+    job: Mapped[Job | None] = relationship()
+    test_case: Mapped[TestCase | None] = relationship()
 
 
 class TestRun(Base):
@@ -542,6 +603,7 @@ __all__ = [
     "Embedding",
     "Failure",
     "File",
+    "GeneratedTest",
     "Job",
     "KnowledgeDocument",
     "Organization",

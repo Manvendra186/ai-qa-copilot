@@ -28,7 +28,13 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from fastapi import FastAPI
-from qa_copilot_ai import FilePromptStore, LLMGateway, RequirementAgent, TestDesignAgent
+from qa_copilot_ai import (
+    AutomationAgent,
+    FilePromptStore,
+    LLMGateway,
+    RequirementAgent,
+    TestDesignAgent,
+)
 from sqlalchemy import Engine
 
 from qa_copilot_api import jobs, routes
@@ -108,6 +114,30 @@ def _build_test_design_jobs_agent(settings: Settings, engine: Engine) -> jobs.Jo
     return jobs.TestDesignJobAgent(agent, engine)
 
 
+def _build_automation_jobs_agent(settings: Settings, engine: Engine) -> jobs.JobAgent:
+    """Build the S2.4 automation job agent: S2.3 runner behind a review row.
+
+    S2.4 (§19): the :class:`AutomationJobAgent` wraps the automation runner —
+    the real S2.3 :class:`AutomationAgent` (``test-automator`` prompt + gateway,
+    §31.6/§31.1) when an LLM is configured, otherwise the deterministic
+    :class:`AutomationStub` (no model) — and persists the output as a
+    **pending** ``generated_tests`` review row for the approve/apply/reject
+    endpoints.
+    """
+    if not settings.llm_base_url or not settings.llm_model:
+        logger.info("LLM not configured; using AutomationStub for automation_generation")
+        runner: jobs.AutomationRunner = jobs.AutomationStub()
+    else:
+        prompts_dir = (
+            Path(__file__).parent.parent.parent.parent.parent / "packages" / "ai" / "prompts"
+        )
+        store = FilePromptStore(prompts_dir)
+        gateway = LLMGateway(base_url=settings.llm_base_url, model=settings.llm_model)
+        runner = AutomationAgent(store, gateway)
+        logger.info("LLM configured (model=%s); using AutomationAgent", settings.llm_model)
+    return jobs.AutomationJobAgent(runner, engine)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Application factory; settings injectable for tests and overrides."""
     settings = settings or get_settings()
@@ -135,6 +165,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs_agent = _build_jobs_agent(settings, app.state.engine)
     # S1.2: the Test Design Agent job (test_case_generation).
     app.state.jobs_test_design_agent = _build_test_design_jobs_agent(settings, app.state.engine)
+    # S2.4: the Automation Agent job (automation_generation) → pending review row.
+    app.state.jobs_automation_agent = _build_automation_jobs_agent(settings, app.state.engine)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -153,6 +185,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes.requirements_router)
     app.include_router(routes.jobs_router)
     app.include_router(routes.events_router)
+    # S2.4: automation generation + generated-test review (§19 S2.4).
+    app.include_router(routes.automation_router)
+    app.include_router(routes.generated_tests_router)
 
     return app
 

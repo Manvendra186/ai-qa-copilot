@@ -154,3 +154,55 @@ class RequirementOut(BaseModel):
     risk: str
     created_at: datetime | None
     test_cases: list[TestCaseOut]
+
+
+# --- S2.4: automation generation + generated-test review (§19 S2.4) -----------
+
+
+class AutomationRequest(BaseModel):
+    """``POST /api/v1/automation/generate`` (S2.4, §11).
+
+    Automates one approved test case (S1.2 output) into a generated test
+    file. The S2.3 agent runs as an ``automation_generation`` job (202 +
+    SSE); its output becomes a **pending** ``generated_tests`` row, and the
+    review endpoints (approve / apply / reject) act on that row.
+    ``repository_path`` is the target repository the scan + conventions
+    (S2.1/S2.2) are extracted from, and where ``apply`` writes the file.
+    """
+
+    project_id: str = Field(min_length=1)
+    test_case_id: str = Field(min_length=1)
+    repository_path: str | None = Field(default=None, max_length=2048)
+
+
+class GeneratedTestOut(BaseModel):
+    """One generated test — S2.3 output, S2.4 review row.
+
+    ``status`` is the domain ``GeneratedTestStatus`` wire string (``pending``
+    / ``approved`` / ``applied`` / ``rejected``); the review endpoints
+    enforce the state machine (invalid transitions → ``409``).
+    """
+
+    id: str
+    project_id: str
+    job_id: str | None
+    test_case_id: str | None
+    file_path: str
+    file_path_pattern: str | None
+    language: str
+    framework: str
+    content: str
+    notes: list[str]
+    repository_path: str | None
+    status: str
+    reviewed_by: str | None
+    reviewed_at: datetime | None
+    review_note: str | None
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+class GeneratedTestReviewIn(BaseModel):
+    """Optional reviewer note for approve / reject / apply (audit, §31.1)."""
+
+    note: str | None = Field(default=None, max_length=2000)

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from qa_copilot_domain import RepositoryProfile, TestConventions
+from qa_copilot_domain import TestCase as DomainTestCase
 
 from ..gateway import AICallResult, LLMGateway
 from ..prompts import PromptStore, render_prompt
@@ -135,9 +136,13 @@ class AutomationInput:
     ``repository_profile`` (S2.1) and ``conventions`` (S2.2) are the shared
     S2.x contract from ``qa_copilot_domain`` — the same objects the S2.2
     extractor produces and the S2.4 diff review will reuse.
+
+    ``test_case`` accepts the S1.2 suite-local :class:`TestCase` (golden
+    fixtures / S2.3 runner) or the domain ``TestCase`` entity (S2.4 job,
+    loaded from the DB) — both render to the same prompt variables.
     """
 
-    test_case: TestCase
+    test_case: TestCase | DomainTestCase
     repository_profile: RepositoryProfile
     conventions: TestConventions
 

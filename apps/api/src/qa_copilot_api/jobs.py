@@ -35,17 +35,23 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from qa_copilot_ai.agents import (
+    AutomationAgentResult,
+    AutomationInput,
+    GeneratedTest,
     RequirementAgent,
     RequirementAgentResult,
     RequirementInput,
@@ -53,14 +59,26 @@ from qa_copilot_ai.agents import (
     TestDesignAgentResult,
     TestDesignInput,
 )
+from qa_copilot_ai.gateway import AICallResult, TokenUsage
+from qa_copilot_domain import TestCase as DomainTestCase
 from qa_copilot_domain.enums import JobStatus, JobType
-from qa_copilot_repository import db as repo_db
-from qa_copilot_repository import models
+from qa_copilot_repository import (
+    db as repo_db,
+)
+from qa_copilot_repository import (
+    extract_conventions,
+    models,
+    scan_repository,
+)
+from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import requirements as repo_requirements
 from sqlalchemy import Engine, update
 from sqlalchemy.engine import CursorResult
 
 __all__ = [
+    "AutomationJobAgent",
+    "AutomationRunner",
+    "AutomationStub",
     "Event",
     "EventBus",
     "JobAgent",
@@ -387,6 +405,181 @@ class TestDesignJobAgent:
                     latency_ms=cast(int, audit["latency_ms"]),
                     input_hash=audit.get("input_hash"),
                     output_ref=suite_json[:1024],
+                )
+            )
+
+
+class AutomationRunner(Protocol):
+    """What :class:`AutomationJobAgent` needs from the automation layer.
+
+    Satisfied by the real :class:`qa_copilot_ai.agents.AutomationAgent`
+    (S2.3, prompt + gateway) and by :class:`AutomationStub` (deterministic,
+    no model) — same ``run(AutomationInput) → AutomationAgentResult``
+    surface, so the job/persistence/review flow is identical either way.
+    """
+
+    async def run(self, input_data: AutomationInput) -> AutomationAgentResult: ...
+
+
+class AutomationStub:
+    """Deterministic stand-in for the S2.3 Automation Agent (no live model).
+
+    Produces a schema-valid :class:`GeneratedTest` from the approved test
+    case so the full S2.4 flow — 202 job → ``generated_tests`` row → diff
+    review → approve/apply/reject — is verifiable without a model (the same
+    role :class:`StubAgent` plays for the S0.9 pipeline). Output quality is
+    *not* the point: the S2.3 agent (and its §21 gate) is tested separately
+    (``tests/unit/test_automation_agent.py``).
+    """
+
+    async def run(self, input_data: AutomationInput) -> AutomationAgentResult:
+        case = input_data.test_case
+        slug = re.sub(r"[^a-z0-9]+", "-", case.title.lower()).strip("-") or "generated"
+        content = _stub_test_content(case.title, case.steps, case.expected_results)
+        generated = GeneratedTest(
+            file_path=f"tests/{slug}.spec.ts",
+            language="typescript",
+            framework="playwright",
+            content=content,
+            notes=["S2.4 stub output — deterministic stand-in, not a live model run"],
+        )
+        call = AICallResult(
+            agent="test-automator",
+            model="stub",
+            text=content,
+            usage=TokenUsage(tokens_in=10, tokens_out=20),
+            latency_ms=0,
+            redactions=0,
+            retries=0,
+            input_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        )
+        return AutomationAgentResult(test=generated, prompt_ref="test-automator@1", call=call)
+
+
+def _stub_test_content(title: str, steps: list[str], expected: list[str]) -> str:
+    """A syntactically plausible Playwright test echoing the approved case."""
+    lines = [
+        'import { test, expect } from "@playwright/test";',
+        "",
+        f'test("{title}", async ({{ page }}) => {{',
+        "  // Approved test case (S2.4 stub — steps/expectations as review context):",
+        "  // steps:",
+    ]
+    lines += [f"  //   - {step}" for step in steps]
+    lines += ["  // expected:"]
+    lines += [f"  //   - {result}" for result in expected]
+    lines.append("  await expect(page).toHaveTitle(/.*/);")
+    lines.append("});")
+    lines.append("")
+    return "\n".join(lines)
+
+
+class AutomationJobAgent:
+    """S2.4 automation job: S2.3 agent output → reviewable ``generated_tests`` row.
+
+    For ``automation_generation`` jobs (build bible §19 S2.4, §11):
+
+    1. loads the approved test case (``test_case_id`` in the job input),
+    2. scans the target repository (S2.1) + extracts conventions (S2.2) —
+       the S2.3 agent's shared contract inputs,
+    3. runs the pure :class:`AutomationRunner` (real S2.3 agent or stub),
+    4. persists the validated output as a **pending** ``generated_tests``
+       row (human review is mandatory before anything ships, §19 S2.4),
+    5. records the ``ai_actions`` audit row against the job's
+       ``ai_sessions`` anchor (§31.1/§31.5) with ``output_ref`` pointing at
+       the new review row,
+    6. returns the row id as the job's ``output_ref`` (the S1.3 pattern).
+    """
+
+    stages: tuple[str, ...] = ("automation",)
+
+    def __init__(self, runner: AutomationRunner, engine: Engine) -> None:
+        self._runner = runner
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        """Generate + persist one generated test; return the row id."""
+        input_data = ctx.input
+        test_case_id = str(input_data.get("test_case_id") or "")
+        repository_path = str(input_data.get("repository_path") or "")
+
+        await ctx.emit("stage.started", {"stage": "automation"})
+        await ctx.emit("progress", {"stage": "automation", "value": 0.1})
+
+        with repo_db.session_scope(self._engine) as session:
+            row = session.get(models.TestCase, test_case_id) if test_case_id else None
+            if row is None:
+                raise ValueError(f"test case {test_case_id!r} not found")
+            test_case = DomainTestCase(
+                id=row.id,
+                title=row.title,
+                type=row.type,
+                priority=row.priority,
+                preconditions=list(row.preconditions),
+                steps=list(row.steps),
+                expected_results=list(row.expected_results),
+                risk=row.risk,
+            )
+
+        if not repository_path:
+            raise ValueError("job input is missing 'repository_path'")
+        root = Path(repository_path)
+        profile = await asyncio.to_thread(scan_repository, root)
+        conventions = await asyncio.to_thread(extract_conventions, root, profile)
+        await ctx.emit("progress", {"stage": "automation", "value": 0.5})
+
+        result = await self._runner.run(
+            AutomationInput(
+                test_case=test_case,
+                repository_profile=profile,
+                conventions=conventions,
+            )
+        )
+
+        file_path_pattern = (
+            conventions.test_file_patterns[0] if conventions.test_file_patterns else None
+        )
+        with repo_db.session_scope(self._engine) as session:
+            gt = repo_generated_tests.persist_generated_test(
+                session,
+                project_id=ctx.project_id or "",
+                job_id=ctx.job_id,
+                test_case_id=test_case_id,
+                file_path=result.test.file_path,
+                file_path_pattern=file_path_pattern,
+                language=result.test.language,
+                framework=result.test.framework,
+                content=result.test.content,
+                notes=list(result.test.notes),
+                repository_path=repository_path or None,
+            )
+            generated_test_id = gt.id
+
+        await ctx.emit("progress", {"stage": "automation", "value": 1.0})
+        await ctx.emit("stage.completed", {"stage": "automation"})
+        self._record_action(ctx, result, generated_test_id)
+        return generated_test_id
+
+    def _record_action(
+        self, ctx: JobContext, result: AutomationAgentResult, generated_test_id: str
+    ) -> None:
+        """Record the ``ai_actions`` audit row against the job's session anchor."""
+        if ctx.ai_session_id is None:
+            return
+        audit = result.call.audit_dict()
+        with repo_db.session_scope(self._engine) as session:
+            session.add(
+                models.AIAction(
+                    session_id=ctx.ai_session_id,
+                    agent=str(audit["agent"]),
+                    model=str(audit["model"]),
+                    tokens_in=cast(int, audit["tokens_in"]),
+                    tokens_out=cast(int, audit["tokens_out"]),
+                    latency_ms=cast(int, audit["latency_ms"]),
+                    input_hash=audit.get("input_hash"),
+                    # S2.4: the durable result is the review row — approve /
+                    # apply / reject happen against it (§19 S2.4).
+                    output_ref=generated_test_id,
                 )
             )
 

@@ -16,16 +16,31 @@ S0.9: async jobs API (§11, §31.2) — the mandatory ``202 + job_id`` pattern:
 - ``GET /api/v1/jobs/{job_id}``         — job status/progress/result refs (``viewer``+)
 - ``GET /api/v1/events``                — SSE stream of job progress events
                                           (``viewer``+ on the job's/project's project)
+S2.4: automation generation + generated-test review (§19 S2.4):
+
+- ``POST /api/v1/automation/generate`` → **202 + {job_id}`` (``member``+)
+- ``GET /api/v1/projects/{id}/generated-tests`` — review queue (``viewer``+)
+- ``GET /api/v1/generated-tests/{id}``          — review row detail (``viewer``+)
+- ``POST /api/v1/generated-tests/{id}/approve`` (``member``+, audit)
+- ``POST /api/v1/generated-tests/{id}/reject``  (``member``+, audit)
+- ``POST /api/v1/generated-tests/{id}/apply``   (``member``+; writes the file, audit)
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from qa_copilot_domain.enums import JobType, ProjectRole, role_at_least
+from qa_copilot_domain.enums import (
+    GeneratedTestStatus,
+    JobType,
+    ProjectRole,
+    role_at_least,
+)
 from qa_copilot_repository import db as repo_db
+from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import membership, models
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -39,6 +54,8 @@ projects_router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 requirements_router = APIRouter(prefix="/api/v1/requirements", tags=["requirements"])
 jobs_router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 events_router = APIRouter(prefix="/api/v1/events", tags=["events"])
+automation_router = APIRouter(prefix="/api/v1/automation", tags=["automation"])
+generated_tests_router = APIRouter(prefix="/api/v1/generated-tests", tags=["generated-tests"])
 
 
 def _user_out(user: models.User) -> schemas.UserOut:
@@ -384,3 +401,316 @@ def stream_events(
             "X-Accel-Buffering": "no",  # disable proxy buffering (nginx)
         },
     )
+
+
+# --- S2.4: automation generation + generated-test review (§19 S2.4) -----------
+
+
+def _generated_test_out(row: models.GeneratedTest) -> schemas.GeneratedTestOut:
+    """ORM row → API schema (enum values as wire strings)."""
+    return schemas.GeneratedTestOut(
+        id=row.id,
+        project_id=row.project_id,
+        job_id=row.job_id,
+        test_case_id=row.test_case_id,
+        file_path=row.file_path,
+        file_path_pattern=row.file_path_pattern,
+        language=row.language,
+        framework=row.framework,
+        content=row.content,
+        notes=list(row.notes),
+        repository_path=row.repository_path,
+        status=row.status.value,
+        reviewed_by=row.reviewed_by,
+        reviewed_at=row.reviewed_at,
+        review_note=row.review_note,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _get_generated_test_for_review(
+    db: Session, user: models.User, generated_test_id: str
+) -> models.GeneratedTest:
+    """Fetch one review row + enforce the reviewer floor (``member`` or above)."""
+    try:
+        uuid.UUID(generated_test_id)
+    except ValueError:
+        # Not a UUID → can't be a row: 404 without a DB round-trip.
+        raise HTTPException(status_code=404, detail="generated test not found") from None
+    row = db.get(models.GeneratedTest, generated_test_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="generated test not found")
+    _require_project_role(db, user, row.project_id, ProjectRole.MEMBER)
+    return row
+
+
+def _record_review_audit(
+    db: Session,
+    project_id: str,
+    user: models.User,
+    *,
+    action: str,
+    generated_test_id: str,
+) -> None:
+    """Audit a human review action (§31.1): ``ai_sessions`` anchor + ``ai_actions``.
+
+    The reviewer's free-text note lives on the row (``review_note``); the
+    audit trail records the action, the actor, and the reviewed artifact.
+    """
+    session = models.AISession(
+        project_id=project_id,
+        user_id=user.id,
+        task_type="generated_test_review",
+        status="completed",
+    )
+    db.add(session)
+    db.flush()
+    db.add(
+        models.AIAction(
+            session_id=session.id,
+            agent="human-review",
+            model="human",
+            approval_status=action,
+            output_ref=generated_test_id,
+        )
+    )
+    db.flush()
+
+
+def _write_applied_file(row: models.GeneratedTest) -> Path:
+    """Write the generated test file under the row's repository root (apply).
+
+    Guards: the root must exist, the repo-relative ``file_path`` must stay
+    under it, and the target must not already exist — V1 policy is no silent
+    overwrite (409; re-generating a test creates a new row).
+    """
+    if not row.repository_path:
+        raise FileNotFoundError("generated test has no repository_path to apply to")
+    root = Path(row.repository_path)
+    if not root.is_dir():
+        raise FileNotFoundError(f"repository path not found: {row.repository_path}")
+    root_resolved = root.resolve()
+    target = (root_resolved / row.file_path).resolve()
+    if root_resolved not in target.parents:
+        raise FileNotFoundError(f"file_path {row.file_path!r} escapes the repository root")
+    if target.exists():
+        raise FileExistsError(f"target file already exists: {row.file_path}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(row.content, encoding="utf-8")
+    return target
+
+
+def _transition(
+    db: Session,
+    user: models.User,
+    generated_test_id: str,
+    target: GeneratedTestStatus,
+    note: str | None,
+) -> schemas.GeneratedTestOut:
+    """One review transition (approve / reject): state machine + audit.
+
+    The domain is the single source of truth for the review vocabulary
+    (``qa_copilot_domain.enums``): an illegal or no-op transition raises
+    ``ValueError`` in the repository → ``409 Conflict`` here.
+    """
+    row = _get_generated_test_for_review(db, user, generated_test_id)
+    try:
+        repo_generated_tests.set_review_status(db, row, target=target, user_id=user.id, note=note)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _record_review_audit(db, row.project_id, user, action=target.value, generated_test_id=row.id)
+    db.commit()
+    return _generated_test_out(row)
+
+
+@automation_router.post("/generate", status_code=202, response_model=schemas.JobCreated)
+def generate_automation_test(
+    body: schemas.AutomationRequest,
+    request: Request,
+    response: Response,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """Automate an approved test case: **202 + job_id** (S2.4, §11).
+
+    The S2.3 Automation Agent runs as an ``automation_generation`` job; its
+    output lands as a **pending** ``generated_tests`` row — the job's
+    ``output_ref`` is that row id — and is reviewed via the
+    ``/generated-tests`` endpoints (approve / apply / reject). Track via
+    ``GET /api/v1/jobs/{job_id}`` or ``GET /api/v1/events?job_id=...``.
+    ``member`` or above on the target project; unknown projects 403 (no
+    existence leak, §31.3).
+    """
+    project = db.get(models.Project, body.project_id)
+    if project is None:
+        # 403, not 404: a non-member must not be able to tell whether the
+        # project exists (§31.3).
+        raise HTTPException(status_code=403, detail="no role for this project")
+    _require_project_role(db, user, project.id, ProjectRole.MEMBER)
+
+    try:
+        uuid.UUID(body.test_case_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="test case not found") from None
+    test_case = db.get(models.TestCase, body.test_case_id)
+    if test_case is None:
+        raise HTTPException(status_code=404, detail="test case not found")
+    # The case must belong to this project (via the §10 M:N join) — a case
+    # from another project is not "found" here.
+    linked = db.scalar(
+        select(models.RequirementTestCase.requirement_id)
+        .join(
+            models.Requirement,
+            models.RequirementTestCase.requirement_id == models.Requirement.id,
+        )
+        .where(
+            models.Requirement.project_id == project.id,
+            models.RequirementTestCase.test_case_id == body.test_case_id,
+        )
+        .limit(1)
+    )
+    if linked is None:
+        raise HTTPException(status_code=404, detail="test case not found")
+
+    job_input = {
+        "test_case_id": body.test_case_id,
+        "repository_path": body.repository_path,
+    }
+    job = models.Job(
+        project_id=project.id,
+        type=JobType.AUTOMATION_GENERATION,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_automation_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@projects_router.get("/{project_id}/generated-tests", response_model=list[schemas.GeneratedTestOut])
+def list_generated_tests(
+    project_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.GeneratedTestOut]:
+    """The project's generated-test review queue (S2.4), newest first.
+
+    ``viewer`` or above; unknown projects 404 (no existence leak, §31.3).
+    """
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    _require_project_role(db, user, project.id, ProjectRole.VIEWER)
+    rows = repo_generated_tests.list_generated_tests(db, project.id)
+    return [_generated_test_out(row) for row in rows]
+
+
+@generated_tests_router.get("/{generated_test_id}", response_model=schemas.GeneratedTestOut)
+def get_generated_test(
+    generated_test_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.GeneratedTestOut:
+    """One generated test (S2.4 review row) — ``viewer`` or above (§31.3).
+
+    The ``automation_generation`` job stores the row id in its
+    ``output_ref`` (§11) — this is the endpoint the shell renders the
+    review/diff view from.
+    """
+    try:
+        uuid.UUID(generated_test_id)
+    except ValueError:
+        # Not a UUID → can't be a row: 404 without a DB round-trip.
+        raise HTTPException(status_code=404, detail="generated test not found") from None
+    row = db.get(models.GeneratedTest, generated_test_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="generated test not found")
+    _require_project_role(db, user, row.project_id, ProjectRole.VIEWER)
+    return _generated_test_out(row)
+
+
+@generated_tests_router.post(
+    "/{generated_test_id}/approve", response_model=schemas.GeneratedTestOut
+)
+def approve_generated_test(
+    generated_test_id: str,
+    body: schemas.GeneratedTestReviewIn | None = None,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.GeneratedTestOut:
+    """Approve a generated test (``pending → approved``; §19 S2.4).
+
+    ``member`` or above. The reviewer trail (actor, time, note) is written
+    to the row and audited (§31.1). Illegal/no-op transitions → 409.
+    """
+    note = body.note if body is not None else None
+    return _transition(db, user, generated_test_id, GeneratedTestStatus.APPROVED, note)
+
+
+@generated_tests_router.post("/{generated_test_id}/reject", response_model=schemas.GeneratedTestOut)
+def reject_generated_test(
+    generated_test_id: str,
+    body: schemas.GeneratedTestReviewIn | None = None,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.GeneratedTestOut:
+    """Reject a generated test (terminal; ``member``+; §19 S2.4).
+
+    Re-generating a test creates a new row (V1: no re-opening, §10).
+    Illegal/no-op transitions → 409.
+    """
+    note = body.note if body is not None else None
+    return _transition(db, user, generated_test_id, GeneratedTestStatus.REJECTED, note)
+
+
+@generated_tests_router.post("/{generated_test_id}/apply", response_model=schemas.GeneratedTestOut)
+def apply_generated_test(
+    generated_test_id: str,
+    body: schemas.GeneratedTestReviewIn | None = None,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.GeneratedTestOut:
+    """Apply a generated test: write the file into the target repository.
+
+    ``pending|approved → applied`` (terminal). The file is written **only if**
+    the transition is legal and the target path is free — an existing file is
+    a 409 (V1 policy: no silent overwrite). ``member`` or above; audited
+    (§31.1).
+    """
+    row = _get_generated_test_for_review(db, user, generated_test_id)
+    target = GeneratedTestStatus.APPLIED
+    note = body.note if body is not None else None
+    try:
+        # Validate the transition *before* any file side effect (409 semantics).
+        repo_generated_tests.set_review_status(db, row, target=target, user_id=user.id, note=note)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        _write_applied_file(row)
+    except FileExistsError as exc:
+        # V1 policy: no silent overwrite (409; re-generating creates a new row).
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OSError as exc:
+        # A write failure must not leave the row "applied" without a file.
+        db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"failed to write {row.file_path}: {exc}"
+        ) from exc
+    _record_review_audit(db, row.project_id, user, action="applied", generated_test_id=row.id)
+    db.commit()
+    return _generated_test_out(row)

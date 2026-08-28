@@ -5,14 +5,14 @@ React 18 + Vite + TypeScript (strict) + Tailwind CSS v4, managed by pnpm
 
 ## Scripts (run from this dir or the repo root)
 
-| Script              | What it does                                                                           |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| `pnpm dev`          | Vite dev server on :5173 (`/api` proxied to FastAPI :8000)                          |
-| `pnpm build`        | Type-check (`tsconfig.json` + `tsconfig.node.json`) + production build to `dist/`      |
-| `pnpm preview`      | Serve the production build                                                             |
-| `pnpm lint`         | ESLint flat config (TS recommended + react-hooks + react-refresh, Prettier-clean)      |
-| `pnpm format`       | Prettier write                                                                         |
-| `pnpm format:check` | Prettier check                                                                         |
+| Script              | What it does                                                                      |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `pnpm dev`          | Vite dev server on :5173 (`/api` proxied to FastAPI :8000)                        |
+| `pnpm build`        | Type-check (`tsconfig.json` + `tsconfig.node.json`) + production build to `dist/` |
+| `pnpm preview`      | Serve the production build                                                        |
+| `pnpm lint`         | ESLint flat config (TS recommended + react-hooks + react-refresh, Prettier-clean) |
+| `pnpm format`       | Prettier write                                                                    |
+| `pnpm format:check` | Prettier check                                                                    |
 
 ## Layout
 

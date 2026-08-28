@@ -7,25 +7,25 @@
 // Generated specs only import "@playwright/test" (stubbed under
 // tests/unit/support/playwright-test for tsc), so browser/node globals are
 // the only environment they need.
-import tseslint from "typescript-eslint";
+import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ["node_modules/**"],
+    ignores: ['node_modules/**'],
   },
   ...tseslint.configs.recommended,
   {
     languageOptions: {
       globals: {
-        console: "readonly",
-        process: "readonly",
-        Buffer: "readonly",
-        URL: "readonly",
-        setTimeout: "readonly",
-        clearTimeout: "readonly",
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
       },
       ecmaVersion: 2022,
-      sourceType: "module",
+      sourceType: 'module',
     },
   },
 );

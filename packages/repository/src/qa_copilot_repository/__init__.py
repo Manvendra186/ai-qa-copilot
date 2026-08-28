@@ -21,12 +21,17 @@ structure (:mod:`qa_copilot_repository.scanner`), producing
 S2.2: convention extractor — locators, page objects, fixtures, helpers
 (:mod:`qa_copilot_repository.conventions`), producing
 :class:`qa_copilot_domain.TestConventions`.
+
+S2.4: generated-test review persistence — the S2.3 agent output as a
+``generated_tests`` row + approve/apply/reject transitions
+(:mod:`qa_copilot_repository.generated_tests`, build bible §19 S2.4).
 """
 
 from . import (
     audit,
     conventions,
     db,
+    generated_tests,
     membership,
     models,
     prompts,
@@ -44,6 +49,7 @@ __all__ = [
     "conventions",
     "db",
     "extract_conventions",
+    "generated_tests",
     "membership",
     "models",
     "prompts",

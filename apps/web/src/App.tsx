@@ -89,8 +89,8 @@ export default function App() {
           <div className="rounded-xl border border-amber-700/60 bg-amber-950/30 p-6 text-sm text-amber-200">
             <h2 className="text-base font-semibold">No project membership</h2>
             <p className="mt-2 text-amber-200/80">
-              Signed in as <code>{auth.session?.user.email}</code> with no role in any project.
-              Dev setup: create one with <code>scripts/seed.py</code> and sign in again.
+              Signed in as <code>{auth.session?.user.email}</code> with no role in any project. Dev
+              setup: create one with <code>scripts/seed.py</code> and sign in again.
             </p>
           </div>
         </main>
@@ -118,9 +118,8 @@ export default function App() {
           <div>
             <h2 className="text-2xl font-semibold tracking-tight">Test design</h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Describe a requirement — the Test Design Agent runs it as a job (202 + job_id,
-              build bible §11) and the persisted suite is rendered when the job completes
-              (S1.3).
+              Describe a requirement — the Test Design Agent runs it as a job (202 + job_id, build
+              bible §11) and the persisted suite is rendered when the job completes (S1.3).
             </p>
           </div>
           {job.jobId !== null && (
@@ -143,10 +142,9 @@ export default function App() {
           </section>
         )}
 
-        {completed &&
-          job.outputRef !== null &&
-          requirement === null &&
-          fetchError === null && <p className="text-sm text-slate-400">Fetching the persisted test cases…</p>}
+        {completed && job.outputRef !== null && requirement === null && fetchError === null && (
+          <p className="text-sm text-slate-400">Fetching the persisted test cases…</p>
+        )}
 
         {completed && fetchError !== null && (
           <section className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">

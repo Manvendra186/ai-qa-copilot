@@ -6,11 +6,26 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
-  Phase 2 — Playwright Copilot (in progress)
-- **Step:** S0.1–S2.3 ✓ (S2.3 = automation agent, live gate 1.0) ·
-  **S2.4 next** (diff review UI + human approval)
+  Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution (next)
+- **Step:** S0.1–S2.4 ✓ (S2.4 = generated-test review: diff review + human approval) ·
+  **S3.1 next** (execution worker: Playwright run + artifacts)
 
 ## 2. Just completed
+
+- 2026-08-28 · **S2.4 (generated-test review) — apply + reject flows tested** (commit `…`):
+  `generated_tests` review rows — state machine `pending → approved → applied` /
+  `pending|approved → rejected` (applied/rejected terminal; migration `7e9a4b2c1d3f`) ·
+  `POST /api/v1/automation/generate` → 202 + `automation_generation` job (S2.3 agent,
+  hermetic `AutomationStub` when no LLM) → the job's `output_ref` is the **pending**
+  review row · review queue `GET /projects/{id}/generated-tests` + row detail
+  (viewer+; 401/403/404 matrix) · approve / reject / apply (member+; optional note
+  body; audited `ai_sessions`/`ai_actions`) · apply = file write under the row's
+  `repository_path`: no silent overwrite (existing target 409), path-escape +
+  missing-repo guards (409), row rolled back on every failure path ·
+  tests caught 3 real defects, all fixed (stub f-string `{ page }` → `NameError`;
+  `FileExistsError` is NOT a `FileNotFoundError` subclass → 500 instead of 409;
+  500 when the optional review-note body was omitted) ·
+  **244 tests ✓ · mypy strict (49) ✓ · ruff ✓ · web build/lint/format ✓.**
 
 - 2026-08-28 · **S2.3 (automation agent) — live gate PASS**: `AutomationAgent`
   (test-automator@1) + §21 gate runner (`python -m qa_copilot_ai.automation.cli`):
@@ -57,9 +72,9 @@
 
 ## 3. NEXT STEP (start here)
 
-**S2.4 — Diff review UI + human approval** (build bible §19 Phase 2): review
-generated tests (S2.3 output) as a diff, then apply to the workspace or
-reject. **Exit: apply + reject flows tested.**
+**S3.1 — Execution worker** (build bible §19 Phase 3): run Playwright tests,
+capture trace/screenshot/video/console/network. **Exit: 1 test on the demo
+app → all artifacts stored.**
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
   needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
   artifacts live in gitignored `reports/` — commit one baseline after each
@@ -183,6 +198,18 @@ reject. **Exit: apply + reject flows tested.**
   contract) · `tests/unit/test_conventions.py` (18 tests: golden js-web-app + demo
   app, synthetic Playwright/pytest, locator/fixture/helper/page-object detection,
   `data-testid` false-positive guard, `package.json` scripts, edge cases)
+- Generated-test review (S2.4): `packages/repository/src/qa_copilot_repository/
+  generated_tests.py` (`persist_generated_test` / `get` / `list` /
+  `set_review_status` — the state machine) + `models.GeneratedTest`
+  (migration `7e9a4b2c1d3f`) · `qa_copilot_domain.enums.GeneratedTestStatus`
+  (+ `ALLOWED_GENERATED_TEST_TRANSITIONS`, `can_transition_generated_test`) ·
+  `apps/api/src/qa_copilot_api/jobs.py` (`AutomationJobAgent` + `AutomationStub`
+  + `AutomationRunner` protocol — real S2.3 agent or hermetic stub) ·
+  `main.py` (wires the runner from settings) · `routes.py`
+  (`POST /api/v1/automation/generate`, `GET /projects/{id}/generated-tests`,
+  `GET /generated-tests/{id}`, `/approve` `/reject` `/apply`) · `schemas.py`
+  (`AutomationRequest`, `GeneratedTestOut`, `GeneratedTestReviewIn`) ·
+  `tests/unit/test_generated_tests.py` (13 tests, hermetic scratch DB + stub pin)
 
 ## 7. Open questions / gotchas
 
@@ -229,3 +256,11 @@ reject. **Exit: apply + reject flows tested.**
 - **Playwright matchers (S2.3):** `toHaveTextContent` is a **Cypress** API — not in
   real `@playwright/test` and deliberately absent from the type stub
   (`tests/unit/support/playwright-test/index.d.ts`); the gate must reject it.
+- **f-string braces in generated code (S2.4):** `{ page }` inside an f-string is
+  evaluated as a Python expression — emit literal braces with `{{ page }}`
+  (regression: the S2.4 stub crashed with `NameError: name 'page' is not defined`).
+- **`FileExistsError` ≠ `FileNotFoundError` (S2.4):** siblings under `OSError` —
+  `except FileNotFoundError` does NOT catch "target exists"; the apply guard needs
+  its own `except FileExistsError` clause for the 409 (else it leaks a 500).
+- **mypy strict + `db.get` (S2.4):** `Session.get()` returns `Model | None` —
+  pass the already-typed row through instead (or narrow) to satisfy strict mode.

@@ -50,8 +50,7 @@ export function RequirementForm({ projectId, disabled, error, onSubmit }: Props)
       <div>
         <h3 className="text-sm font-semibold text-slate-200">Requirement</h3>
         <p className="mt-1 text-xs text-slate-400">
-          The Test Design Agent designs a test suite from this (build bible
-          §19, S1.2/S1.3).
+          The Test Design Agent designs a test suite from this (build bible §19, S1.2/S1.3).
         </p>
       </div>
       <label className="block text-xs">

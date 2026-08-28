@@ -56,6 +56,7 @@ EXPECTED_TABLES = {
     "ai_actions",
     "jobs",
     "prompt_versions",
+    "generated_tests",
 }
 
 

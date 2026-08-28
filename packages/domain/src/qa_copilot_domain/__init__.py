@@ -7,6 +7,8 @@ and the ``role_at_least`` permission rule.
 S2.1: ``RepositoryProfile`` — repository scanner output (build bible §7 / §19).
 S2.2: ``TestConventions`` (+ ``LocatorStyle``, ``TestScript``) — convention
 extractor output, the shared contract for the S2.3 automation agent (§19).
+S2.4: ``GeneratedTestStatus`` + transition rule — generated-test review
+lifecycle (diff review, approve/apply, reject; build bible §19 S2.4).
 """
 
 from .base import DomainModel
@@ -25,26 +27,31 @@ from .entities import (
     User,
 )
 from .enums import (
+    ALLOWED_GENERATED_TEST_TRANSITIONS,
     ROLE_RANK,
     ArtifactType,
     FailureCategory,
+    GeneratedTestStatus,
     JobStatus,
     JobType,
     Priority,
     ProjectRole,
     RiskLevel,
     TestType,
+    can_transition_generated_test,
     role_at_least,
 )
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "ALLOWED_GENERATED_TEST_TRANSITIONS",
     "Artifact",
     "ArtifactType",
     "DomainModel",
     "Failure",
     "FailureCategory",
+    "GeneratedTestStatus",
     "Job",
     "JobStatus",
     "JobType",
@@ -63,5 +70,6 @@ __all__ = [
     "TestType",
     "User",
     "__version__",
+    "can_transition_generated_test",
     "role_at_least",
 ]

@@ -866,3 +866,86 @@
   small Python launcher (`scripts/_s23_live.py`, deleted after the run).
 - **Next session start:** S2.4 — diff review UI + human approval (apply /
   reject flows) — see `STATE.md` §3.
+
+## 2026-08-28 — S2.4 Generated-test review (diff review + human approval) — exit met
+
+- **Goal:** build bible §19 S2.4 — review generated tests (S2.3 output) and
+  apply them to the workspace or reject them. Exit: apply + reject flows tested.
+- **Did:**
+  - Schema: `generated_tests` table (migration `7e9a4b2c1d3f`) — one review row
+    per S2.3 output: `file_path` / `file_path_pattern` / `language` / `framework`
+    / `content` / `notes` (JSONB) / `repository_path` + reviewer trail
+    (`status`, `reviewed_by`, `reviewed_at`, `review_note`) + `project_id` /
+    `job_id` / `test_case_id` links. Domain state machine
+    (`qa_copilot_domain.enums`): `pending → approved → applied`,
+    `pending|approved → rejected`; applied/rejected terminal.
+  - `qa_copilot_repository.generated_tests`: `persist_generated_test` (S2.4
+    persistence entry point) + `get`/`list` + `set_review_status` — enforces the
+    state machine (no-op or illegal transition → `ValueError` → 409; no-op gets
+    its own "already {status}" message), sets the reviewer trail on every
+    transition, flushed-not-committed.
+  - API (`routes.py` + `schemas.py`):
+    - `POST /api/v1/automation/generate` (member+; unknown project → 403, not
+      404 — no existence leak; unknown/cross-project case → 404) → **202 +
+      job_id + Location** for an `automation_generation` job.
+    - `jobs.py` `AutomationJobAgent`: loads the approved case → S2.1
+      `scan_repository` + S2.2 `extract_conventions` → runs the S2.3 agent
+      through the `AutomationRunner` protocol (real `AutomationAgent` when LLM
+      is configured, deterministic `AutomationStub` otherwise) → persists a
+      **pending** review row → `ai_actions` audit on the job's `ai_sessions`
+      anchor (`agent=test-automator`, `output_ref` = the row id).
+    - Review queue `GET /projects/{id}/generated-tests` + row detail
+      `GET /generated-tests/{id}` (viewer+; 401/403/404 matrix, malformed id →
+      404 without a 500).
+    - `POST /generated-tests/{id}/approve|reject` (member+; review note body
+      fully optional — `note = body.note if body is not None else None`) +
+      `POST /generated-tests/{id}/apply` (member+; writes the file under the
+      row's `repository_path`; audited like the other two).
+  - **Apply guards (V1 policy — no silent ship):** existing target file → 409
+    (re-generating creates a NEW row) · missing `repository_path` → 409 ·
+    `file_path` escaping the repository root → 409 · missing repo dir → 409 ·
+    row rolled back to its pre-apply state on EVERY failure path (review still
+    possible afterwards).
+  - `tests/unit/test_generated_tests.py` (13 tests): hermetic per-test scratch
+    Postgres DB (alembic to head) + deterministic `uuid5` ids + seeded
+    users/projects/roles; app wired with `AutomationStub` pinned via settings
+    (`llm_base_url=None, llm_model=None, _env_file=None` — init kwargs beat env
+    or a `.env` leaked by alembic's `_load_dotenv`). Covers: 202 → job →
+    pending row (job `output_ref` = row id) + audit; RBAC/validation matrix;
+    list/detail matrix; approve → apply (file written); apply directly from
+    pending; reject terminal; no-op + illegal transitions → 409 with the
+    domain's exact messages; audit rows (anchor + action per review); apply
+    guards + rollback.
+  - **Defects the new tests caught (all real, all fixed):**
+    1. `_stub_test_content` f-string bug — `f'... async ({ page }) ...'`
+       evaluated `page` as a Python expression → `NameError` → every stub job
+       failed. Doubled the braces: `{{ page }}` emits the literal Playwright
+       fixture syntax.
+    2. `FileExistsError` is a **sibling** of `FileNotFoundError` (both extend
+       `OSError`), not a subclass — the existing-target guard fell into
+       `except OSError` → 500 instead of the documented 409. Added an explicit
+       `except FileExistsError` → 409 clause.
+    3. Review endpoints 500'd when the optional note body was omitted — now
+       `body: schemas.GeneratedTestReviewIn | None` with a None-safe note.
+    Plus: migration used bare `sa.JSONB()` (not a column type) →
+    `postgresql.JSONB(astext_type=sa.Text())`.
+  - **Gate fixes:** mypy strict — `AutomationInput.test_case` is now
+    `TestCase | DomainTestCase` (S2.3 golden/runner pass the suite-local ai
+    `TestCase`; the S2.4 job passes the DB-loaded domain entity; both render to
+    the same prompt variables via `model_dump`); two `db.get(...)` results
+    (`GeneratedTest | None`) replaced with the already-typed row in
+    approve/apply handlers. `tests/unit/test_repository.py` `EXPECTED_TABLES`
+    += `generated_tests` (and the dev DB migrated via `alembic upgrade head`).
+    Prettier pass on `apps/web` (9 files) to green `format:check`.
+  - Removed temp debug artifacts (`tmp_debug_s24.py`,
+    `tests/unit/test_zz_debug_tmp.py`) before gates/commit.
+- **Verified (exit criterion):** apply + reject flows tested ✓ —
+  `uv run pytest tests -q` → **244 passed** (13 new) · `uv run mypy packages
+  apps` → no issues in 49 source files · `ruff check packages apps tests` ✓ ·
+  `ruff format --check packages apps tests` ✓ · web: `npm run build` ✓ ·
+  `npm run lint` ✓ · `npm run format:check` ✓.
+- **Commit:** `step S2.4: generated-test review (…)` — hash in the follow-up
+  agent-memory commit.
+- **Next session start:** S3.1 — execution worker (Playwright run,
+  trace/screenshot/video/console/network capture; exit: 1 test on the demo app
+  → all artifacts stored) — see `STATE.md` §3.

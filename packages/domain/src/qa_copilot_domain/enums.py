@@ -59,6 +59,45 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class GeneratedTestStatus(StrEnum):
+    """Generated-test review lifecycle (build bible §19 S2.4).
+
+    ``pending`` is generated and awaiting human review; ``approved`` is
+    approved but not yet applied; ``applied`` means the file was written to
+    the workspace; ``rejected`` is the human decline. ``applied`` and
+    ``rejected`` are terminal in V1 — re-generating a test creates a new row.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+
+
+#: Allowed status transitions (S2.4 review flow, §19).
+ALLOWED_GENERATED_TEST_TRANSITIONS: dict[GeneratedTestStatus, frozenset[GeneratedTestStatus]] = {
+    GeneratedTestStatus.PENDING: frozenset(
+        {
+            GeneratedTestStatus.APPROVED,
+            GeneratedTestStatus.APPLIED,
+            GeneratedTestStatus.REJECTED,
+        }
+    ),
+    GeneratedTestStatus.APPROVED: frozenset(
+        {GeneratedTestStatus.APPLIED, GeneratedTestStatus.REJECTED}
+    ),
+    GeneratedTestStatus.APPLIED: frozenset(),
+    GeneratedTestStatus.REJECTED: frozenset(),
+}
+
+
+def can_transition_generated_test(
+    current: GeneratedTestStatus, target: GeneratedTestStatus
+) -> bool:
+    """True when *current* → *target* is a legal review transition (S2.4)."""
+    return target in ALLOWED_GENERATED_TEST_TRANSITIONS[current]
+
+
 class FailureCategory(StrEnum):
     """Failure taxonomy (build bible §16)."""
 
