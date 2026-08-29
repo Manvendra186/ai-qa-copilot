@@ -1021,3 +1021,61 @@
   return type widens away inner-class attributes).
 - **Next session start:** S3.2 — Runs API + run history + artifacts UI
   (exit: a run is visible with its artifacts) — see `STATE.md` §3.
+
+## 2026-08-29 — AI settings centralization: env-controlled budgets/sampling/timeouts/retries + AI_EXTRA_BODY
+
+- **Goal:** every AI tuning knob controllable from the environment; enforce
+  input-token budgets in the gateway; validate the full API → live-LLM
+  generation flow end to end.
+- **Did:**
+  - New `packages/ai/src/qa_copilot_ai/config.py` (commit `01a2851`):
+    `ModelSettings` (pydantic) + `load_dotenv()` (dependency-free `KEY=VALUE`
+    parser, shell env always wins) — reads `AI_MAX_INPUT_TOKENS=60000` ·
+    `AI_MAX_OUTPUT_TOKENS=40000` · `AI_TEMPERATURE` · `AI_TIMEOUT_S=12000` ·
+    `AI_CONNECT_TIMEOUT_S=100` · `AI_MAX_RETRIES=1`; exported from
+    `qa_copilot_ai`.
+  - `LLMGateway`: settings are constructor defaults (explicit args still win);
+    `chat()`/`chat_stream()` enforce the **input** budget via
+    `estimate_tokens()` → `LLMInputBudgetError` (exported) **before** any wire
+    call — oversized prompts fail fast with zero model traffic.
+  - **`AI_EXTRA_BODY`**: `load_extra_body()` parses JSON into a dict and fails
+    loud (`ValueError`) on anything non-object; gateway merges it into the wire
+    body but canonical fields (`model`/`messages`/`stream`/`max_tokens`/
+    `temperature`) always win. `.env`/`.env.example` ship
+    `{"chat_template_kwargs": {"enable_thinking": false}}` — disables Qwen3
+    thinking on LM Studio.
+  - Agents (`requirement`/`test_design`/`automation`): settings fallbacks for
+    temperature/timeouts/retries. API bootstrap (`qa_copilot_api.config`) calls
+    `load_dotenv(repo/.env)` so ONE `.env` controls API + AI package;
+    `scripts/eval_run.py` reuses the same loader (private copy removed).
+  - Prompt front-matter budgets aligned with env (all three prompts:
+    `input_budget: 60000` / `output_budget: 40000`); front-matter still wins.
+  - Tests: new `tests/unit/test_ai_config.py` (settings parsing, env override,
+    extra_body validation, gateway env fallback, budget gate, canonical-field
+    precedence) + `test_automation_agent.py` budget updates.
+- **Root cause of the morning's live failure:** Qwen3 thinking mode consumed
+  the whole output budget (~28,342 tokens of `reasoning_content` — LM Studio
+  puts thinking in `reasoning_content`, the answer in `content`) → final
+  `content` had no JSON metadata → parser failed after 15+ min. Disabling
+  thinking via `AI_EXTRA_BODY` fixed it.
+- **Verified (gates):** `uv run pytest tests/unit -q` → **341 passed** ·
+  `ruff check` ✓ · `ruff format --check` ✓ (96 files) · `mypy` ✓ (70 files).
+- **Live run (E2E):** API restarted (PID 1788) →
+  `POST /api/v1/automation/generate` (invalid-credentials case) →
+  **job `8c69ee01` completed in 24s** → new `pending` review row
+  `04b9b4aa` / `e2e/login-invalid-credentials.spec.ts` (real Playwright spec:
+  `test.step` + `getByRole` locators, covers preconditions/steps/expected
+  results) → `ai_call` audit: `tokens_in=1286` / `tokens_out=383` /
+  `latency_ms=24238` / `retries=0` (vs 28k+ output tokens before).
+- **Also committed (`d886b69`):** leftover mypy/format fixes (requirements
+  history, runs routes, models), execution `DEFAULT_TIMEOUT_S` 600→6000
+  (slow local machines), demo-app conventions golden now includes
+  `*.spec.ts` (applied S2.4 demo row `e2e/ui/review-queue-demo.spec.ts`).
+- **Gotchas:** use `http://127.0.0.1:8000` (not `localhost` — can resolve to
+  `::1` here) · login response field is `token`, not `access_token` ·
+  PowerShell one-liners mangle `$_`/`$PSItem`/escaped quotes — write temp
+  `.ps1` scripts · `uv` stderr warnings make PowerShell report exit code 1
+  even when pytest passed.
+- **Next session start:** **S3.3 — Failure normalizer** (build bible §19
+  Phase 3: raw failure → structured taxonomy fields; exit: 30 broken tests
+  normalize 100%) — see `STATE.md` §3.

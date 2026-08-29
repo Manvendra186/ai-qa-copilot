@@ -12,6 +12,24 @@
 
 ## 2. Just completed
 
+- 2026-08-29 · **AI settings centralization (cross-cutting) — live E2E green**
+  (`01a2851`, + leftovers `d886b69`):
+  new `qa_copilot_ai.config` (`ModelSettings` + `load_dotenv()`, shell env wins)
+  reads `AI_MAX_INPUT_TOKENS=60000` · `AI_MAX_OUTPUT_TOKENS=40000` ·
+  `AI_TEMPERATURE` · `AI_TIMEOUT_S=12000` · `AI_CONNECT_TIMEOUT_S=100` ·
+  `AI_MAX_RETRIES=1` · `AI_EXTRA_BODY` (JSON object, fail-loud) — `.env` ships
+  `{"chat_template_kwargs": {"enable_thinking": false}}` to disable **Qwen3
+  thinking** (root cause of the failed live run: thinking ate ~28k output
+  tokens into `reasoning_content`, starving the JSON answer) ·
+  `LLMGateway` uses settings as defaults (explicit args win) and enforces the
+  **input** budget before any wire call (`LLMInputBudgetError`, exported) ·
+  agents get settings fallbacks · API bootstrap + `scripts/eval_run.py` share
+  `load_dotenv` (one repo `.env` controls API + AI) · prompt front-matter
+  budgets aligned (60000/40000, front-matter still wins) ·
+  **live: generate job completed in 24s** (was 15+ min, failed) → pending
+  review row `e2e/login-invalid-credentials.spec.ts` (real Playwright spec) ·
+  `ai_call` audit `tokens_in=1286` / `tokens_out=383` / `retries=0` ·
+  **341 tests ✓ · mypy (70) ✓ · ruff ✓.**
 - 2026-08-28 · **S3.2 (Runs API + run history / results / artifacts UI)**:
   backend read endpoints complete + registered — `GET /projects/{id}/runs`,
   `GET /runs/{id}`, `GET /runs/{id}/results`, `GET /runs/{id}/artifacts`,
@@ -104,10 +122,10 @@
 
 ## 3. NEXT STEP (start here)
 
-**S3.2 — Runs API + run history + artifacts UI** (build bible §19 Phase 3):
-a run is visible with its artifacts. Wire `persist_run` into an API job
-(S2.4-style 202 + job), list run history per project, fetch artifact
-contents by URI from the store.
+**S3.3 — Failure normalizer** (build bible §19 Phase 3):
+raw Playwright failure text → structured taxonomy fields (classification,
+evidence, affected selector/step, suspected cause).
+Exit criterion: 30 broken tests normalize 100%.
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
   needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
   artifacts live in gitignored `reports/` — commit one baseline after each
