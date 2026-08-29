@@ -49,11 +49,12 @@ waiter (the web UI); behind you there is a clear division of labour.
 
 ### Layer 1 — The face: the web app (React, port 5173)
 
-The dark-themed page at `http://127.0.0.1:5173`. It has two tabs:
+The dark-themed page at `http://127.0.0.1:5173`. It has three tabs:
 
 | Tab | What it shows |
 |---|---|
 | **Test design** | A form to describe a requirement; a live six-stage pipeline; the test cases the AI designed; a **past requirements** list of everything you've designed so far; a log of everything that happened |
+| **Generated tests** | The AI-generated Playwright review queue: read the proposed code, then **✓ Approve & write test** (writes the file into the target repo) or **✗ Reject** |
 | **Runs** | History of test executions: pass/fail per test, timing, and downloadable evidence (screenshots, traces, logs) |
 
 ### Layer 2 — The office: the API server (FastAPI, port 8000)
@@ -241,19 +242,29 @@ docker compose down      # infra (data is kept; use `down -v` to wipe it)
 read them as a QA peer would — the value is in the negative/boundary cases it adds
 that a rushed human pass usually misses.
 
-### 4.3 Review AI-generated test code (via the API today)
+### 4.3 Review AI-generated test code (the Generated tests tab)
 
-The Automator agent produces Playwright test code, but it **never writes to disk**.
-Each proposal becomes a row in a **review queue**:
+The Automator agent produces Playwright test code, but it **never writes to
+disk on its own**. Each proposal becomes a row in a **review queue**, and the
+**Generated tests** tab is where you make the call:
+
+1. Open a row to read the proposed code (file path, framework, notes).
+2. **✓ Approve & write test** — the row is approved *and* the file is written
+   into the target repository (`<repository_path>/<file_path>`). The API
+   refuses to silently overwrite an existing file (a 409, in that case —
+   re-generating a test creates a new proposal).
+3. **✗ Reject** — the row is discarded (a second click confirms, so you can't
+   do it by accident). Re-generating the test case creates a new proposal.
+
+You can also use the API directly (`member` role or above):
 
 - `GET /api/v1/projects/{id}/generated-tests` — the queue
 - `POST /api/v1/generated-tests/{id}/approve` — you say "yes"
 - `POST /api/v1/generated-tests/{id}/reject` — you say "no"
-- `POST /api/v1/generated-tests/{id}/apply` — only after approval; writes the file
-  (and refuses to silently overwrite an existing file)
+- `POST /api/v1/generated-tests/{id}/apply` — `pending|approved → applied`;
+  writes the file
 
-Every one of these actions is audited (who, when, note). A web UI for this queue
-is a near-term improvement — today it is API-level.
+Every one of these actions is audited (who, when, note).
 
 ### 4.4 Look at test runs (the Runs tab)
 
@@ -312,7 +323,7 @@ Per `agent-memory/STATE.md` (2026-08-28):
 |---|---|
 | Requirement analysis | ✅ done |
 | Test design + quality evaluation | ✅ done (measured against a "golden set" of expected answers) |
-| Automation code generation + human review | ✅ done (API-level) |
+| Automation code generation + human review | ✅ done (Generated tests tab: approve & write / reject) |
 | Execution + run history + evidence artifacts | ✅ done |
 | Failure analysis (AI explains failures) | 🚧 next |
 | Fix proposals | 🚧 planned |

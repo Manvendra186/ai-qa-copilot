@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { EventLog } from './components/EventLog';
+import { GeneratedTests } from './components/GeneratedTests';
 import { Header } from './components/Header';
 import { LoginForm } from './components/LoginForm';
 import { PipelineView } from './components/PipelineView';
@@ -29,7 +30,7 @@ export default function App() {
   const [requirement, setRequirement] = useState<RequirementOut | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'design' | 'runs'>('design');
+  const [tab, setTab] = useState<'design' | 'generated' | 'runs'>('design');
 
   // S1.3 read-back: once the job completes, the terminal `output_ref` is the
   // persisted requirement id — fetch it and render the suite.
@@ -137,6 +138,17 @@ export default function App() {
           </button>
           <button
             type="button"
+            onClick={() => setTab('generated')}
+            className={`rounded-lg px-4 py-1.5 text-sm transition ${
+              tab === 'generated'
+                ? 'bg-slate-800 text-slate-100'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Generated tests
+          </button>
+          <button
+            type="button"
             onClick={() => setTab('runs')}
             className={`rounded-lg px-4 py-1.5 text-sm transition ${
               tab === 'runs' ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200'
@@ -227,6 +239,8 @@ export default function App() {
             <EventLog entries={job.log} done={completed} failed={failed} />
           </>
         )}
+
+        {tab === 'generated' && <GeneratedTests projectId={auth.project.id} />}
 
         {tab === 'runs' && <RunsView projectId={auth.project.id} />}
       </main>

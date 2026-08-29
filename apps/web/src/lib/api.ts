@@ -170,6 +170,64 @@ export function listRequirements(projectId: string): Promise<RequirementSummary[
   return request<RequirementSummary[]>(`/projects/${encodeURIComponent(projectId)}/requirements`);
 }
 
+// --- S2.4: generated-test review queue (§10, §19 S2.4) -----------------------
+
+export interface GeneratedTestOut {
+  id: string;
+  project_id: string;
+  job_id: string | null;
+  test_case_id: string | null;
+  file_path: string | null;
+  file_path_pattern: string | null;
+  language: string | null;
+  framework: string | null;
+  content: string | null;
+  notes: string[];
+  repository_path: string | null;
+  /** `pending` | `approved` | `rejected` | `applied`. */
+  status: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** `GET /projects/{id}/generated-tests` — the review queue, newest first (S2.4). */
+export function listGeneratedTests(projectId: string): Promise<GeneratedTestOut[]> {
+  return request<GeneratedTestOut[]>(`/projects/${encodeURIComponent(projectId)}/generated-tests`);
+}
+
+/** `GET /generated-tests/{id}` — one review row, full content included (S2.4). */
+export function getGeneratedTest(id: string): Promise<GeneratedTestOut> {
+  return request<GeneratedTestOut>(`/generated-tests/${encodeURIComponent(id)}`);
+}
+
+/**
+ * `POST /generated-tests/{id}/{action}` — a human review decision (S2.4,
+ * `member` or above; all accept an optional audit `note`).
+ *
+ * - `approve` — `pending → approved`
+ * - `reject`  — terminal; re-generating creates a new row
+ * - `apply`   — `pending | approved → applied` **and writes the file** into
+ *               `<repository_path>/<file_path>` (an existing target file is a
+ *               409 — V1 policy: no silent overwrite)
+ *
+ * The UI's "Approve & write" button calls `apply` directly: it is the legal
+ * one-step path from `pending`, and it is what actually writes the Playwright
+ * file into the target repository.
+ */
+export function reviewGeneratedTest(
+  id: string,
+  action: 'approve' | 'reject' | 'apply',
+  note?: string,
+): Promise<GeneratedTestOut> {
+  return request<GeneratedTestOut>(`/generated-tests/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify(note ? { note } : {}),
+  });
+}
+
 // --- S3.2: run history, results, artifacts (§10, §15) -------------------------
 
 export interface FailureOut {
