@@ -212,7 +212,9 @@ def _seed_requirement(
 # --- GET /api/v1/projects/{id}/requirements -----------------------------------
 
 
-def test_list_requirements_returns_summary_rows_newest_first(client, env) -> None:
+def test_list_requirements_returns_summary_rows_newest_first(
+    client: TestClient, env: dict[str, Any]
+) -> None:
     old_id = _seed_requirement(
         env,
         ACME_ID,
@@ -242,7 +244,7 @@ def test_list_requirements_returns_summary_rows_newest_first(client, env) -> Non
         assert row["created_at"] is not None
 
 
-def test_list_requirements_is_project_scoped(client, env) -> None:
+def test_list_requirements_is_project_scoped(client: TestClient, env: dict[str, Any]) -> None:
     acme_id = _seed_requirement(
         env,
         ACME_ID,
@@ -269,7 +271,7 @@ def test_list_requirements_is_project_scoped(client, env) -> None:
     assert beta_rows[0]["test_case_count"] == 2
 
 
-def test_list_requirements_viewer_can_read(client, env) -> None:
+def test_list_requirements_viewer_can_read(client: TestClient, env: dict[str, Any]) -> None:
     req_id = _seed_requirement(
         env, ACME_ID, title="Login flow", n_cases=2, created_at=datetime(2026, 3, 1, tzinfo=UTC)
     )
@@ -279,7 +281,7 @@ def test_list_requirements_viewer_can_read(client, env) -> None:
     assert [row["id"] for row in rows] == [req_id]
 
 
-def test_list_requirements_non_member_gets_403(client, env) -> None:
+def test_list_requirements_non_member_gets_403(client: TestClient, env: dict[str, Any]) -> None:
     _seed_requirement(
         env,
         ACME_ID,
@@ -291,17 +293,23 @@ def test_list_requirements_non_member_gets_403(client, env) -> None:
     assert res.status_code == 403
 
 
-def test_list_requirements_unknown_project_gets_404(client, env) -> None:
+def test_list_requirements_unknown_project_gets_404(
+    client: TestClient, env: dict[str, Any]
+) -> None:
     res = client.get(f"/api/v1/projects/{uuid4()}/requirements", headers=_auth("alice"))
     assert res.status_code == 404
 
 
-def test_list_requirements_unauthenticated_gets_401(client, env) -> None:
+def test_list_requirements_unauthenticated_gets_401(
+    client: TestClient, env: dict[str, Any]
+) -> None:
     res = client.get(f"/api/v1/projects/{ACME_ID}/requirements")
     assert res.status_code == 401
 
 
-def test_list_requirements_empty_project_returns_empty_list(client, env) -> None:
+def test_list_requirements_empty_project_returns_empty_list(
+    client: TestClient, env: dict[str, Any]
+) -> None:
     # BETA has no requirements in this test's fresh scratch DB.
     res = client.get(f"/api/v1/projects/{BETA_ID}/requirements", headers=_auth("dave"))
     assert res.status_code == 200

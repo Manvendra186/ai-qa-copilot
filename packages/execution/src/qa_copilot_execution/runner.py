@@ -33,7 +33,7 @@ from qa_copilot_domain.enums import ArtifactType, RunStatus, TestResultStatus
 from .report import ArtifactReport, RunReport, RunTotals, TestResultReport
 from .store import ArtifactStore, ArtifactStoreError, check_segment
 
-DEFAULT_TIMEOUT_S = 600.0
+DEFAULT_TIMEOUT_S = 6000.0
 #: Default worker command (kept for API compatibility; resolution now
 #: happens in :func:`_resolve_command` so Windows picks the bin shim).
 DEFAULT_COMMAND = ("playwright", "test", "--reporter=json")

@@ -352,9 +352,7 @@ class TestRun(Base):
     commit_sha: Mapped[str | None] = mapped_column(sa.String(64))
     # Status vocabulary from the domain package (S3.1, §15); values follow
     # the §31.2 job state machine (pending/running/completed/failed).
-    status: Mapped[RunStatus] = mapped_column(
-        _enum_column(RunStatus), default=RunStatus.RUNNING
-    )
+    status: Mapped[RunStatus] = mapped_column(_enum_column(RunStatus), default=RunStatus.RUNNING)
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(

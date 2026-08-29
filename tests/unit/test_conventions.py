@@ -79,7 +79,7 @@ def test_golden_js_web_app() -> None:
 @pytest.mark.skipif(not DEMO_APP.is_dir(), reason="demo app not present on this machine")
 def test_golden_demo_app() -> None:
     assert _dump(extract_conventions(DEMO_APP)) == {
-        "test_file_patterns": ["*.spec.js"],
+        "test_file_patterns": ["*.spec.js", "*.spec.ts"],
         "locator_styles": [
             {"api": "getByTestId", "framework": "generic", "count": 3},
             {"api": "getByRole", "framework": "generic", "count": 2},

@@ -113,4 +113,5 @@ def list_requirements(
         .where(models.Requirement.project_id == project_id)
         .order_by(models.Requirement.created_at.desc(), models.Requirement.id.desc())
     )
-    return session.execute(stmt).all()
+    rows = session.execute(stmt).all()
+    return [(requirement, case_count) for requirement, case_count in rows]

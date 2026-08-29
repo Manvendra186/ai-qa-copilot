@@ -914,9 +914,7 @@ def list_artifacts(
 ) -> list[schemas.ArtifactOut]:
     """A run's artifact rows (S3.2, ``viewer`` or above)."""
     run = _get_run_for_read(db, user, run_id)
-    return [
-        _artifact_out(run.id, artifact) for artifact in repo_runs.list_artifacts(db, run.id)
-    ]
+    return [_artifact_out(run.id, artifact) for artifact in repo_runs.list_artifacts(db, run.id)]
 
 
 @runs_router.get("/{run_id}/artifacts/{artifact_id}/content")
