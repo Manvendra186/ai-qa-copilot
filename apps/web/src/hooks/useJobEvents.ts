@@ -27,10 +27,13 @@ export interface JobState {
 export interface JobEvents extends JobState {
   /** Open the SSE stream for the given job (resets the run state). */
   start: (jobId: string) => void;
+  /** Abort the in-flight stream (if any) and clear the run state. */
+  reset: () => void;
 }
 
 type Action =
   | { type: 'run.start'; jobId: string }
+  | { type: 'run.reset' }
   | { type: 'connection'; status: ConnectionStatus }
   | { type: 'job.started' }
   | { type: 'stage.started'; stage: StageId }
@@ -80,6 +83,8 @@ function reducer(state: JobState, action: Action): JobState {
   switch (action.type) {
     case 'run.start':
       return { ...initialState(), jobId: action.jobId, connection: 'connecting' };
+    case 'run.reset':
+      return initialState();
     case 'connection':
       if (state.connection === action.status) return state;
       return { ...state, connection: action.status };
@@ -177,6 +182,12 @@ export function useJobEvents(): JobEvents {
     setActive((prev) => ({ jobId, run: (prev?.run ?? 0) + 1 }));
   }, []);
 
+  const reset = useCallback(() => {
+    // setActive(null) → the effect's cleanup aborts the in-flight stream.
+    setActive(null);
+    dispatch({ type: 'run.reset' });
+  }, []);
+
   useEffect(() => {
     if (active === null) return;
     const controller = new AbortController();
@@ -227,5 +238,5 @@ export function useJobEvents(): JobEvents {
     return () => controller.abort();
   }, [active]);
 
-  return { ...state, start };
+  return { ...state, start, reset };
 }

@@ -103,7 +103,10 @@ export default function App() {
     );
   }
 
-  const running = job.outcome === 'running';
+  // "Running" means an *active* job is in flight: the reducer's initial state
+  // (no job submitted yet) is outcome 'running' + jobId null, so gating on the
+  // outcome alone would keep the form disabled on every fresh page load.
+  const running = job.jobId !== null && job.outcome === 'running';
   const failed = job.outcome === 'failed';
   const completed = job.outcome === 'completed';
 
@@ -153,9 +156,24 @@ export default function App() {
                   (S1.3).
                 </p>
               </div>
-              {job.jobId !== null && (
-                <span className="font-mono text-xs text-slate-500">job {job.jobId}</span>
-              )}
+              <div className="flex items-center gap-3">
+                {job.jobId !== null && (
+                  <span className="font-mono text-xs text-slate-500">job {job.jobId}</span>
+                )}
+                {running && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmitError(null);
+                      setRequirement(null);
+                      job.reset();
+                    }}
+                    className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+                  >
+                    Start over
+                  </button>
+                )}
+              </div>
             </section>
 
             <RequirementForm
