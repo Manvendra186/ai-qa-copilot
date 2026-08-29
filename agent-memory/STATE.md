@@ -6,12 +6,31 @@
 ## 1. Current position
 
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
-  Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution (S3.1 ✓, S3.2 ✓)
-- **Step:** S0.1–S3.2 ✓ (S3.2 = Runs API + run history/results/artifacts UI) ·
-  **next:** remaining Phase 3 steps per build bible §19
+  Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓)
+- **Step:** S0.1–S3.3 ✓ (S3.3 = deterministic failure normalizer + 30-fixture golden gate) ·
+  **next:** Phase 4 — **S4.1 Failure Investigator** (top-1 ≥ 80% on the 30-broken-test set)
 
 ## 2. Just completed
 
+- 2026-08-29 · **S3.3 (failure normalizer) — golden gate 30/30, gate met**:
+  deterministic, LLM-free `qa_copilot_execution.failure` — raw Playwright
+  failure text → domain `NormalizedFailure` (§16 taxonomy: environment /
+  test-data / flaky / product / automation / unknown) via 18 named rules in
+  priority order (env → data → flaky → product → automation; first match wins,
+  all matches kept as `category_signals`) · `evidence` = winning rule's lines
+  first then one per rule, capped (10 lines / 300 chars) · structural
+  extraction: `http_status`, `selector`, `endpoint` (regex, first hit) ·
+  `golden.py` golden-set models + loader (fail-loud `FailureGoldenSetError`) +
+  `run_golden_set` report (total/passed/failed/gate/gate_met) ·
+  **30 fixtures** in `packages/execution/golden/failure_v1.json` (6 categories,
+  real Playwright message shapes — e.g. `Test timeout of 30000ms exceeded`,
+  `strict mode violation: locator("#save") resolved to 2 elements`) ·
+  CLI `python -m qa_copilot_execution.failure <file|-> [--json]` (exit 0/2)
+  and `--golden [--golden-path PATH] [--json]` (exit 0 gate met / 1 gate
+  missed / 2 usage) · tests: `tests/unit/test_failure.py` (33: rules +
+  priority, extraction, golden gate incl. tamper detection, CLI) ·
+  **373 tests ✓ (1 pre-existing demo-app conventions golden failure on this
+  machine — fails on clean tree too) · mypy strict ✓ · ruff ✓.**
 - 2026-08-29 · **AI settings centralization (cross-cutting) — live E2E green**
   (`01a2851`, + leftovers `d886b69`):
   new `qa_copilot_ai.config` (`ModelSettings` + `load_dotenv()`, shell env wins)
@@ -122,10 +141,15 @@
 
 ## 3. NEXT STEP (start here)
 
-**S3.3 — Failure normalizer** (build bible §19 Phase 3):
-raw Playwright failure text → structured taxonomy fields (classification,
-evidence, affected selector/step, suspected cause).
-Exit criterion: 30 broken tests normalize 100%.
+**S4.1 — Failure Investigator** (build bible §19 Phase 4):
+AI agent classifies a failing test with evidence + confidence, reasoning over
+the S3.3 `NormalizedFailure` (deterministic base) + §15 artifacts.
+Exit criterion: top-1 ≥ 80% on the 30-broken-test set (golden fixtures are
+the natural eval set; §21 gate "failure top-1 ≥ 80%").
+- Pre-existing (not S3.3): `tests/unit/test_conventions.py::test_golden_demo_app`
+  FAILS on this machine's clean tree (demo-app locator counts differ from the
+  committed golden — e.g. `getByRole` 4×playwright vs 2×generic). Verify/re-baseline
+  the demo-app conventions golden before trusting the full suite.
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
   needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
   artifacts live in gitignored `reports/` — commit one baseline after each
@@ -326,3 +350,13 @@ Exit criterion: 30 broken tests normalize 100%.
 - **typed `ThreadingHTTPServer` extras (S3.1):** attach a capture list via a
   subclass with a class-level annotation, not a dynamic attribute (mypy
   `attr-defined`; the declared return type widens away inner-class attrs).
+- **Playwright real message wording (S3.3):** the test timeout line is
+  `Test timeout of 30000ms exceeded` (NOT "timed out after …") — golden
+  fixtures must use the actual Playwright strings, not paraphrases.
+- **mypy `no-redef` (S3.3):** annotating a variable again in the other
+  if/else branch errors (`evidence = …` then `evidence: list[str] = []`);
+  annotate on the first assignment only.
+- **pre-existing demo-app conventions golden (found in S3.3):**
+  `test_conventions.py::test_golden_demo_app` fails on this machine's CLEAN
+  tree (demo-app locator counts differ from the committed golden) — not an
+  S3.3 regression; re-baseline it deliberately.

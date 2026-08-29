@@ -2,7 +2,8 @@
 
 S0.4 scope: ``Project``, ``Requirement``, ``TestCase``, ``Failure``,
 ``Artifact``, ``Job``. S0.8 (auth baseline, §31.3): ``User`` and
-``ProjectMember``.
+``ProjectMember``. S3.3 (§19): ``NormalizedFailure`` — raw failure text
+normalized onto the §16 taxonomy (deterministic, LLM-free).
 
 Conventions:
 
@@ -194,6 +195,32 @@ class Failure(DomainModel):
     evidence: list[str] = Field(default_factory=list)
     suggested_fix: str | None = None
     needs_human_approval: bool = True
+
+
+class NormalizedFailure(DomainModel):
+    """Structured taxonomy view of one raw failure (build bible §15, §16; §19 S3.3).
+
+    Produced by :func:`qa_copilot_execution.failure.normalize_failure` —
+    deterministic and LLM-free: the raw failure text (the shape of
+    ``TestResultReport.error``) becomes consistent structured fields, so the
+    S4.1 Failure Investigator (AI) reasons over a normalized shape, not raw
+    logs (§16 v1.1: text-first).
+
+    ``category`` is the normalizer's *best guess* (``unknown`` when no §16
+    signal matches); the Investigator's final diagnosis (see :class:`Failure`)
+    may override it. ``category_signals`` are the matched rule names (the
+    deterministic "why", most decisive first); ``evidence`` are the raw lines
+    that backed them (leading lines when the category is ``unknown``).
+    ``http_status`` / ``selector`` / ``endpoint`` are the structural facts
+    found in the text (``None`` when absent).
+    """
+
+    category: FailureCategory = FailureCategory.UNKNOWN
+    category_signals: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    selector: str | None = None
+    endpoint: str | None = None
 
 
 class Artifact(DomainModel):

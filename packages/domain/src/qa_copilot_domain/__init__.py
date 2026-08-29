@@ -9,6 +9,8 @@ S2.2: ``TestConventions`` (+ ``LocatorStyle``, ``TestScript``) — convention
 extractor output, the shared contract for the S2.3 automation agent (§19).
 S2.4: ``GeneratedTestStatus`` + transition rule — generated-test review
 lifecycle (diff review, approve/apply, reject; build bible §19 S2.4).
+S3.3: ``NormalizedFailure`` — raw failure text normalized onto the §16
+taxonomy (build bible §15, §19 S3.3).
 """
 
 from .base import DomainModel
@@ -17,6 +19,7 @@ from .entities import (
     Failure,
     Job,
     LocatorStyle,
+    NormalizedFailure,
     Project,
     ProjectMember,
     RepositoryProfile,
@@ -58,6 +61,7 @@ __all__ = [
     "JobStatus",
     "JobType",
     "LocatorStyle",
+    "NormalizedFailure",
     "Priority",
     "Project",
     "ProjectMember",

@@ -1079,3 +1079,78 @@
 - **Next session start:** **S3.3 — Failure normalizer** (build bible §19
   Phase 3: raw failure → structured taxonomy fields; exit: 30 broken tests
   normalize 100%) — see `STATE.md` §3.
+
+## 2026-08-29 — S3.3 Failure normalizer: deterministic raw-failure → structured taxonomy + 30-fixture golden gate
+
+- **Goal:** build bible §19 Phase 3 S3.3 — raw Playwright failure text →
+  structured `NormalizedFailure` (classification, evidence, affected
+  selector/step, suspected cause); exit: 30 broken tests normalize 100%.
+- **Did:**
+  - `qa_copilot_domain.entities.NormalizedFailure` (frozen, §16): `category`
+    (default `unknown`) · `category_signals` (matched rule names, most
+    decisive first) · `evidence` (raw lines; capped) · `http_status`
+    (100–599) · `selector` · `endpoint` (all `None` when absent) — exported
+    from `qa_copilot_domain` alongside `FailureCategory` (S3.1 added the
+    enum; this step added the entity).
+  - `qa_copilot_execution/failure.py` (deterministic, LLM-free, database-free):
+    18 named rules in priority order — env (credentials 100, net 110,
+    service 120) → data (missing 130, format 140) → flaky (timeout 150,
+    retry 160) → product (assertion 200, api-status 210) → automation
+    (strict 300, timing 310); first match wins the category, all matches are
+    kept as `category_signals` (§16: the normalizer's *best guess* — the
+    S4.1 Investigator may override). `_collect_evidence`: winner rule's
+    lines first, then one line per other matched rule, capped at
+    `MAX_EVIDENCE_LINES=10` / `MAX_EVIDENCE_CHARS=300` (§15: AI sees
+    structures, not raw log dumps). Structural extraction (first hit):
+    `http_status` (failed/got/returned keywords, status names, `HTTP n`),
+    `selector` (`locator("…")` / `waiting for (locator|selector) "…"`),
+    `endpoint` (first URL).
+  - `qa_copilot_execution/golden.py`: golden-set models (`FailureFixture` /
+    `FailureExpectations` / `FailureGoldenSet` / `FailureTargets` /
+    `GoldenMismatch` / `GoldenReport`) + `load_failure_golden_set` (fail-loud
+    `FailureGoldenSetError` on missing/invalid) + `default_golden_path()`
+    (`packages/execution/golden/failure_v1.json`).
+  - `failure.py` golden runner + CLI: `mismatches` (exact on
+    category/http_status/selector/endpoint, subset on signals) ·
+    `run_golden_set` (total/passed/failed/gate/gate_met) ·
+    `python -m qa_copilot_execution.failure <file|-> [--json]` (exit 0
+    normalized / 2 usage) and `--golden [--golden-path PATH] [--json]`
+    (exit 0 gate met / 1 gate missed / 2 usage).
+  - **30 fixtures** `packages/execution/golden/failure_v1.json`
+    (`schema_version=1`, `source: "s3.3-golden-gate"`, target
+    `normalize_pass_min=1.0`): 6 env (ERR_CONNECTION_REFUSED, ERR_NAME_NOT_
+    RESOLVED, 401, 403, 503, timeout), 5 data (RecordNotFound,
+    ValidationError, malformed JSON, missing row, date format), 4 flaky
+    (`Test timeout of 30000ms exceeded` — Playwright's ACTUAL wording —,
+    retry, race, network), 4 product (assertion, 500, wrong count, schema),
+    7 automation (strict mode ×2, timeout-waiting, wrong selector,
+    force-click, frame, timing), 4 unknown.
+  - Tests: new `tests/unit/test_failure.py` (33 tests: empty/whitespace →
+    unknown; per-category rules; priority (env>product, data>product,
+    flaky>automation); lower-priority signals still reported; deterministic;
+    evidence caps; http_status/selector/endpoint extraction incl. negative
+    cases; golden gate 30/30 + tamper detection (wrong category → mismatch,
+    gate missed); loader missing/invalid; CLI file/stdin/JSON/`--golden`/
+    usage errors; exit-code constants).
+- **Verified (gates):** `pytest tests -q` → **373 passed** (33 new) ·
+  `mypy` (domain + execution, strict) → **Success, no issues in 12 source
+  files** · `ruff check` + `ruff format --check` → **all green** ·
+  live CLI: `--golden` → `fixtures: 30 · passed: 30 · failed: 0`,
+  `gate normalize_pass_min=1 → met`, exit 0 (also `--json`).
+- **Known pre-existing failure (NOT S3.3):**
+  `tests/unit/test_conventions.py::test_golden_demo_app` fails on this
+  machine's clean tree (verified by stashing all S3.3 changes and
+  re-running): demo-app locator counts differ from the committed golden
+  (actual `getByRole` 4×playwright + `getByTestId` 2×playwright/2×generic/
+  `locator` 2×generic/1×playwright vs expected 3/2/2 all-generic).
+  Re-baseline the demo-app conventions golden deliberately.
+- **Gotchas:** Playwright's timeout line is `Test timeout of 30000ms
+  exceeded` (not "timed out after") — fixtures must use real Playwright
+  strings · mypy strict `no-redef`: don't re-annotate a variable in the
+  other if/else branch (annotate the first assignment) · the
+  `got|returned|failed <code>` status regex must not false-hit on bare
+  numbers in assertions ("Expected: 3, Received: 2" → no status).
+- **Next session start:** **S4.1 — Failure Investigator** (build bible §19
+  Phase 4: classification + evidence + confidence over the S3.3
+  `NormalizedFailure`; exit: top-1 ≥ 80% on the 30-broken-test set) —
+  see `STATE.md` §3.

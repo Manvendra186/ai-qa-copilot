@@ -1,0 +1,307 @@
+{
+  "schema_version": 1,
+  "name": "S3.3 failure normalizer golden set",
+  "version": "v1",
+  "description": "Build Bible §22 evaluation dataset, v1: 30 broken-test failure texts with known root causes — the S3.3 exit gate (§19: 30 broken tests normalize 100%). Each fixture is raw Playwright failure text (message + snippet, the shape of TestResultReport.error) with the expected §16 taxonomy category and the structured fields the normalizer must extract (http_status, selector, endpoint, decisive signals). Consumed by the S3.3 unit tests (tests/unit/test_failure.py) and the CLI golden mode (python -m qa_copilot_execution.failure --golden); S4.1 (Failure Investigator, AI) will score its top-1 classification on the same texts (>= 80%, §31.7).",
+  "source": {
+    "build_bible": "docs/AI_QA_Copilot_Build_Bible_v1.1.md",
+    "step": "S3.3"
+  },
+  "targets": {
+    "normalize_pass_min": 1.0
+  },
+  "fixtures": [
+    {
+      "id": "FAIL-001",
+      "title": "goto times out — app server not reachable",
+      "raw": "Error: page.goto: Timeout 30000ms exceeded.\n  - navigating to \"http://localhost:3000/login\"",
+      "expect": {
+        "category": "environment_defect",
+        "endpoint": "http://localhost:3000/login",
+        "signals": ["env.nav"]
+      }
+    },
+    {
+      "id": "FAIL-002",
+      "title": "connection refused — service down",
+      "raw": "page.goto: Error: net::ERR_CONNECTION_REFUSED at http://localhost:3000/products\nCall log:\n  - navigating to \"http://localhost:3000/products\"",
+      "expect": {
+        "category": "environment_defect",
+        "endpoint": "http://localhost:3000/products",
+        "signals": ["env.net", "env.nav"]
+      }
+    },
+    {
+      "id": "FAIL-003",
+      "title": "unauthorized — expired credentials",
+      "raw": "API request to POST http://localhost:3000/api/auth/login failed: 401 Unauthorized\nexpect(received).toBe(expected) // Object.is equality\nExpected: 200\nReceived: 401",
+      "expect": {
+        "category": "environment_defect",
+        "http_status": 401,
+        "endpoint": "http://localhost:3000/api/auth/login",
+        "signals": ["env.credentials"]
+      }
+    },
+    {
+      "id": "FAIL-004",
+      "title": "forbidden — wrong role token",
+      "raw": "page.request.get: 403 Forbidden\n   at http://localhost:3000/api/admin/users",
+      "expect": {
+        "category": "environment_defect",
+        "http_status": 403,
+        "endpoint": "http://localhost:3000/api/admin/users",
+        "signals": ["env.credentials"]
+      }
+    },
+    {
+      "id": "FAIL-005",
+      "title": "service unavailable — upstream down",
+      "raw": "API request to GET http://localhost:3000/api/orders failed: 503 Service Unavailable",
+      "expect": {
+        "category": "environment_defect",
+        "http_status": 503,
+        "endpoint": "http://localhost:3000/api/orders",
+        "signals": ["env.service"]
+      }
+    },
+    {
+      "id": "FAIL-006",
+      "title": "browser executable missing — Playwright not installed",
+      "raw": "Error: browserType.launch: Executable doesn't exist at C:\\Users\\runner\\.cache\\ms-playwright\\chromium-1195\\chrome-win64\\chrome.exe\nLooks like Playwright was just installed or updated.\nPlease run the following command to download new browsers:\n    npx playwright install",
+      "expect": {
+        "category": "environment_defect",
+        "signals": ["env.launch"]
+      }
+    },
+    {
+      "id": "FAIL-007",
+      "title": "browser process died mid-test",
+      "raw": "page.click: Error: Target page, context or browser has been closed\n=========================== logs ===========================\n  navigating to \"http://localhost:3000/cart\"\n============================================================",
+      "expect": {
+        "category": "environment_defect",
+        "endpoint": "http://localhost:3000/cart",
+        "signals": ["env.crash"]
+      }
+    },
+    {
+      "id": "FAIL-008",
+      "title": "unknown user id — missing test data",
+      "raw": "API request to GET http://localhost:3000/api/users/u-4242 failed: 404 Not Found",
+      "expect": {
+        "category": "test_data_defect",
+        "http_status": 404,
+        "endpoint": "http://localhost:3000/api/users/u-4242",
+        "signals": ["data.missing"]
+      }
+    },
+    {
+      "id": "FAIL-009",
+      "title": "RecordNotFound — stale user fixture",
+      "raw": "Error: expect(received).toBe(expected) // Object.is equality\nExpected: \"ok\"\nReceived: \"RecordNotFound: no User with id 991\"\n  at e2e/profile.spec.ts:14:26",
+      "expect": {
+        "category": "test_data_defect",
+        "signals": ["data.missing"]
+      }
+    },
+    {
+      "id": "FAIL-010",
+      "title": "no rows — product seed for category missing",
+      "raw": "Error: expect(received).toHaveLength(expected)\nExpected length: 5\nReceived length: 0\n   - SELECT * FROM products WHERE category = 'tools' returned no rows",
+      "expect": {
+        "category": "test_data_defect",
+        "signals": ["data.missing"]
+      }
+    },
+    {
+      "id": "FAIL-011",
+      "title": "seed endpoint 404 — fixture not provisioned",
+      "raw": "API request to POST http://localhost:3000/api/seed failed: 404 Not Found\n   - seed fixture \"tools\" not present in this environment",
+      "expect": {
+        "category": "test_data_defect",
+        "http_status": 404,
+        "endpoint": "http://localhost:3000/api/seed",
+        "signals": ["data.missing"]
+      }
+    },
+    {
+      "id": "FAIL-012",
+      "title": "empty result set — bad test data",
+      "raw": "Error: expect(received).toBe(expected) // Object.is equality\nExpected: 12\nReceived: 0\n   - GET http://localhost:3000/api/products?category=tools → empty result set",
+      "expect": {
+        "category": "test_data_defect",
+        "endpoint": "http://localhost:3000/api/products?category=tools",
+        "signals": ["data.missing"]
+      }
+    },
+    {
+      "id": "FAIL-013",
+      "title": "worker test timeout — non-deterministic hang",
+      "raw": "Test timeout of 30000ms exceeded.",
+      "expect": {
+        "category": "flaky_behavior",
+        "signals": ["flaky.timeout"]
+      }
+    },
+    {
+      "id": "FAIL-014",
+      "title": "failed then passed on retry",
+      "raw": "  1) [chromium] › e2e/checkout.spec.ts:12:5 › checkout › completes a purchase\n     Test timeout of 30000ms exceeded.\n  Retry 1 passed: 1.2s",
+      "expect": {
+        "category": "flaky_behavior",
+        "signals": ["flaky.retry", "flaky.timeout"]
+      }
+    },
+    {
+      "id": "FAIL-015",
+      "title": "response never arrives — timing race",
+      "raw": "page.waitForResponse: Timeout 5000ms exceeded waiting for response matching \"**/api/cart/add\"\nCall log:\n  - waiting for response",
+      "expect": {
+        "category": "flaky_behavior",
+        "signals": ["flaky.timing"]
+      }
+    },
+    {
+      "id": "FAIL-016",
+      "title": "attempt 1 timed out, attempt 2 passed",
+      "raw": "  1 flaky\n  - [chromium] › e2e/cart.spec.ts:8:3 › cart › adds an item and shows the badge\n    Test timeout of 30000ms exceeded (attempt 1 of 2); attempt 2 passed in 1432ms",
+      "expect": {
+        "category": "flaky_behavior",
+        "signals": ["flaky.retry", "flaky.timeout"]
+      }
+    },
+    {
+      "id": "FAIL-017",
+      "title": "duplicate id — strict mode violation",
+      "raw": "strict mode violation: locator(\"#save\") resolved to 2 elements:\n  1) <button id=\"save\" class=\"save-draft\">Save draft</button>\n  2) <button id=\"save\" class=\"save-final\">Save final</button>\nCall log:\n  - locator(\"#save\") resolved to 2 elements",
+      "expect": {
+        "category": "automation_defect",
+        "selector": "#save",
+        "signals": ["auto.strict"]
+      }
+    },
+    {
+      "id": "FAIL-018",
+      "title": "locator action times out — element never appears",
+      "raw": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"css=.product-card >> text=Widget\")",
+      "expect": {
+        "category": "automation_defect",
+        "selector": "css=.product-card >> text=Widget",
+        "signals": ["auto.timing"]
+      }
+    },
+    {
+      "id": "FAIL-019",
+      "title": "element hidden — bad timing/visibility",
+      "raw": "locator.click: Error: Element is not visible\n    - waiting for locator(\"#submit\") to be visible",
+      "expect": {
+        "category": "automation_defect",
+        "selector": "#submit",
+        "signals": ["auto.dom"]
+      }
+    },
+    {
+      "id": "FAIL-020",
+      "title": "element detached from DOM before action",
+      "raw": "locator.fill: Error: Element is not attached to the DOM\n    - waiting for locator(\"input[name=email]\")",
+      "expect": {
+        "category": "automation_defect",
+        "selector": "input[name=email]",
+        "signals": ["auto.dom"]
+      }
+    },
+    {
+      "id": "FAIL-021",
+      "title": "overlay intercepts pointer events",
+      "raw": "locator.click: Error: <div class=\"spinner\">…</div> from <div id=\"root\">…</div> subtree intercepts pointer events\n  - waiting for locator(\"button[data-test=pay]\") to be visible",
+      "expect": {
+        "category": "automation_defect",
+        "selector": "button[data-test=pay]",
+        "signals": ["auto.dom"]
+      }
+    },
+    {
+      "id": "FAIL-022",
+      "title": "waitForSelector times out",
+      "raw": "page.waitForSelector: Timeout 10000ms exceeded\n  - waiting for selector \".order-confirmed\"",
+      "expect": {
+        "category": "automation_defect",
+        "selector": ".order-confirmed",
+        "signals": ["auto.timing"]
+      }
+    },
+    {
+      "id": "FAIL-023",
+      "title": "wrong count returned — product logic",
+      "raw": "Error: expect(received).toBe(expected) // Object.is equality\nExpected: 3\nReceived: 2\n  at e2e/cart.spec.ts:21:30",
+      "expect": {
+        "category": "product_defect",
+        "signals": ["product.assertion"]
+      }
+    },
+    {
+      "id": "FAIL-024",
+      "title": "wrong total text — product logic",
+      "raw": "Error: expect(locator).toHaveText(expected)\nLocator:  locator(\"text=Total\")\nExpected:  \"Total: $42.00\"\nReceived:  \"Total: $0.00\"",
+      "expect": {
+        "category": "product_defect",
+        "selector": "text=Total",
+        "signals": ["product.assertion"]
+      }
+    },
+    {
+      "id": "FAIL-025",
+      "title": "API 500 on checkout",
+      "raw": "API request to POST http://localhost:3000/api/checkout failed: 500 Internal Server Error",
+      "expect": {
+        "category": "product_defect",
+        "http_status": 500,
+        "endpoint": "http://localhost:3000/api/checkout",
+        "signals": ["product.api-status"]
+      }
+    },
+    {
+      "id": "FAIL-026",
+      "title": "API 500 — expected 200, got 500",
+      "raw": "Error: page.waitForResponse: Expected response status 200, got 500\n  at e2e/checkout.spec.ts:19:12",
+      "expect": {
+        "category": "product_defect",
+        "http_status": 500,
+        "signals": ["product.api-status"]
+      }
+    },
+    {
+      "id": "FAIL-027",
+      "title": "wrong confirmation message — product logic",
+      "raw": "Error: expect(received).toContain(expected) // indexOf\nExpected substring: \"Your order has been placed\"\nReceived string: \"Payment could not be processed\"",
+      "expect": {
+        "category": "product_defect",
+        "signals": ["product.assertion"]
+      }
+    },
+    {
+      "id": "FAIL-028",
+      "title": "wrong page title — product logic",
+      "raw": "Error: expect(page).toHaveTitle(expected)\nExpected: \"Forgot password\"\nReceived: \"Server Error\"",
+      "expect": {
+        "category": "product_defect",
+        "signals": ["product.assertion"]
+      }
+    },
+    {
+      "id": "FAIL-029",
+      "title": "worker killed — opaque crash (no signal)",
+      "raw": "Fatal process error: worker exited with code 137",
+      "expect": {
+        "category": "unknown"
+      }
+    },
+    {
+      "id": "FAIL-030",
+      "title": "bare AssertionError — no diagnostics",
+      "raw": "AssertionError",
+      "expect": {
+        "category": "unknown"
+      }
+    }
+  ]
+}
