@@ -28,3 +28,6 @@ reports/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local dev server logs (detached uvicorn/vite)
+*.log

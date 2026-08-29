@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { LoginForm } from './components/LoginForm';
 import { PipelineView } from './components/PipelineView';
 import { RequirementForm } from './components/RequirementForm';
+import { RequirementHistory } from './components/RequirementHistory';
 import { RunsView } from './components/RunsView';
 import { TestCaseList } from './components/TestCaseList';
 import { useAuth } from './hooks/useAuth';
@@ -217,6 +218,11 @@ export default function App() {
                 <TestCaseList cases={requirement.test_cases} />
               </section>
             )}
+
+            {/* Past runs: persisted requirements for this project, newest first
+                (S1.3 history list). `refreshKey` re-loads the list once a
+                design job completes, so the new requirement shows up here. */}
+            <RequirementHistory projectId={auth.project.id} refreshKey={job.outputRef} />
 
             <EventLog entries={job.log} done={completed} failed={failed} />
           </>

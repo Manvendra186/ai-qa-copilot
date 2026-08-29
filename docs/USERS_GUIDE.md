@@ -53,7 +53,7 @@ The dark-themed page at `http://127.0.0.1:5173`. It has two tabs:
 
 | Tab | What it shows |
 |---|---|
-| **Test design** | A form to describe a requirement; a live six-stage pipeline; the test cases the AI designed; a log of everything that happened |
+| **Test design** | A form to describe a requirement; a live six-stage pipeline; the test cases the AI designed; a **past requirements** list of everything you've designed so far; a log of everything that happened |
 | **Runs** | History of test executions: pass/fail per test, timing, and downloadable evidence (screenshots, traces, logs) |
 
 ### Layer 2 — The office: the API server (FastAPI, port 8000)
@@ -232,6 +232,10 @@ docker compose down      # infra (data is kept; use `down -v` to wipe it)
    (title, type, priority, steps, expected result) appear below the pipeline.
 5. The **event log** at the bottom is your audit trail: every stage transition,
    with timestamps.
+6. The **Past requirements** list below the output remembers every requirement
+   you've designed in this project (newest first, with its test-case count).
+   Click any row to re-open the full requirement and its test suite — no need
+   to re-run the AI.
 
 **Manager's tip:** ask the AI to design cases for *one* requirement at a time and
 read them as a QA peer would — the value is in the negative/boundary cases it adds

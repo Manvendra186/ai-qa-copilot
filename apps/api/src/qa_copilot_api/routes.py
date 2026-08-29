@@ -13,6 +13,8 @@ S0.9: async jobs API (§11, §31.2) — the mandatory ``202 + job_id`` pattern:
 - ``POST /api/v1/requirements/analyze`` → **202 + {job_id}** (``member`` or above)
 - ``POST /api/v1/requirements/test-cases`` → **202 + {job_id}** (S1.2, ``member``+)
 - ``GET /api/v1/requirements/{id}``  — persisted requirement + test cases (S1.3, ``viewer``+)
+- ``GET /api/v1/projects/{id}/requirements`` — the project's requirements,
+  newest first, with test-case counts (``viewer``+)
 - ``GET /api/v1/jobs/{job_id}``         — job status/progress/result refs (``viewer``+)
 - ``GET /api/v1/events``                — SSE stream of job progress events
                                           (``viewer``+ on the job's/project's project)
@@ -53,6 +55,7 @@ from qa_copilot_execution import ArtifactStore, ArtifactStoreError
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import membership, models
+from qa_copilot_repository import requirements as repo_requirements
 from qa_copilot_repository import runs as repo_runs
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -327,6 +330,38 @@ def get_requirement(
             for case in requirement.test_cases
         ],
     )
+
+
+@projects_router.get(
+    "/{project_id}/requirements", response_model=list[schemas.RequirementSummaryOut]
+)
+def list_requirements(
+    project_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.RequirementSummaryOut]:
+    """The project's requirements (history), newest first — ``viewer`` or above.
+
+    Summary rows for the web shell's "past requirements" list (S1.3); the full
+    suite of one row still comes from ``GET /requirements/{id}``. Same
+    RBAC shape as the other project list endpoints (S2.4/S3.2): unknown
+    projects 404, non-members 403 (no existence leak, §31.3).
+    """
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    _require_project_role(db, user, project.id, ProjectRole.VIEWER)
+    rows = repo_requirements.list_requirements(db, project.id)
+    return [
+        schemas.RequirementSummaryOut(
+            id=requirement.id,
+            title=requirement.title,
+            risk=requirement.risk.value,
+            created_at=requirement.created_at,
+            test_case_count=case_count,
+        )
+        for requirement, case_count in rows
+    ]
 
 
 @jobs_router.get("/{job_id}", response_model=schemas.JobOut)

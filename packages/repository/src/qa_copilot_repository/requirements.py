@@ -20,11 +20,12 @@ from dataclasses import dataclass
 
 from qa_copilot_ai import TestSuite
 from qa_copilot_domain.enums import Priority, RiskLevel, TestType
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
 
-__all__ = ["PersistedSuite", "persist_requirement_with_suite"]
+__all__ = ["PersistedSuite", "list_requirements", "persist_requirement_with_suite"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,3 +86,31 @@ def persist_requirement_with_suite(
         requirement_id=requirement.id,
         test_case_ids=tuple(row.id for row in rows),
     )
+
+
+def list_requirements(
+    session: Session, project_id: str
+) -> Sequence[tuple[models.Requirement, int]]:
+    """A project's requirements, newest first, each with its test-case count.
+
+    The "past requirements" history list (``GET /api/v1/projects/{id}/requirements``)
+    — summary rows for the web shell; the full suite of one row still comes
+    from ``GET /api/v1/requirements/{id}`` (S1.3 read-back). Read-only.
+    """
+    case_count = (
+        select(func.count(models.TestCase.id))
+        .select_from(models.RequirementTestCase)
+        .join(
+            models.TestCase,
+            models.TestCase.id == models.RequirementTestCase.test_case_id,
+        )
+        .where(models.RequirementTestCase.requirement_id == models.Requirement.id)
+        .correlate(models.Requirement)
+        .scalar_subquery()
+    )
+    stmt = (
+        select(models.Requirement, case_count)
+        .where(models.Requirement.project_id == project_id)
+        .order_by(models.Requirement.created_at.desc(), models.Requirement.id.desc())
+    )
+    return session.execute(stmt).all()

@@ -156,6 +156,21 @@ class RequirementOut(BaseModel):
     test_cases: list[TestCaseOut]
 
 
+class RequirementSummaryOut(BaseModel):
+    """One row of ``GET /api/v1/projects/{id}/requirements`` (history list).
+
+    Summary only — id / title / risk / created_at / test-case count. The full
+    suite + content of one row still comes from ``GET /requirements/{id}``
+    (S1.3 read-back), which the shell fetches when a row is opened.
+    """
+
+    id: str
+    title: str
+    risk: str
+    created_at: datetime | None
+    test_case_count: int
+
+
 # --- S2.4: automation generation + generated-test review (§19 S2.4) -----------
 
 

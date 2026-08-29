@@ -77,6 +77,14 @@ export interface RequirementOut {
   test_cases: TestCaseOut[];
 }
 
+export interface RequirementSummary {
+  id: string;
+  title: string;
+  risk: string;
+  created_at: string | null;
+  test_case_count: number;
+}
+
 export interface DesignRequest {
   project_id: string;
   title: string;
@@ -155,6 +163,11 @@ export function createTestCaseJob(body: DesignRequest): Promise<JobCreated> {
 /** `GET /requirements/{id}` — persisted requirement + its test cases (S1.3). */
 export function getRequirement(id: string): Promise<RequirementOut> {
   return request<RequirementOut>(`/requirements/${encodeURIComponent(id)}`);
+}
+
+/** `GET /projects/{id}/requirements` — the project's past requirements, newest first. */
+export function listRequirements(projectId: string): Promise<RequirementSummary[]> {
+  return request<RequirementSummary[]>(`/projects/${encodeURIComponent(projectId)}/requirements`);
 }
 
 // --- S3.2: run history, results, artifacts (§10, §15) -------------------------
