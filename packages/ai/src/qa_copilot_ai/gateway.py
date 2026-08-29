@@ -11,6 +11,11 @@
 - **Reliability (§31.1)**: per-call timeout (default 120 s), one retry on
   transport errors, otherwise a hard :class:`LLMError` with a clear message —
   no silent model-swap.
+- **Budgets (§9)**: the input budget is enforced here — the one door — by
+  estimating prompt tokens and failing loud with
+  :class:`LLMInputBudgetError` when the budget is exceeded (never a silent
+  truncation). Budgets, temperature, timeouts and retries are tunable via
+  the ``AI_*`` environment variables (see :mod:`qa_copilot_ai.config`).
 """
 
 from __future__ import annotations
@@ -24,13 +29,16 @@ from dataclasses import dataclass
 
 import httpx
 
+from .config import load_extra_body, load_model_settings
 from .redaction import DEFAULT_REDACTOR, Redactor
 
 logger = logging.getLogger("qa_copilot_ai")
 
 #: §31.1 — per-call timeout (local inference is slow by definition).
-DEFAULT_TIMEOUT_S = 120.0
-CONNECT_TIMEOUT_S = 10.0
+#: Built-in default; overridable at construction time with the
+#: ``AI_TIMEOUT_S`` / ``AI_CONNECT_TIMEOUT_S`` environment variables.
+DEFAULT_TIMEOUT_S = 12000.0
+CONNECT_TIMEOUT_S = 100.0
 #: Rough fallback estimate (BPE ≈ 4 chars/token for English) — used only
 #: when the server does not report ``usage``.
 _CHARS_PER_TOKEN = 4
@@ -42,6 +50,16 @@ class LLMError(RuntimeError):
     def __init__(self, message: str, *, status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
+
+
+class LLMInputBudgetError(LLMError):
+    """The prompt exceeds the input token budget — no model call was made.
+
+    Raise :data:`~qa_copilot_ai.config.ModelSettings.max_input_tokens` (or
+    the prompt's ``input_budget``) to allow larger context, or shorten the
+    input. Failing loud is deliberate (§9): a truncated prompt would quietly
+    degrade the analysis.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +144,11 @@ class LLMGateway:
     (e.g. llama.cpp/LM Studio's ``chat_template_kwargs`` to disable Qwen3
     thinking); canonical fields (``model``, ``messages``, ``stream`` …)
     always win over it.
+
+    ``timeout`` / ``connect_timeout`` / ``max_retries`` / ``extra_body`` left
+    unset resolve from the ``AI_*`` environment variables (see
+    :mod:`qa_copilot_ai.config`), which is how an operator tunes them without
+    code changes.
     """
 
     def __init__(
@@ -134,23 +157,28 @@ class LLMGateway:
         model: str,
         *,
         redactor: Redactor | None = None,
-        timeout: float = DEFAULT_TIMEOUT_S,
-        connect_timeout: float = CONNECT_TIMEOUT_S,
-        max_retries: int = 1,
+        timeout: float | None = None,
+        connect_timeout: float | None = None,
+        max_retries: int | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         extra_body: Mapping[str, object] | None = None,
     ) -> None:
-        if max_retries < 0:
-            raise ValueError("max_retries must be >= 0")
         if not base_url or not model:
             raise ValueError("base_url and model are required (§31.1)")
+        settings = load_model_settings()
+        resolved_timeout = settings.timeout_s if timeout is None else timeout
+        resolved_connect = (
+            settings.connect_timeout_s if connect_timeout is None else connect_timeout
+        )
+        self._max_retries = settings.max_retries if max_retries is None else max_retries
+        if self._max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
         self._base_url = base_url.rstrip("/")
         self.model = model
         self._redactor = redactor or DEFAULT_REDACTOR
-        self._timeout = httpx.Timeout(timeout, connect=connect_timeout)
-        self._max_retries = max_retries
+        self._timeout = httpx.Timeout(resolved_timeout, connect=resolved_connect)
         self._transport = transport
-        self._extra_body: dict[str, object] = dict(extra_body) if extra_body is not None else {}
+        self._extra_body = dict(extra_body) if extra_body is not None else load_extra_body()
         self._client: httpx.AsyncClient | None = None
 
     @property
@@ -187,11 +215,21 @@ class LLMGateway:
         agent: str,
         temperature: float = 0.2,
         max_tokens: int = 2048,
+        max_input_tokens: int | None = None,
     ) -> AICallResult:
-        """One non-streaming call; returns the full result + accounting."""
+        """One non-streaming call; returns the full result + accounting.
+
+        ``max_input_tokens`` (the prompt's ``input_budget`` or the
+        ``AI_MAX_INPUT_TOKENS`` default) caps the estimated prompt size —
+        exceeding it raises :class:`LLMInputBudgetError` before any call.
+        """
         started = time.perf_counter()
         body, redacted_messages, redactions = self._build_body(
-            messages, stream=False, temperature=temperature, max_tokens=max_tokens
+            messages,
+            stream=False,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_input_tokens=max_input_tokens,
         )
         response, retries = await self._post(body)
         payload: dict[str, object] = response.json()
@@ -217,15 +255,21 @@ class LLMGateway:
         agent: str,
         temperature: float = 0.2,
         max_tokens: int = 2048,
+        max_input_tokens: int | None = None,
     ) -> AsyncIterator[AIChunk]:
         """Streaming call: incremental text chunks, final chunk carries usage.
 
         Exhaust the stream for the ``ai_call`` audit record to be emitted
-        (agents always consume fully; §31.1 streams every response).
+        (agents always consume fully; §31.1 streams every response). The
+        input budget is checked up front, exactly like :meth:`chat`.
         """
         started = time.perf_counter()
         body, redacted_messages, redactions = self._build_body(
-            messages, stream=True, temperature=temperature, max_tokens=max_tokens
+            messages,
+            stream=True,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_input_tokens=max_input_tokens,
         )
         response, retries = await self._post(body)
         pieces: list[str] = []
@@ -275,8 +319,17 @@ class LLMGateway:
         stream: bool,
         temperature: float,
         max_tokens: int,
+        max_input_tokens: int | None = None,
     ) -> tuple[dict[str, object], list[dict[str, str]], int]:
         redacted_messages, redactions = self._redactor.redact_messages(messages)
+        if max_input_tokens is not None:
+            estimated = max(1, len(_messages_text(redacted_messages)) // _CHARS_PER_TOKEN)
+            if estimated > max_input_tokens:
+                raise LLMInputBudgetError(
+                    f"estimated input {estimated:,} tokens exceeds the budget of "
+                    f"{max_input_tokens:,} — shorten the prompt or raise "
+                    f"AI_MAX_INPUT_TOKENS (see qa_copilot_ai.config)"
+                )
         body: dict[str, object] = dict(self._extra_body)
         body.update(
             {
@@ -337,5 +390,6 @@ __all__ = [
     "DEFAULT_TIMEOUT_S",
     "LLMError",
     "LLMGateway",
+    "LLMInputBudgetError",
     "TokenUsage",
 ]

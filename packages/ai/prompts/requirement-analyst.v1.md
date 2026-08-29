@@ -2,8 +2,8 @@
 name: requirement-analyst
 version: 1
 model_class: coder
-input_budget: 2048
-output_budget: 1024
+input_budget: 60000
+output_budget: 40000
 schema_ref: requirement-analysis/v1
 temperature: 0.2
 ---

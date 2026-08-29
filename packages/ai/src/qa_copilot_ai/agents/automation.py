@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from qa_copilot_domain import RepositoryProfile, TestConventions
 from qa_copilot_domain import TestCase as DomainTestCase
 
+from ..config import load_model_settings
 from ..gateway import AICallResult, LLMGateway
 from ..prompts import PromptStore, render_prompt
 from .test_design import TestCase
@@ -273,11 +274,19 @@ class AutomationAgent:
         spec = self._store.get(self._prompt_name, self._prompt_version)
         rendered = render_prompt(spec, **self._variables(automation_input))
         messages = [{"role": "user", "content": rendered}]
+        # §9 budgets: the prompt's own values win; the AI_* environment
+        # defaults (qa_copilot_ai.config) are the fallback.
+        settings = load_model_settings()
         call = await self._gateway.chat(
             messages,
             agent=AUTOMATOR_NAME,
-            temperature=spec.temperature if spec.temperature is not None else 0.3,
-            max_tokens=spec.output_budget if spec.output_budget is not None else 4096,
+            temperature=spec.temperature if spec.temperature is not None else settings.temperature,
+            max_tokens=(
+                spec.output_budget if spec.output_budget is not None else settings.max_output_tokens
+            ),
+            max_input_tokens=(
+                spec.input_budget if spec.input_budget is not None else settings.max_input_tokens
+            ),
         )
         test = parse_generated_test(call.text)
         return AutomationAgentResult(test=test, call=call, prompt_ref=spec.ref)

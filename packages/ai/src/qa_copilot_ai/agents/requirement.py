@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from ..config import load_model_settings
 from ..gateway import AICallResult, LLMGateway
 from ..prompts import PromptStore, render_prompt
 
@@ -169,11 +170,19 @@ class RequirementAgent:
         spec = self._store.get(self._prompt_name, self._prompt_version)
         body = render_prompt(spec, **self._variables(requirement))
         messages = [{"role": "user", "content": body}]
+        # §9 budgets: the prompt's own values win; the AI_* environment
+        # defaults (qa_copilot_ai.config) are the fallback.
+        settings = load_model_settings()
         result = await self._gateway.chat(
             messages,
             agent=AGENT_NAME,
-            temperature=spec.temperature if spec.temperature is not None else 0.2,
-            max_tokens=spec.output_budget if spec.output_budget is not None else 2048,
+            temperature=spec.temperature if spec.temperature is not None else settings.temperature,
+            max_tokens=(
+                spec.output_budget if spec.output_budget is not None else settings.max_output_tokens
+            ),
+            max_input_tokens=(
+                spec.input_budget if spec.input_budget is not None else settings.max_input_tokens
+            ),
         )
         analysis = _parse_analysis(result.text)
         return RequirementAgentResult(analysis=analysis, call=result, prompt_ref=spec.ref)

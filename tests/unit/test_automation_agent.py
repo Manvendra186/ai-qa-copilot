@@ -112,7 +112,8 @@ GOLDEN = load_automation_golden_set(default_golden_path())
 MODEL_OUTPUTS = {fixture.id: fixture.model_output for fixture in GOLDEN.fixtures}
 
 # In-memory spec for the agent/runner tests — the same three variables,
-# known wire values (temperature 0.2, output budget 4000).
+# mirroring the prompt file's wire values (temperature 0.2, output budget
+# 40000, build bible §9).
 PROMPT_SPEC = PromptSpec(
     name="test-automator",
     version=1,
@@ -121,8 +122,8 @@ PROMPT_SPEC = PromptSpec(
         "Automate this approved test case: {{test_case}}"
     ),
     model_class="coder",
-    input_budget=8000,
-    output_budget=4000,
+    input_budget=60000,
+    output_budget=40000,
     schema_ref="generated-test/v1",
     temperature=0.2,
 )
@@ -213,7 +214,8 @@ def test_prompt_file_registered() -> None:
     assert spec.ref == "test-automator@1"
     assert spec.model_class == "coder"
     assert spec.temperature == 0.2
-    assert spec.output_budget == 4000
+    assert spec.input_budget == 60000
+    assert spec.output_budget == 40000
     assert spec.schema_ref == "generated-test/v1"
     for variable in ("repository_profile", "conventions", "test_case"):
         assert "{{" + variable + "}}" in spec.body
@@ -275,7 +277,7 @@ def test_agent_run_sends_rendered_prompt_and_file_settings() -> None:
     _agent_run(handler, _automation_input("AUTO-001"))
     assert seen["model"] == "fake-model"
     assert seen["temperature"] == 0.2
-    assert seen["max_tokens"] == 4000
+    assert seen["max_tokens"] == 40000
     messages = seen["messages"]
     assert isinstance(messages, list)
     assert messages[0]["role"] == "user"

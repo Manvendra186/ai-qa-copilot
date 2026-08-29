@@ -9,6 +9,16 @@ from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from qa_copilot_ai.config import load_dotenv
+
+# The ai package reads its tuning knobs (``AI_MAX_INPUT_TOKENS``,
+# ``AI_MAX_OUTPUT_TOKENS``, ``AI_TEMPERATURE``, timeouts, retries) from the
+# process environment — expose the repo ``.env`` (the same file ``Settings``
+# reads below) to ``os.environ`` so one file controls everything. Existing
+# shell environment variables always win.
+_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
+if _ENV_FILE.exists():
+    load_dotenv(_ENV_FILE)
 
 
 class Settings(BaseSettings):

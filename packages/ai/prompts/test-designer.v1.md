@@ -2,8 +2,8 @@
 name: test-designer
 version: 1
 model_class: coder
-input_budget: 8000
-output_budget: 4000
+input_budget: 60000
+output_budget: 40000
 schema_ref: test-suite/v1
 temperature: 0.3
 ---

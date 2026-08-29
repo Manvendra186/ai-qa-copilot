@@ -43,11 +43,13 @@ from .agents import (
     TestSuite,
     parse_generated_test,
 )
+from .config import ModelSettings, load_dotenv, load_extra_body, load_model_settings
 from .gateway import (
     AICallResult,
     AIChunk,
     LLMError,
     LLMGateway,
+    LLMInputBudgetError,
     TokenUsage,
 )
 from .prompts import (
@@ -81,6 +83,8 @@ __all__ = [
     "LANGUAGES",
     "LLMError",
     "LLMGateway",
+    "LLMInputBudgetError",
+    "ModelSettings",
     "PRIORITIES",
     "PromptError",
     "PromptNotFound",
@@ -104,6 +108,9 @@ __all__ = [
     "TestCase",
     "TestSuite",
     "TokenUsage",
+    "load_dotenv",
+    "load_extra_body",
+    "load_model_settings",
     "load_prompt_file",
     "parse_generated_test",
     "render_prompt",
