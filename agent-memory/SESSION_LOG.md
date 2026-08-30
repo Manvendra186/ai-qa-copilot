@@ -1309,3 +1309,83 @@
 - **Next session start:** **S5.2 — embeddings/vector seam** (choose source:
   hosted API vs local model vs defer; keep BM25 as baseline until the
   vector path is golden-gated) — see `STATE.md` §1.
+
+## 2026-08-30 — S5.2 Embeddings/vector seam: provider protocol + graceful lexical fallback + persistence, all gates green
+
+- **Goal:** Phase 5 step 2 — the S5.2 embedding seam (bible §19 S5.2:
+  "`EmbeddingProvider` protocol + OpenAI-compat provider (fake-server
+  tests) → `embeddings` table; graceful lexical fallback when endpoint
+  unavailable (501)"). The local LLM endpoint is **completion-only**
+  (§19 S5.0: `POST /v1/embeddings` → 501), so this step builds the seam —
+  protocol, OpenAI-compatible provider, vector retrieval with graceful
+  lexical fallback, and `embeddings`-table persistence — not a live vector
+  run.
+- **Did:** new modules in `qa_copilot_knowledge` (src layout, `py.typed`):
+  - `embeddings.py` — `EmbeddingProvider` protocol (`model` property +
+    `embed(texts) -> list[EmbeddingVector]`; `EmbeddingVector` = index /
+    vector / model) · `OpenAICompatibleEmbeddingProvider` — POST
+    `{base}/embeddings` (LM Studio / llama.cpp / Ollama / any
+    OpenAI-compatible server) with §31.1 reliability (60s timeout, 10s
+    connect, **one retry on transport errors only**, `close()` + context
+    manager) · `parse_embedding_response` (strict: input-order match,
+    non-empty vectors, response `model` propagated into each vector) ·
+    `cosine_similarity` (zero vector → 0.0; dimension mismatch →
+    `ValueError` — a model mismatch must fail loud) ·
+    `EmbeddingError` (fail loud: any other HTTP status, non-JSON body,
+    malformed payload; carries `status` like `gateway.LLMError`) vs
+    `EmbeddingUnavailable` (the **graceful** set: HTTP 501, 503, or
+    unreachable after retries — `UNAVAILABLE_STATUSES`).
+  - `hybrid.py` — `vector_search` (uncapped cosine-ranking primitive, the
+    S5.2 mirror of `LexicalIndex.search`; deterministic order score desc →
+    chunk id; chunks without a stored vector skipped; `matched_terms`
+    empty) + `hybrid_search` (applies the §14 top-k ≤ 5 cap; mode-tagged
+    `HybridSearchResult` — `mode` ∈ {`lexical`, `vector`} + `provider`) ·
+    **graceful fallback is only for `EmbeddingUnavailable`** → bit-for-bit
+    the unchanged S5.1 lexical result (swallowed by design); any other
+    `EmbeddingError` or a dimension mismatch propagates (no silent
+    degradation, §9/§31.1) · blank query / `top_k < 1` → `ValueError`.
+  - `persist.py` — the S0.5 `embeddings` table (pgvector
+    `VECTOR(VECTOR_DIM)`, one row per document):
+    `store_document_embedding` (idempotent upsert; fail-loud validation:
+    dim == `VECTOR_DIM`, numeric, **finite** — pgvector rejects NaN/inf) ·
+    `load_document_embeddings` (vectors back keyed by document id, missing
+    rows omitted — input to the hybrid vector path) · `embed_and_store`
+    (provider → table in one call) · caller owns session/transaction.
+  - `pyproject.toml` — + `httpx>=0.27`, `sqlalchemy>=2.0` (`uv lock`) ·
+    `__init__.py` exports the new public APIs.
+  - Tests (NEW, all hermetic): `tests/unit/test_knowledge_embeddings.py` —
+    **51 tests** (35 test functions, some parameterized) on
+    `httpx.MockTransport` (the project's fake-server pattern): provider
+    success parse + batch ordering, 501/503 → `EmbeddingUnavailable`, 4xx /
+    other HTTP + non-JSON body + NaN vector (raw text body — see Gotchas) →
+    `EmbeddingError`, transport retry (one retry, then unavailable),
+    `cosine_similarity` + `vector_search` ranking, `hybrid_search` vector
+    mode / lexical fallback / top-k cap / validation, persistence
+    store/load/upsert/dimension/non-finite (guarded: skip if the dev DB or
+    the `embeddings` table is unavailable, roll back afterward).
+- **Verified (gates):** `uv run pytest -q` → **590 passed** (539 + 51) ·
+  `uv run mypy` → **Success, no issues in 108 source files** (strict) ·
+  `uv run ruff check .` + `uv run ruff format --check .` → **all green**
+  (141 files formatted) · golden retrieval gate re-verified →
+  `tests/unit/test_knowledge_golden.py` **10/10 passed** (live set 13/13
+  top-1, `gate_met: true`) — the lexical baseline is unchanged, as
+  required.
+- **Gotchas:** `httpx` refuses to JSON-encode `float("nan")` in a request
+  body — the malformed-NaN-vector test posts a raw text body instead (the
+  provider parses `response.json()` either way). `ruff format` normalized a
+  handful of files outside the step (mechanical line-wrap only —
+  `fixer/live.py`, `loop/*`, `search.py`, `sources.py`, `test_fix_loop.py`,
+  `test_knowledge_cli.py`); the format gate is repository-wide, so those
+  changes are kept in the step commit.
+- **Decisions:** graceful fallback is **intentionally limited** to
+  `EmbeddingUnavailable` (501/503/unreachable) — everything else fails
+  loud (§9, §31.1). `vector_search` stays an uncapped primitive;
+  `hybrid_search` applies the existing top-k ≤ 5 cap. `VECTOR_DIM` stays
+  the 1536 placeholder until a real embedding model is chosen (§31
+  budgets). No live vector run this step: the local endpoint's exact 501
+  behavior IS the graceful path, and it is exercised in tests. S5.3 wires
+  a real endpoint into the seam (API + `embeddings` table).
+- **Next session start:** **S5.3 — Knowledge API + web** (bible §19 Phase
+  5: `POST /projects/{id}/knowledge/index` 202+job, `GET
+  /projects/{id}/knowledge?q=&top_k=5`, `GET .../documents`, "Project
+  Knowledge" tab) — see `STATE.md` §1/§3.
