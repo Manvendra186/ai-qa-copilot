@@ -7,11 +7,44 @@
 
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
-  Phase 4 — Failure Intelligence **in progress** (S4.1 ✓, S4.2 ✓)
-- **Step:** S0.1–S4.2 ✓ (S4.2 = Fix Agent — **live 8/10 ≥ 5/10 gate: 8/8 applicable passing, 10/10 correct action**) ·
-  **next:** Phase 4 — **S4.3 Approve → re-run loop** (full-loop E2E: S3 → S4 → re-run)
+  Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓)
+- **Step:** S0.1–S4.3 ✓ (S4.3 = Approve → re-run loop — **live full-loop E2E: 7/8 fixable fixed +
+  re-run passing, 2/2 unfixable declined, `--reject` fail-safe verified**) ·
+  **next:** **Phase 5 — Project Knowledge** (bible §19: RAG, embeddings, history, standards)
 
 ## 2. Just completed
+
+- 2026-08-30 · **S4.3 (Approve → re-run loop) — live full-loop E2E PASSED** (bible §19 exit:
+  "Full loop E2E (S3 → S4 → re-run)"): `qa_copilot_ai.loop` — `run_fix_loop()`
+  orchestration over injectable protocols (`LoopInvestigator` / `LoopFixer` /
+  `SpecVerifier`); `PlaywrightLoopRunner` (`loop/live.py`) adapts the S4.2
+  `PlaywrightVerifier` via its new `run_spec()` primitive (probe spec in/out,
+  defect-flag stack reuse, spec-name guard) · approval gate (`loop/approval.py`):
+  explicit `--approve`/`--reject` always wins → TTY prompt → non-TTY fail-safe
+  **reject**; patch apply + re-run strictly gated on approval (None-patch guarded) ·
+  `LoopReport` `fix-loop-report/v1` JSON on stdout + `--report` (UTF-8), human
+  summary on stderr · CLI (`python -m qa_copilot_ai.loop.cli` /
+  `scripts/loop_run.py`; `--fixture` defaults to first fixable clean-stack) ·
+  exit **0** = loop closed (`fixed`/`declined`/`passing`) · **1** = ran but open
+  (`rejected`/`not_fixed`) · **2** = config/LLM/patch error (no-LLM-env path
+  verified exit 2) ·
+  **live (Qwen3.8-27B @ localhost:8080, all 10 fixtures `--approve`)**:
+  **FIX-001/002/003/004/006/008/009 `fixed`** — initial probe run failed →
+  diagnosis (category/root_cause/confidence) → test-file-only patch →
+  **re-run PASSED** (incl. FIX-008/009 on defect-flag server instances) ·
+  **FIX-007/010 `declined`** (correct: no test-side fix) · **FIX-005
+  `declined`** — investigator read `product_defect` (golden label:
+  `test_data_defect`), fixer safely refused a patch that would chase an app
+  bug (2 consistent runs; nothing applied; safe-side of a model-classification
+  variance vs the S4.2 day) · **`--reject` fail-safe verified**: real
+  proposal produced, `decided_by=explicit:reject`, `re_run_ok=null`, nothing
+  applied, exit 1 (open) · demo app left clean (probe specs deleted,
+  `git status` unchanged; reports in gitignored `reports/loop_s43_*.json`) ·
+  Windows hardening: cp1252-safe help text (`->` not `→`), `_harden_streams()`
+  (`errors="replace"` on stdout/stderr), `__main__` entrypoint ·
+  tests: `tests/unit/test_fix_loop.py` **26 tests** (protocol fakes — no
+  Playwright/LLM in unit) · **474 tests ✓ · mypy strict ✓ · ruff ✓** ·
+  commit `3a78db6` (loop package + `fixer/live.py` + script + tests only)
 
 - 2026-08-30 · **S4.2 (Fix Agent) — live gate PASSED 8/10 (target ≥ 5/10), 8/8 applicable passing**:
   `qa_copilot_ai.agents.fixer` — `FixerAgent` (prompt `fix-agent@2`, §26
@@ -195,18 +228,22 @@
 
 ## 3. NEXT STEP (start here)
 
-**S4.1 — Failure Investigator** (build bible §19 Phase 4):
-AI agent classifies a failing test with evidence + confidence, reasoning over
-the S3.3 `NormalizedFailure` (deterministic base) + §15 artifacts.
-Exit criterion: top-1 ≥ 80% on the 30-broken-test set (golden fixtures are
-the natural eval set; §21 gate "failure top-1 ≥ 80%").
-- Pre-existing (not S3.3): `tests/unit/test_conventions.py::test_golden_demo_app`
-  FAILS on this machine's clean tree (demo-app locator counts differ from the
-  committed golden — e.g. `getByRole` 4×playwright vs 2×generic). Verify/re-baseline
-  the demo-app conventions golden before trusting the full suite.
+**Phase 5 — Project Knowledge** (build bible §19): RAG, embeddings, history,
+standards — "answers reflect project-specific context."
+- Phase 4 is **complete**: S4.1 ✓ (live 30/30 ≥ 80%) · S4.2 ✓ (live 8/10 ≥ 5/10,
+  10/10 correct action) · S4.3 ✓ (live full-loop E2E: 7/8 fixable fixed +
+  re-run passing, 2/2 unfixable declined, reject fail-safe verified).
+- Embeddings: completion-only local LLM (no local embedding model) —
+  `VECTOR_DIM` stays a 1536 placeholder until an embedding endpoint is chosen
+  (§31 budgets).
+- §20 MVP items still open: "A repository can be indexed" (Phase 5 core) ·
+  approve-gate auditability trail is in place (S4.3 `LoopReport`).
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker deploy
-  needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) · eval report
-  artifacts live in gitignored `reports/` — commit one baseline after each
+  needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
+  `test_golden_demo_app` conventions-golden re-baseline on clean trees (S4.1
+  note) · FIX-005 investigator classification (`product_defect` vs golden
+  `test_data_defect`) — candidate for a failure-investigator prompt nudge ·
+  eval reports live in gitignored `reports/` — commit one baseline after each
   prompt/model change if we want drift tracking.
 
 ## 4. Environment facts (verified 2026-08-26)
@@ -427,3 +464,13 @@ the natural eval set; §21 gate "failure top-1 ≥ 80%").
   PowerShell tool shell came back at `Workspace\` (not the project dir) —
   relative paths silently hit the wrong folder and the "missing report" was
   a wrong-directory read; use absolute paths when polling background runs.
+- **S4.3 loop exit semantics:** `declined` (fixer had no fix) → exit **0**
+  (loop closed) vs `rejected` (approver refused a real patch) → exit **1**
+  (loop still open: test failing, decision pending) — a deliberate `--reject`
+  is not a crash.
+- **PowerShell + CLI dashes (S4.3):** the loop CLI is long-option only —
+  `-reject` (single dash) is "unrecognized" (argparse defines `--reject`);
+  `--%` stop-parsing kills `@splat` expansion in wrapper scripts. Reliable
+  pattern here: foreground `uv run … 2>&1 | Out-File` + append
+  `"EXIT=$LASTEXITCODE"` (background `Start-Process` jobs have been silently
+  lost in the tool shell).
