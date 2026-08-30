@@ -42,7 +42,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
@@ -51,7 +51,7 @@ from qa_copilot_execution.golden import FixFixture
 
 logger = logging.getLogger("qa_copilot_ai.fixer.live")
 
-__all__ = ["PlaywrightVerifier", "PlaywrightVerifierError"]
+__all__ = ["PlaywrightVerifier", "PlaywrightVerifierError", "required_flags"]
 
 _TRUE = {"1", "true", "yes", "on"}
 _PROBE_SPEC = "e2e/fix_probe.spec.js"
@@ -71,11 +71,22 @@ class _Owned:
     workdir: Path | None = None
 
 
+def required_flags(app_env: Mapping[str, str]) -> frozenset[str]:
+    """The defect flags *app_env* asks the app to be in (true-valued keys).
+
+    The S4.2 stack key: a server is only reusable when its active defect
+    set matches, and ``{"FLAG": "0"}`` means "flag off" — so only
+    true-valued entries count. The S4.3 loop derives its S3-run flags the
+    same way (single source of truth for both gates).
+    """
+    return frozenset(
+        name for name, value in app_env.items() if str(value).strip().lower() in _TRUE
+    )
+
+
 def _required_flags(fixture: FixFixture) -> frozenset[str]:
     """The defect flags the fixture's ``app_env`` asks the app to be in."""
-    return frozenset(
-        name for name, value in fixture.app_env.items() if str(value).strip().lower() in _TRUE
-    )
+    return required_flags(fixture.app_env)
 
 
 def _http_ok(url: str, timeout: float = 0.5) -> bool:
@@ -165,23 +176,55 @@ class PlaywrightVerifier:
     async def __call__(self, fixture: FixFixture, patched: str) -> bool:
         """Apply *patched* as a probe spec and run it against the demo app."""
         required = _required_flags(fixture)
-        probe = self._demo_app / _PROBE_SPEC
         try:
-            try:
-                await asyncio.to_thread(self._ensure_stack, required)
-            except PlaywrightVerifierError as exc:
-                self._fail(f"{fixture.id}: {exc}")
-                return False
-            probe.write_text(patched, encoding="utf-8")
-            ok, detail = await asyncio.to_thread(self._run_spec)
-        finally:
-            with contextlib.suppress(OSError):
-                probe.unlink()
+            ok, detail = await self.run_spec(patched, spec_name=_PROBE_SPEC, flags=required)
+        except PlaywrightVerifierError as exc:
+            self._fail(f"{fixture.id}: {exc}")
+            return False
         if not ok:
             self._fail(f"{fixture.id}: {detail}")
             return False
         self._last_error = None
         return True
+
+    async def run_spec(
+        self,
+        spec_text: str,
+        *,
+        spec_name: str = _PROBE_SPEC,
+        flags: frozenset[str] = frozenset(),
+    ) -> tuple[bool, str]:
+        """Write *spec_text* to *spec_name* and run it against the demo app.
+
+        The reusable S3 primitive behind ``__call__`` — also the S4.3
+        Approve → re-run loop's spec executor (``qa_copilot_ai.loop.live``
+        runs the broken spec, then the patched spec, through this method).
+        *flags* are the demo-app defect switches active for this run; the
+        stack is started with them (the app is stateless, so the state
+        holds for the session).
+
+        Returns ``(ok, detail)`` — *ok* is the pass/fail verdict
+        (playwright exit 0), *detail* the raw output.
+        """
+        self._check_spec_name(spec_name)
+        probe = self._demo_app / spec_name
+        try:
+            await asyncio.to_thread(self._ensure_stack, flags)
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_text(spec_text, encoding="utf-8")
+            return await asyncio.to_thread(self._run_spec, spec_name)
+        finally:
+            with contextlib.suppress(OSError):
+                probe.unlink()
+
+    def _check_spec_name(self, spec_name: str) -> None:
+        """Spec names are confined to the demo app root (no ``..`` escape)."""
+        if (
+            not spec_name
+            or spec_name.startswith(("/", "\\"))
+            or ".." in Path(spec_name).parts
+        ):
+            raise ValueError(f"unsafe spec_name: {spec_name!r}")
 
     async def aclose(self) -> None:
         """Stop the demo stack this verifier started (no-op otherwise)."""
@@ -331,7 +374,8 @@ class PlaywrightVerifier:
     # spec execution
     # ------------------------------------------------------------------
 
-    def _run_spec(self) -> tuple[bool, str]:
+    def _run_spec(self, spec_name: str = _PROBE_SPEC) -> tuple[bool, str]:
+        """Run the probe spec in the demo app; returns (ok, detail)."""
         playwright_cli = self._demo_app / "node_modules/@playwright/test/cli.js"
         if not playwright_cli.is_file():
             return False, f"Playwright CLI not installed at {playwright_cli}"
@@ -344,7 +388,7 @@ class PlaywrightVerifier:
                     self._node,
                     str(playwright_cli),
                     "test",
-                    _PROBE_SPEC,
+                    spec_name,
                     "--reporter=json",
                     "--forbid-only",
                     "--workers=1",
@@ -362,7 +406,7 @@ class PlaywrightVerifier:
         if report is None:
             tail = (proc.stdout + "\n" + (proc.stderr or "")).strip()[-800:]
             return False, f"no usable Playwright JSON report (exit {proc.returncode}): {tail}"
-        specs = _probe_specs(report)
+        specs = _probe_specs(report, spec_name)
         if not specs:
             return False, "Playwright report contains no probe spec results"
         failed = [str(spec.get("title") or spec) for spec in specs if spec.get("ok") is not True]
@@ -394,7 +438,9 @@ def _parse_report(stdout: str) -> dict[str, object] | None:
     return payload
 
 
-def _probe_specs(report: dict[str, object]) -> list[dict[str, object]]:
+def _probe_specs(
+    report: dict[str, object], spec_name: str = _PROBE_SPEC
+) -> list[dict[str, object]]:
     """Spec results for the probe file.
 
     The JSON reporter reports suite ``file`` paths **relative to
@@ -403,13 +449,14 @@ def _probe_specs(report: dict[str, object]) -> list[dict[str, object]]:
     basename. Only the probe file is ever passed to the CLI, so this
     cannot pick up another spec's results.
     """
+    base = spec_name.replace("\\", "/").rsplit("/", 1)[-1]
     found: list[dict[str, object]] = []
 
     def walk(node: object) -> None:
         if not isinstance(node, dict):
             return
         file = str(node.get("file") or "").replace("\\", "/")
-        if file.endswith("fix_probe.spec.js"):
+        if file.endswith(base):
             specs = node.get("specs")
             if isinstance(specs, list):
                 found.extend(spec for spec in specs if isinstance(spec, dict))
