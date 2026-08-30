@@ -1154,3 +1154,67 @@
   Phase 4: classification + evidence + confidence over the S3.3
   `NormalizedFailure`; exit: top-1 ≥ 80% on the 30-broken-test set) —
   see `STATE.md` §3.
+
+## 2026-08-30 — S4.2 Fix Agent: live gate PASSED 8/10 (target ≥ 5/10)
+
+> Note: the S4.1 (Failure Investigator) session was never appended to this
+> log — its full record is `STATE.md` §2 (2026-08-29 entry).
+
+- **Goal:** raise the S4.2 live gate from **2/10 to ≥ 5/10** while keeping
+  the §26 contract (test-file-only unified diff, `fix-proposal/v1`,
+  `needs_human_approval=true`, no auto-heal).
+- **Root cause of 2/10:** (a) the committed `fix-agent` prompt was stale
+  vs the agent/parser contract; (b) the model had no app-specific facts
+  (test-ids, routes, DOM, endpoints, seed data) and guessed locators.
+- **Changes:**
+  - `packages/ai/src/qa_copilot_ai/fixer/app_context.py` (NEW):
+    `build_app_context(demo_app, *, max_chars=DEFAULT_MAX_CHARS)` —
+    deterministic read-only digest: header ("your patch may only touch the
+    target test file") + curated priority files (testids.js, App.jsx,
+    pages, api.js, defects/db/routes, playwright.config, e2e) first, then a
+    capped sorted walk of `client/src`/`server/src`/`e2e` (skip
+    node_modules/dist/build/.git, only .js/.jsx/.ts/.tsx/.md/.html);
+    per-file `### rel/path` sections; whole output ≤ max_chars;
+    `(N file(s) omitted for size)` note; `""` for missing/empty dir.
+    `DEFAULT_MAX_CHARS = 48_000`.
+  - `fixer/__init__.py`: export `build_app_context` + `DEFAULT_MAX_CHARS`.
+  - `agents/fixer.py`: optional `FixerInput.app_context` (default `None` →
+    renders "Not available for this run") → `{{app_context}}` prompt
+    variable.
+  - `fixer/runner.py`: `run_fix_eval(..., app_context: str | None = None)`
+    threaded into `_fix_one` → `FixerInput`.
+  - `fixer/cli.py`: live runs build context from `--demo-app`; opt-out via
+    `FIXER_NO_APP_CONTEXT` (1/true/yes/on).
+  - `packages/ai/prompts/fix-agent.v2.md`: rebuilt from the ACTUAL v1 on
+    disk (the committed v1 predated the contract) — diagnosis = strong
+    prior, code + runtime evidence govern conflicts; explicit bans on
+    assertion gaming, timeout masking, touching non-test files;
+    `{{app_context}}` section.
+  - `tests/unit/test_fixer.py`: now **46 tests** — added build_app_context
+    priority-order / size-cap / missing-empty-dir, FixerInput defaulting,
+    agent fallback + context-reaches-prompt, runner forwarding (marker in
+    all 10 prompts), CLI e2e asserts `fixer_prompt_ref == "fix-agent@2"` +
+    context present + `FIXER_NO_APP_CONTEXT` opt-out;
+    `_sample_fix_input(app_context=...)`.
+  - Fixed two E501s left by the prior session (cli.py, runner.py).
+- **Verified (gates):** `uv run pytest -q` → **448 passed** · `uv run mypy`
+  → **Success, no issues in 86 source files** · `uv run ruff check` +
+  `uv run ruff format --check` → **all green** ·
+  live: `uv run python scripts/fixer_run.py --report reports/fixer_v1.json`
+  (Qwen3.8-27B @ localhost:8080, `fix-agent@2`) → **passing 8/10 (80% ≥
+  50% target), applicable 8/8 passing, declined 2 (both CORRECT: env
+  connection-refused FIX-007, product 500 FIX-010), correct action 10/10,
+  exit 0** — `reports/fixer_live.err.log`. Highlights: FIX-002 `td.price`→
+  `div.price` (DOM fact), FIX-003 `/dashboard`→`/products` (route),
+  FIX-008 drifted test-ids `fld-user/fld-pass/btn-signin`, FIX-009
+  waitForResponse budget 100ms→5s, FIX-004 provisions a real order instead
+  of assuming id 999.
+- **Gotchas:** tool-shell CWD resets to `Workspace\` after long
+  `Start-Sleep` polls — the first "missing report" was a wrong-directory
+  read (use absolute paths) · PowerShell reports `NativeCommandError` on
+  ANY child stderr (even uv's venv warning) even when the command
+  succeeded — read the actual output.
+- **Next session start:** **S4.3 — Approve → re-run loop** (bible §19
+  Phase 4: full loop E2E S3 → S4 → re-run; the fixer patch is already
+  reviewable — wire human approval of the `applied` patch to re-execute
+  the patched test and close the loop) — see `STATE.md` §1.
