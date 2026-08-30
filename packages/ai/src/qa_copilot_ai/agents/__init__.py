@@ -18,6 +18,14 @@ from .failure_investigator import (
     InvestigatorInput,
     parse_diagnosis,
 )
+from .fixer import (
+    FIXER_NAME,
+    FixerAgent,
+    FixerAgentResult,
+    FixerInput,
+    FixProposal,
+    parse_fix_proposal,
+)
 from .requirement import (
     AGENT_NAME,
     SUGGESTED_TEST_TYPES,
@@ -41,6 +49,7 @@ from .test_design import (
 __all__ = [
     "AGENT_NAME",
     "AUTOMATOR_NAME",
+    "FIXER_NAME",
     "FRAMEWORKS",
     "INVESTIGATOR_NAME",
     "LANGUAGES",
@@ -55,6 +64,10 @@ __all__ = [
     "Diagnosis",
     "FailureInvestigatorAgent",
     "FailureInvestigatorAgentResult",
+    "FixProposal",
+    "FixerAgent",
+    "FixerAgentResult",
+    "FixerInput",
     "GeneratedTest",
     "InvestigatorInput",
     "RequirementAgent",
@@ -67,5 +80,6 @@ __all__ = [
     "TestCase",
     "TestSuite",
     "parse_diagnosis",
+    "parse_fix_proposal",
     "parse_generated_test",
 ]

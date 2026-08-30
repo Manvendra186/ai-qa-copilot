@@ -21,11 +21,17 @@ S4.1: the Failure Investigator (build bible §19 Phase 4) — prompt v1 +
 schema-validated :class:`Diagnosis` (the §12 failure-analysis contract) over
 the S3.3 :class:`~qa_copilot_domain.entities.NormalizedFailure`; the
 top-1 ≥ 80% golden-set gate lives in :mod:`qa_copilot_ai.investigator`.
+
+S4.2: the Fix Agent (build bible §19 Phase 4) — prompt v1 +
+schema-validated :class:`FixProposal` (patch or decline, §26 category guard)
+derived from the broken test file + S3.3 failure + S4.1 diagnosis; the
+≥ 5/10 applicable-and-passing gate lives in :mod:`qa_copilot_ai.fixer`.
 """
 
 from .agents import (
     AGENT_NAME,
     AUTOMATOR_NAME,
+    FIXER_NAME,
     FRAMEWORKS,
     INVESTIGATOR_NAME,
     LANGUAGES,
@@ -40,6 +46,10 @@ from .agents import (
     Diagnosis,
     FailureInvestigatorAgent,
     FailureInvestigatorAgentResult,
+    FixerAgent,
+    FixerAgentResult,
+    FixerInput,
+    FixProposal,
     GeneratedTest,
     InvestigatorInput,
     RequirementAgent,
@@ -52,6 +62,7 @@ from .agents import (
     TestDesignInput,
     TestSuite,
     parse_diagnosis,
+    parse_fix_proposal,
     parse_generated_test,
 )
 from .config import ModelSettings, load_dotenv, load_extra_body, load_model_settings
@@ -92,6 +103,11 @@ __all__ = [
     "FailureInvestigatorAgent",
     "FailureInvestigatorAgentResult",
     "FilePromptStore",
+    "FIXER_NAME",
+    "FixerAgent",
+    "FixerAgentResult",
+    "FixerInput",
+    "FixProposal",
     "GeneratedTest",
     "INVESTIGATOR_NAME",
     "InMemoryPromptStore",
@@ -129,6 +145,7 @@ __all__ = [
     "load_model_settings",
     "load_prompt_file",
     "parse_diagnosis",
+    "parse_fix_proposal",
     "parse_generated_test",
     "render_prompt",
 ]

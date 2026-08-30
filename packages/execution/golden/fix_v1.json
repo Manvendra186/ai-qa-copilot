@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "name": "S4.2 fix golden set",
+  "version": "v1",
+  "description": "Build Bible §19 S4.2 evaluation dataset, v1: 10 broken Playwright tests with known root causes — the S4.2 exit gate (§31.7: ≥ 5/10 fixes applicable and passing, with the correct action per §26). Each fixture is one broken test: the raw failure text (must classify into `category` through the S3.3 normalizer), the broken test file, and the expected outcome — has_fix=true carries the known-good fixed file (test-side patch; the offline oracle reference); has_fix=false is a decline case (product/environment defect — the correct action is to decline, §26: never \"fix\" a test to hide an app bug). app_env pins the defect-injection flags the live Playwright verifier must run against (empty = clean stack).",
+  "source": {
+    "build_bible": "docs/AI_QA_Copilot_Build_Bible_v1.1.md",
+    "step": "S4.2"
+  },
+  "targets": {
+    "passing_min": 0.5
+  },
+  "fixtures": [
+    {
+      "id": "FIX-001",
+      "title": "strict mode violation — four 'Add to cart' buttons",
+      "category": "automation_defect",
+      "failure": "Error: strict mode violation: page.getByRole('button', { name: 'Add to cart' }) resolved to 4 elements:\n1) <button class=\"card-add\" type=\"button\">Add to cart</button> aka getByRole('button', { name: 'Add to cart' }).first()\n2) ... aka getByRole('button', { name: 'Add to cart' }).nth(1)",
+      "file_path": "e2e/cart.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('adds the first product to the cart', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await expect(page.locator('article.card').first()).toBeVisible();\n  await page.getByRole('button', { name: 'Add to cart' }).click();\n  await expect(page.locator('p.ok')).toBeVisible();\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('adds the first product to the cart', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await expect(page.locator('article.card').first()).toBeVisible();\n  await page.getByRole('button', { name: 'Add to cart' }).first().click();\n  await expect(page.locator('p.ok')).toBeVisible();\n});\n",
+      "has_fix": true,
+      "app_env": {}
+    },
+    {
+      "id": "FIX-002",
+      "title": "stale selector — prices are div.price, not td.price",
+      "category": "automation_defect",
+      "failure": "Error: page.waitFor: Timeout 30000ms exceeded\n  - waiting for locator(\"td.price\") to be visible",
+      "file_path": "e2e/catalog.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('shows the seeded catalog prices', async ({ page }) => {\n  await page.goto('/products');\n  await expect(page.locator('article.card').first()).toBeVisible();\n  await page.locator('td.price').first().waitFor();\n  await expect(page.locator('td.price').first()).toBeVisible();\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('shows the seeded catalog prices', async ({ page }) => {\n  await page.goto('/products');\n  const prices = page.locator('article.card .price');\n  await expect(prices.first()).toBeVisible();\n  expect(await prices.count()).toBe(4);\n});\n",
+      "has_fix": true,
+      "app_env": {}
+    },
+    {
+      "id": "FIX-003",
+      "title": "stale URL — login lands on /products, not /dashboard",
+      "category": "automation_defect",
+      "failure": "Error: page.waitForURL: Timeout 30000ms exceeded",
+      "file_path": "e2e/login.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('signs in and lands on the dashboard', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/dashboard');\n  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('signs in and lands on the product catalog', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n  await expect(page.getByRole('heading', { name: 'Products' })).toBeVisible();\n});\n",
+      "has_fix": true,
+      "app_env": {}
+    },
+    {
+      "id": "FIX-004",
+      "title": "assumes seeded order 999 — order must be provisioned first",
+      "category": "test_data_defect",
+      "failure": "API request to GET http://localhost:4000/api/orders/999 failed: 404 Not Found\nexpect(received).toBe(expected) // Object.is equality\n\nExpected: 200\nReceived: 404",
+      "file_path": "e2e/orders.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('reads back a seeded order', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  const token = await page.evaluate(() => localStorage.getItem('demo_token'));\n  const res = await page.request.get('/api/orders/999', {\n    headers: { Authorization: `Bearer ${token}` },\n  });\n  expect(res.status()).toBe(200);\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('provisions an order via checkout, then reads it back', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await expect(page.locator('article.card').first()).toBeVisible();\n  await page.getByRole('button', { name: 'Add to cart' }).first().click();\n  await expect(page.locator('p.ok')).toBeVisible();\n\n  const token = await page.evaluate(() => localStorage.getItem('demo_token'));\n  const checkout = await page.request.post('/api/checkout', {\n    headers: { Authorization: `Bearer ${token}` },\n  });\n  expect(checkout.status()).toBe(201);\n  const order = await checkout.json();\n\n  const res = await page.request.get(`/api/orders/${order.id}`, {\n    headers: { Authorization: `Bearer ${token}` },\n  });\n  expect(res.status()).toBe(200);\n  const body = await res.json();\n  expect(body.id).toBe(order.id);\n});\n",
+      "has_fix": true,
+      "app_env": {}
+    },
+    {
+      "id": "FIX-005",
+      "title": "assumes product 999 exists in the catalog",
+      "category": "test_data_defect",
+      "failure": "API request to GET http://localhost:4000/api/products/999 failed: 404 Not Found\nexpect(received).toBe(expected) // Object.is equality\n\nExpected: 200\nReceived: 404",
+      "file_path": "e2e/products.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('sees the featured product in the catalog', async ({ page }) => {\n  await page.goto('/products');\n  const res = await page.request.get('/api/products/999');\n  expect(res.status()).toBe(200);\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('sees the seeded featured product', async ({ page }) => {\n  await page.goto('/products');\n  const res = await page.request.get('/api/products/1');\n  expect(res.status()).toBe(200);\n  const body = await res.json();\n  expect(body.name).toBe('Aurora Headphones');\n});\n",
+      "has_fix": true,
+      "app_env": {}
+    },
+    {
+      "id": "FIX-006",
+      "title": "reads cart line total without adding anything first",
+      "category": "automation_defect",
+      "failure": "Error: page.waitFor: Timeout 30000ms exceeded\n  - waiting for locator(\"[data-testid='cart-total']\") to be visible",
+      "file_path": "e2e/cart-total.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('reads the cart line total', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await page.goto('/cart');\n  await page.getByTestId('cart-total').waitFor();\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('adds a product, then reads the cart line total', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await expect(page.locator('article.card').first()).toBeVisible();\n  await page.getByRole('button', { name: 'Add to cart' }).first().click();\n  await expect(page.locator('p.ok')).toBeVisible();\n\n  await page.goto('/cart');\n  await page.getByTestId('cart-total').waitFor();\n  await expect(page.getByTestId('cart-total')).toBeVisible();\n});\n",
+      "has_fix": true,
+      "app_env": {}
+    },
+    {
+      "id": "FIX-007",
+      "title": "app server unreachable (connection refused)",
+      "category": "environment_defect",
+      "failure": "page.goto: Error: net::ERR_CONNECTION_REFUSED at http://localhost:5199/login\nCall log:\n  - navigating to \"http://localhost:5199/login\"",
+      "file_path": "e2e/staging.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('signs in against the staging app', async ({ page }) => {\n  await page.goto('http://localhost:5199/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n});\n",
+      "fixed_code": null,
+      "has_fix": false,
+      "app_env": {}
+    },
+    {
+      "id": "FIX-008",
+      "title": "login test-ids drifted (locator drift defect injected)",
+      "category": "automation_defect",
+      "failure": "Error: page.fill: Timeout 30000ms exceeded\n  - waiting for locator(\"[data-testid='login-username']\") to be visible",
+      "file_path": "e2e/login-drift.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('signs in and lands on the catalog', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n  await expect(page.locator('article.card').first()).toBeVisible();\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('signs in and lands on the catalog', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('fld-user').fill('qa');\n  await page.getByTestId('fld-pass').fill('qa1234');\n  await page.getByTestId('btn-signin').click();\n  await page.waitForURL('**/products');\n  await expect(page.locator('article.card').first()).toBeVisible();\n});\n",
+      "has_fix": true,
+      "app_env": {
+        "DEFECT_LOCATOR_DRIFT": "1"
+      }
+    },
+    {
+      "id": "FIX-009",
+      "title": "waitForResponse budget (100 ms) below the app's 3 s latency ceiling",
+      "category": "flaky_behavior",
+      "failure": "Error: page.waitForResponse: Timeout 100ms exceeded",
+      "file_path": "e2e/cart-ack.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('adds a product and confirms the API ack', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await expect(page.locator('article.card').first()).toBeVisible();\n  const ack = page.waitForResponse('**/api/cart/items', { timeout: 100 });\n  await page.getByRole('button', { name: 'Add to cart' }).first().click();\n  const response = await ack;\n  expect(response.status()).toBe(200);\n});\n",
+      "fixed_code": "import { expect, test } from './fixtures.js';\n\ntest('adds a product and confirms the API ack', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await expect(page.locator('article.card').first()).toBeVisible();\n  const ack = page.waitForResponse('**/api/cart/items', { timeout: 10_000 });\n  await page.getByRole('button', { name: 'Add to cart' }).first().click();\n  const response = await ack;\n  expect(response.status()).toBe(200);\n});\n",
+      "has_fix": true,
+      "app_env": {
+        "DEFECT_FLAKY": "1"
+      }
+    },
+    {
+      "id": "FIX-010",
+      "title": "checkout API returns 500 (api_500 defect injected)",
+      "category": "product_defect",
+      "failure": "API request to POST http://localhost:4000/api/checkout failed: 500 Internal Server Error\nexpect(received).toBe(expected) // Object.is equality\n\nExpected: 201\nReceived: 500",
+      "file_path": "e2e/checkout.spec.js",
+      "test_code": "import { expect, test } from './fixtures.js';\n\ntest('places an order at checkout', async ({ page }) => {\n  await page.goto('/login');\n  await page.getByTestId('login-username').fill('qa');\n  await page.getByTestId('login-password').fill('qa1234');\n  await page.getByTestId('login-submit').click();\n  await page.waitForURL('**/products');\n\n  await expect(page.locator('article.card').first()).toBeVisible();\n  await page.getByRole('button', { name: 'Add to cart' }).first().click();\n  await expect(page.locator('p.ok')).toBeVisible();\n\n  const token = await page.evaluate(() => localStorage.getItem('demo_token'));\n  const res = await page.request.post('/api/checkout', {\n    headers: { Authorization: `Bearer ${token}` },\n  });\n  expect(res.status()).toBe(201);\n});\n",
+      "fixed_code": null,
+      "has_fix": false,
+      "app_env": {
+        "DEFECT_API_500": "1"
+      }
+    }
+  ]
+}
