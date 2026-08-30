@@ -298,3 +298,68 @@ class RunDetail(BaseModel):
     totals: dict[str, int]
     results: list[TestResultOut]
     artifacts: list[ArtifactOut]
+
+
+# --- S5.3: project knowledge (§7, §14, §19) -----------------------------------
+
+
+class KnowledgeIndexRequest(BaseModel):
+    """S5.3: body for ``POST /projects/{id}/knowledge/index``.
+
+    ``repository_path`` is the local repository root to index (its source
+    files become ``repository_file`` documents). The project's persisted
+    requirements, designed test cases, and run history are always part of the
+    corpus, so the index is genuinely project-specific; the repository files
+    extend it with the repository's own source.
+    """
+
+    repository_path: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+        description="Optional local repository root to index; the project's "
+        "persisted QA data is always included in the corpus.",
+    )
+
+
+class KnowledgeHit(BaseModel):
+    """One search hit: a knowledge chunk with its source metadata (S5.3)."""
+
+    score: float
+    document_ref: str
+    source_type: str
+    title: str
+    chunk_index: int
+    content: str
+    metadata: dict[str, Any]
+    matched_terms: list[str]
+
+
+class KnowledgeSearchResult(BaseModel):
+    """S5.3: ``GET /projects/{id}/knowledge`` — project-specific chunks."""
+
+    query: str
+    total_candidates: int
+    truncated: bool
+    hits: list[KnowledgeHit]
+
+
+class KnowledgeStatus(BaseModel):
+    """S5.3: ``GET /projects/{id}/knowledge/status`` — what is indexed."""
+
+    document_count: int
+    by_source_type: dict[str, int]
+    source_types: list[str]
+    last_indexed_at: datetime | None = None
+
+
+class KnowledgeDocumentOut(BaseModel):
+    """S5.3: a project knowledge document (``GET .../knowledge/documents``)."""
+
+    id: str
+    source_type: str
+    title: str
+    source_ref: str
+    content: str
+    metadata: dict[str, Any]
+    created_at: datetime | None = None

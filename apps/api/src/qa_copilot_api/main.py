@@ -167,6 +167,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs_test_design_agent = _build_test_design_jobs_agent(settings, app.state.engine)
     # S2.4: the Automation Agent job (automation_generation) → pending review row.
     app.state.jobs_automation_agent = _build_automation_jobs_agent(settings, app.state.engine)
+    # S5.3: the Knowledge Index job (knowledge_index) — deterministic, no LLM.
+    app.state.jobs_knowledge_agent = jobs.KnowledgeIndexJobAgent(app.state.engine)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

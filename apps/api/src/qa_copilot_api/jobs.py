@@ -75,6 +75,8 @@ from qa_copilot_repository import requirements as repo_requirements
 from sqlalchemy import Engine, update
 from sqlalchemy.engine import CursorResult
 
+from qa_copilot_api.knowledge_store import build_project_knowledge, persist_project_knowledge
+
 __all__ = [
     "AutomationJobAgent",
     "AutomationRunner",
@@ -85,6 +87,7 @@ __all__ = [
     "JobContext",
     "JobRunner",
     "JobSnapshot",
+    "KnowledgeIndexJobAgent",
     "RequirementJobAgent",
     "StubAgent",
     "TestDesignJobAgent",
@@ -582,6 +585,37 @@ class AutomationJobAgent:
                     output_ref=generated_test_id,
                 )
             )
+
+
+class KnowledgeIndexJobAgent:
+    """S5.3 project-scoped knowledge indexing (build bible §7, §14, §19 Phase 5).
+
+    Assembles the project's knowledge corpus — repository files when
+    ``repository_path`` is supplied, plus the project's persisted requirements,
+    designed test cases, and run history — then persists it to the
+    ``knowledge_documents`` table (idempotent delete+insert, stable ids).
+    Deterministic: no LLM call (the local model is completion-only, §19 S5.0).
+    Progress is reported over SSE; the job's ``output_ref`` is a stable
+    ``knowledge://<project>`` reference.
+    """
+
+    stages: tuple[str, ...] = ("knowledge_index",)
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        """Build + persist the project corpus, report progress, return a ref."""
+        project_id = ctx.project_id or ""
+        repository_path = ctx.input.get("repository_path")
+        await ctx.emit("stage.started", {"stage": "knowledge_index"})
+        await ctx.emit("progress", {"stage": "knowledge_index", "value": 0.25})
+        with repo_db.session_scope(self._engine) as session:
+            documents, _capped = build_project_knowledge(session, project_id, repository_path)
+            count = persist_project_knowledge(session, project_id, documents)
+        await ctx.emit("progress", {"stage": "knowledge_index", "value": 0.9})
+        await ctx.emit("stage.completed", {"stage": "knowledge_index", "documents": count})
+        return f"knowledge://{project_id}"
 
 
 def _payload(job_id: str, project_id: str | None, **fields: Any) -> dict[str, Any]:

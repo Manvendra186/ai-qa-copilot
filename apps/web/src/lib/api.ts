@@ -376,3 +376,94 @@ function parseSseFrame(frame: string): { event: string; data: Record<string, unk
     return null; // non-JSON payload — nothing to reduce
   }
 }
+
+// --- S5.3: project knowledge (build bible §7, §14, §19 Phase 5) --------------
+
+export interface KnowledgeIndexRequest {
+  repository_path?: string;
+}
+
+export interface KnowledgeHit {
+  score: number;
+  document_ref: string;
+  source_type: string;
+  title: string;
+  chunk_index: number;
+  content: string;
+  metadata: Record<string, unknown>;
+  matched_terms: string[];
+}
+
+export interface KnowledgeSearchResult {
+  query: string;
+  total_candidates: number;
+  truncated: boolean;
+  hits: KnowledgeHit[];
+}
+
+export interface KnowledgeStatus {
+  document_count: number;
+  by_source_type: Record<string, number>;
+  source_types: string[];
+  last_indexed_at: string | null;
+}
+
+export interface KnowledgeDocumentOut {
+  id: string;
+  source_type: string;
+  title: string;
+  source_ref: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  created_at: string | null;
+}
+
+/** `POST /projects/{id}/knowledge/index` → 202 + `{job_id}` (S5.3). */
+export function indexProjectKnowledge(
+  projectId: string,
+  repositoryPath?: string,
+): Promise<JobCreated> {
+  return request<JobCreated>(`/projects/${encodeURIComponent(projectId)}/knowledge/index`, {
+    method: 'POST',
+    body: JSON.stringify(repositoryPath ? { repository_path: repositoryPath } : {}),
+  });
+}
+
+/** `GET /projects/{id}/knowledge/status` — what is indexed (S5.3). */
+export function getProjectKnowledgeStatus(projectId: string): Promise<KnowledgeStatus> {
+  return request<KnowledgeStatus>(`/projects/${encodeURIComponent(projectId)}/knowledge/status`);
+}
+
+/** `GET /projects/{id}/knowledge?q=...&top_k=...` — project-specific chunks (S5.3). */
+export function searchProjectKnowledge(
+  projectId: string,
+  query: string,
+  topK = 5,
+): Promise<KnowledgeSearchResult> {
+  const params = new URLSearchParams({ q: query, top_k: String(topK) });
+  return request<KnowledgeSearchResult>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge?${params.toString()}`,
+  );
+}
+
+/** `GET /projects/{id}/knowledge/documents` — stored documents, newest first (S5.3). */
+export function listProjectKnowledgeDocuments(
+  projectId: string,
+  limit = 100,
+  offset = 0,
+): Promise<KnowledgeDocumentOut[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return request<KnowledgeDocumentOut[]>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/documents?${params.toString()}`,
+  );
+}
+
+/** `GET /projects/{id}/knowledge/documents/{id}` — one stored document (S5.3). */
+export function getKnowledgeDocument(
+  projectId: string,
+  documentId: string,
+): Promise<KnowledgeDocumentOut> {
+  return request<KnowledgeDocumentOut>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/documents/${encodeURIComponent(documentId)}`,
+  );
+}

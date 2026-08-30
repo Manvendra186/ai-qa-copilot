@@ -4,6 +4,7 @@ import { GeneratedTests } from './components/GeneratedTests';
 import { Header } from './components/Header';
 import { LoginForm } from './components/LoginForm';
 import { PipelineView } from './components/PipelineView';
+import { ProjectKnowledge } from './components/ProjectKnowledge';
 import { RequirementForm } from './components/RequirementForm';
 import { RequirementHistory } from './components/RequirementHistory';
 import { RunsView } from './components/RunsView';
@@ -30,7 +31,7 @@ export default function App() {
   const [requirement, setRequirement] = useState<RequirementOut | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'design' | 'generated' | 'runs'>('design');
+  const [tab, setTab] = useState<'design' | 'generated' | 'runs' | 'knowledge'>('design');
 
   // S1.3 read-back: once the job completes, the terminal `output_ref` is the
   // persisted requirement id — fetch it and render the suite.
@@ -156,6 +157,17 @@ export default function App() {
           >
             Runs
           </button>
+          <button
+            type="button"
+            onClick={() => setTab('knowledge')}
+            className={`rounded-lg px-4 py-1.5 text-sm transition ${
+              tab === 'knowledge'
+                ? 'bg-slate-800 text-slate-100'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Knowledge
+          </button>
         </nav>
 
         {tab === 'design' && (
@@ -243,6 +255,8 @@ export default function App() {
         {tab === 'generated' && <GeneratedTests projectId={auth.project.id} />}
 
         {tab === 'runs' && <RunsView projectId={auth.project.id} />}
+
+        {tab === 'knowledge' && <ProjectKnowledge projectId={auth.project.id} />}
       </main>
       <footer className="border-t border-slate-800 px-6 py-4 text-center text-xs text-slate-500">
         {FOOTER}

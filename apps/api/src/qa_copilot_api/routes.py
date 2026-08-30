@@ -52,6 +52,7 @@ from qa_copilot_domain.enums import (
     role_at_least,
 )
 from qa_copilot_execution import ArtifactStore, ArtifactStoreError
+from qa_copilot_knowledge import SearchHit
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import membership, models
@@ -61,7 +62,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, StreamingResponse
 
-from . import auth, jobs, schemas
+from . import auth, jobs, knowledge_store, schemas
 from .db import get_db
 
 auth_router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -882,6 +883,177 @@ def list_runs(
         raise HTTPException(status_code=404, detail="project not found")
     _require_project_role(db, user, project.id, ProjectRole.VIEWER)
     return [_run_list_item(run) for run in repo_runs.list_runs(db, project.id)]
+
+
+# --- S5.3: project knowledge (build bible §7, §14, §19 Phase 5) ---------------
+
+
+def _knowledge_document_out(
+    row: models.KnowledgeDocument,
+) -> schemas.KnowledgeDocumentOut:
+    """A ``knowledge_documents`` row → the API document shape (S5.3).
+
+    ``title`` is stored inside ``metadata`` (the table has no ``title``
+    column); restore it with a fallback from ``source_ref``.
+    """
+    metadata = dict(row.metadata_ or {})
+    title = metadata.get("title") or row.source_ref or "document"
+    return schemas.KnowledgeDocumentOut(
+        id=str(row.id),
+        source_type=row.source_type or "",
+        title=str(title),
+        source_ref=row.source_ref or str(row.id),
+        content=row.content,
+        metadata=metadata,
+        created_at=row.created_at,
+    )
+
+
+def _knowledge_hit_out(hit: SearchHit) -> schemas.KnowledgeHit:
+    """A domain search hit (``SearchHit.chunk``) → the API hit shape (S5.3)."""
+    chunk = hit.chunk
+    return schemas.KnowledgeHit(
+        score=hit.score,
+        document_ref=chunk.document_ref,
+        source_type=chunk.source_type.value,
+        title=chunk.title,
+        chunk_index=chunk.chunk_index,
+        content=chunk.content,
+        metadata=dict(chunk.metadata),
+        matched_terms=list(hit.matched_terms),
+    )
+
+
+@projects_router.post(
+    "/{project_id}/knowledge/index", status_code=202, response_model=schemas.JobCreated
+)
+def index_project_knowledge(
+    project_id: str,
+    body: schemas.KnowledgeIndexRequest,
+    request: Request,
+    response: Response,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """Index the project's knowledge corpus: **202 + job_id** (S5.3, §11).
+
+    No AI work runs in this request (§31.2) — the ``knowledge_index`` job
+    assembles the corpus (repository files when provided + the project's
+    persisted requirements/test-cases/run history) and persists it. Track it
+    via ``GET /api/v1/jobs/{job_id}`` or the SSE feed. ``member`` or above;
+    unknown projects 403 (no existence leak, §31.3).
+    """
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=403, detail="no role for this project")
+    _require_project_role(db, user, project.id, ProjectRole.MEMBER)
+
+    job_input = {"repository_path": body.repository_path}
+    job = models.Job(
+        project_id=project.id,
+        type=JobType.KNOWLEDGE_INDEX,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_knowledge_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@projects_router.get("/{project_id}/knowledge/status", response_model=schemas.KnowledgeStatus)
+def get_knowledge_status(
+    project_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.KnowledgeStatus:
+    """What is indexed for a project (S5.3, §14) — ``viewer`` or above."""
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    _require_project_role(db, user, project.id, ProjectRole.VIEWER)
+    return schemas.KnowledgeStatus(**knowledge_store.knowledge_status(db, project.id))
+
+
+@projects_router.get("/{project_id}/knowledge", response_model=schemas.KnowledgeSearchResult)
+def search_project_knowledge_route(
+    project_id: str,
+    q: str = Query(..., min_length=1, max_length=512, description="Search query"),
+    top_k: int = Query(default=5, ge=1, le=5, description="Max chunks (≤ 5, §14)"),
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.KnowledgeSearchResult:
+    """Search the project's knowledge (S5.3, §14) — ``viewer`` or above.
+
+    Lexical (BM25) retrieval over the project's stored documents, hard-capped
+    at five chunks (top-k ≤ 5, §14) to fit the agent context budget.
+    """
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    _require_project_role(db, user, project.id, ProjectRole.VIEWER)
+    result = knowledge_store.search_project_knowledge(db, project.id, q, top_k=top_k)
+    return schemas.KnowledgeSearchResult(
+        query=result.query,
+        total_candidates=result.total_candidates,
+        truncated=result.truncated,
+        hits=[_knowledge_hit_out(hit) for hit in result.hits],
+    )
+
+
+@projects_router.get(
+    "/{project_id}/knowledge/documents",
+    response_model=list[schemas.KnowledgeDocumentOut],
+)
+def list_knowledge_documents(
+    project_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.KnowledgeDocumentOut]:
+    """The project's stored knowledge documents, newest first (S5.3)."""
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    _require_project_role(db, user, project.id, ProjectRole.VIEWER)
+    rows = knowledge_store.list_project_knowledge_documents(
+        db, project.id, limit=limit, offset=offset
+    )
+    return [_knowledge_document_out(row) for row in rows]
+
+
+@projects_router.get(
+    "/{project_id}/knowledge/documents/{document_id}",
+    response_model=schemas.KnowledgeDocumentOut,
+)
+def get_knowledge_document(
+    project_id: str,
+    document_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.KnowledgeDocumentOut:
+    """One stored knowledge document (S5.3) — ``viewer`` or above."""
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    _require_project_role(db, user, project.id, ProjectRole.VIEWER)
+    row = db.scalar(
+        select(models.KnowledgeDocument).where(
+            models.KnowledgeDocument.id == document_id,
+            models.KnowledgeDocument.project_id == project.id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return _knowledge_document_out(row)
 
 
 @runs_router.get("/{run_id}", response_model=schemas.RunDetail)

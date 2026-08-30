@@ -47,6 +47,7 @@ class JobType(StrEnum):
     FAILURE_ANALYSIS = "failure_analysis"
     FIX_PROPOSAL = "fix_proposal"
     REPOSITORY_INDEXING = "repository_indexing"
+    KNOWLEDGE_INDEX = "knowledge_index"
 
 
 class JobStatus(StrEnum):

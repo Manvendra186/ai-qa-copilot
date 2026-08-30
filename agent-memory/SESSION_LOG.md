@@ -1389,3 +1389,81 @@
   5: `POST /projects/{id}/knowledge/index` 202+job, `GET
   /projects/{id}/knowledge?q=&top_k=5`, `GET .../documents`, "Project
   Knowledge" tab) — see `STATE.md` §1/§3.
+
+## 2026-08-30 — S5.3 Knowledge API + web: index job, search + documents API, "Project Knowledge" tab, live E2E green
+
+- **Goal:** Phase 5 step 3 (bible §19 S5.3): promote the S5.1/S5.2 retrieval
+  core to the project API — `POST /projects/{id}/knowledge/index` (202 + job),
+  `GET /projects/{id}/knowledge?q=&top_k=5`, `GET .../knowledge/documents`,
+  "Project Knowledge" tab — exit criterion: API search returns
+  **project-specific** chunks with source metadata, visible in the UI.
+- **Did:**
+  - `apps/api/src/qa_copilot_api/knowledge_store.py` (new) — project-scoped
+    knowledge build over the S5.1 adapters (requirements, test cases, run
+    history) + S5.2 hybrid search; documents/chunks persistence; status
+    (`KnowledgeStatusDict` TypedDict: `document_count`, `by_source_type`,
+    `source_types`, `last_indexed_at`).
+  - **Real runtime bug fixed:** run-history rows referenced `tr.test` — but
+    `test_results` persists **no test name** (only result id, status,
+    diagnosis, evidence). Replaced with stable `result-{test_result_id}`
+    labels (live-verified in E2E hit content).
+  - `apps/api/src/qa_copilot_api/routes.py` — S5.3 routes:
+    `POST /projects/{id}/knowledge/index` (JSON body `{}` or
+    `{repository_path: str}` — repo files optional, project QA data always
+    included) → **202 + `{job_id, status: pending}`** · `GET
+    .../knowledge/status` · `GET .../knowledge?q=&top_k=` (top-k ≤ 5 cap,
+    §14) → `{query, total_candidates, truncated, hits[]}` (`SearchHit`:
+    score / document_ref / source_type / title / chunk_index / content /
+    metadata / matched_terms) · `GET .../knowledge/documents?limit=&offset=`
+    + `GET .../knowledge/documents/{id}` (project-scoped, newest first).
+  - `apps/api/src/qa_copilot_api/schemas.py` — `IndexRequest`,
+    `KnowledgeStatus`, `KnowledgeSearchResult`, `KnowledgeDocumentOut`;
+    enum serialization uses `.value` (codebase convention).
+  - `apps/api/src/qa_copilot_api/agent.py` + `jobs.py` — `knowledge_index`
+    job stage (SSE: `job.started` → `stage.started` → `progress` →
+    `stage.completed {documents}` → `job.completed {output_ref:
+    knowledge://{project_id}}`).
+  - `apps/web` — `components/ProjectKnowledge.tsx` tab (status card:
+    document count / by source type / last indexed; "Re-index" button with
+    job progress; search box → scored hits with source_type badge + matched
+    terms; documents list) + `lib/api.ts` client functions (paths verified
+    against the routes: search is `GET /knowledge?q=&top_k=`, **not**
+    `/knowledge/search`).
+  - tests: `tests/unit/test_knowledge_store.py` (project-scoped build,
+    stable run-result labels, status shape, search wiring).
+- **Verified (gates):** `uv run pytest -q -x` → **605 passed** ·
+  `uv run mypy` → clean (strict) · `uv run ruff check .` ✓ · `uv run ruff
+  format .` applied · `pnpm lint` ✓ · `pnpm format` + `format:check` ✓ ·
+  `pnpm build` ✓.
+- **Verified (live E2E, this machine, uvicorn `:8000`, DB at alembic head):**
+  login `dev@local.dev` → `projects[]` (`Demo App`) → `GET
+  .../knowledge/status` (seeded `url` doc) → `POST .../knowledge/index`
+  body `{}` → **202 + job_id** → SSE `job.started` → `stage.started` →
+  `progress 0.25 → 0.9` → `stage.completed` (**24 documents**) →
+  `job.completed` → status after: `document_count 24`,
+  `by_source_type {requirement: 5, run_history: 1, test_case: 18}`, fresh
+  `last_indexed_at` → search "discount" → 2 candidates, top hits = test case
+  "Checkout total reflects item prices and discount" + run history with the
+  `product_defect` diagnosis (score 2.83/2.61, `matched_terms:
+  ["discount"]`) → "login credentials" → 16 candidates, `truncated: true`
+  (top_k 3), requirement + test-case hits → "totally unrelated zzz" → 0
+  candidates, empty hits → `GET .../knowledge/documents` → full documents
+  with content + metadata → **E2E_OK** (script:
+  `%TEMP%\s53_e2e.py`, output `%TEMP%\s53_e2e_py.txt`).
+- **Gotchas:** PowerShell native-command JSON quoting is unreliable for
+  multi-step API flows — a Python `httpx` script is the reliable E2E path.
+  Login response is `{token, user, projects[]}` — not `access_token` +
+  single `project`. SSE job events are **namespaced**: `job.completed` /
+  `job.failed` / `job.cancelled` (not bare `completed`). The index endpoint
+  **requires** a JSON body (even `{}`); search is `GET /knowledge` with
+  `q`/`top_k` query params (there is no `/knowledge/search` route).
+- **Decisions:** `repository_path` stays optional on the index request
+  (project QA data is the always-included corpus; repo files are an
+  extension). `result-{test_result_id}` is the canonical run-history row
+  label (no test name is persisted by design — `test_results` links via id
+  only). Lexical path remains the live retrieval mode until S5.4/S5.5 wire
+  the vector path to a real embedding endpoint.
+- **Next session start:** **S5.4 — RAG Q&A Agent** (bible §19 Phase 5:
+  `knowledge-qa@1` grounded answer + citations + refusal, parser, runner +
+  CLI over the golden Q&A set, live gate ≥ 80% in-scope grounded + 100%
+  out-of-scope refused) — see `STATE.md` §1/§3.

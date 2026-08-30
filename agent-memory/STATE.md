@@ -8,14 +8,48 @@
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
-  Phase 5 — Project Knowledge **in progress** (S5.1 ✓, S5.2 ✓)
-- **Step:** S0.1–S5.2 ✓ (S5.2 = embeddings seam: `EmbeddingProvider` protocol +
-  OpenAI-compat provider, vector search + graceful lexical fallback
-  (501/503/unreachable), `embeddings`-table persistence) ·
-  **next:** **S5.3 — Knowledge API + web** (bible §19 Phase 5: index 202+job,
-  knowledge search + documents API, "Project Knowledge" tab — see §3)
+  Phase 5 — Project Knowledge **in progress** (S5.1 ✓, S5.2 ✓, S5.3 ✓)
+- **Step:** S0.1–S5.3 ✓ (S5.3 = Knowledge API + web: `POST .../knowledge/index`
+  202+job, `GET .../knowledge?q=&top_k=` search + documents API, "Project
+  Knowledge" tab; live E2E green — 24 docs indexed, project-specific hits with
+  source metadata) ·
+  **next:** **S5.4 — RAG Q&A Agent** (bible §19 Phase 5: `knowledge-qa@1`
+  grounded answer + citations + refusal, golden Q&A set, live gate — see §3)
 
 ## 2. Just completed
+
+- 2026-08-30 · **S5.3 (Knowledge API + web) — all gates green + live E2E passed**:
+  S5.2 seam → project API (bible §19 S5.3: index 202+job, search + documents API,
+  "Project Knowledge" tab; exit: search returns **project-specific** chunks with
+  source metadata, visible in UI):
+  - `apps/api` — `knowledge_store.py` (project-scoped document build: requirements,
+    test cases, run history with stable `result-{id}` row labels — `test_results`
+    stores no test name; `KnowledgeStatusDict`; hybrid search over the S5.2 seam;
+    documents/chunks persistence) · `routes.py` (`POST /projects/{id}/knowledge/index`
+    → 202 + `job_id` · `GET .../knowledge/status` · `GET .../knowledge?q=&top_k=` ·
+    `GET .../knowledge/documents[/{id}]`) · `jobs.py` `knowledge_index` stage ·
+    `schemas.py` (`IndexRequest` — optional `repository_path`; `KnowledgeStatus` /
+    `SearchHit` / `KnowledgeSearchResult` / `KnowledgeDocumentOut`) · `agent.py`
+    index-job wiring;
+  - `apps/web` — `ProjectKnowledge` tab (status card: count / by source type /
+    last indexed; index button with SSE progress; search with scored hits +
+    matched terms; documents list) + api-client functions;
+  - tests: `tests/unit/test_knowledge_store.py` (project-scoped build, stable
+    run-result labels, status/search) · full suite **605 passed**;
+  - **gates**: pytest 605 ✓ · mypy strict ✓ · ruff ✓ · pnpm lint ✓ · format ✓ ·
+    build ✓;
+  - **live E2E (this machine, `:8000`)**: login → `POST .../knowledge/index` 202 →
+    SSE `job.started` → progress → `stage.completed` (**24 docs**) →
+    `job.completed` → status `{requirement: 5, run_history: 1, test_case: 18}` →
+    search "discount" → correct test-case + run-history hits (score, source_type,
+    matched_terms) · "login credentials" → requirements + test cases (16
+    candidates, `truncated: true` at top_k 3) · "zzz" → empty hits · documents
+    list → full docs with content/metadata;
+  - decisions: index body = `{}` or `{repository_path}` (repo files optional;
+    project QA data always included) · search = `GET /knowledge` (top-k ≤ 5 cap,
+    §14) · run-history rows labeled `result-{test_result_id}` (stable; no test
+    name persisted) · SSE events namespaced (`job.*` / `stage.*` / `progress`) ·
+    login returns `token` + `projects[]` (not `access_token`/single project).
 
 - 2026-08-30 · **S5.2 (embeddings / vector seam) — all gates green**:
   `qa_copilot_knowledge` embedding seam (bible §19 S5.2: "`EmbeddingProvider`
@@ -244,20 +278,17 @@
 
 ## 3. NEXT STEP (start here)
 
-**S5.3 — Knowledge API + web** (build bible §19 Phase 5): `POST
-/projects/{id}/knowledge/index` (202 + job), `GET /projects/{id}/knowledge?
-q=&top_k=5`, `GET .../documents`, "Project Knowledge" tab.
-- S5.2 seam is in place and green: `EmbeddingProvider` protocol +
-  `OpenAICompatibleEmbeddingProvider` (OpenAI-compat `/embeddings`),
-  `hybrid_search` (vector mode + graceful lexical fallback on
-  `EmbeddingUnavailable`), and `store_document_embedding` /
-  `load_document_embeddings` / `embed_and_store` on the S0.5 `embeddings`
-  table — S5.3 wires a real endpoint into these; until then the lexical
-  path (golden-gated, 13/13) is the only live retrieval path.
-- Exit criterion (bible §19 S5.3): API search returns **project-specific**
-  chunks with source metadata; visible in the UI.
-- §20 MVP item "A repository can be indexed" is met by S5.1 (`index`
-  subcommand) — S5.3 promotes it to the project API.
+**S5.4 — RAG Q&A Agent** (build bible §19 Phase 5): `knowledge-qa@1` strict
+grounded-answer contract (answer + citations + refusal), parser, runner + CLI
+over the golden Q&A set, **live gate** — exit: live ≥ 80% in-scope questions
+grounded with project-specific facts; **100% out-of-scope refused**.
+- S5.3 is green: project knowledge API (index 202+job, search + documents) +
+  "Project Knowledge" tab; live E2E passed (search returns project-specific
+  chunks with source metadata — see §2). The Q&A agent consumes the same
+  project-scoped search (S5.1 lexical core / S5.2 vector seam) as its retrieval
+  source for citations.
+- Then S5.5: Ask API + web Q&A view — `POST /projects/{id}/knowledge/ask`
+  (202+job) + chat view (ask → 202 → job → grounded answer with citations in UI).
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker
   deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
   `test_golden_demo_app` conventions-golden re-baseline on clean trees
