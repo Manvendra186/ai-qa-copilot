@@ -227,9 +227,7 @@ async def run_fix_loop(
 
     # 1 — S3: run the broken spec (the loop's ground truth).
     try:
-        initial = await spec_runner.run(
-            target.test_code, spec_name=target.spec_name, flags=flags
-        )
+        initial = await spec_runner.run(target.test_code, spec_name=target.spec_name, flags=flags)
     except Exception as exc:  # executor itself failed (stack, CLI, …)
         return finish("error", initial_run_ok=False, error=f"initial run failed: {exc}")
     if initial.ok:
@@ -275,9 +273,7 @@ async def run_fix_loop(
         suggested_fix=diagnosis.suggested_fix,
         prompt_refs=(investigation.prompt_ref, proposal_result.prompt_ref),
         tokens_in=investigation.call.usage.tokens_in + proposal_result.call.usage.tokens_in,
-        tokens_out=(
-            investigation.call.usage.tokens_out + proposal_result.call.usage.tokens_out
-        ),
+        tokens_out=(investigation.call.usage.tokens_out + proposal_result.call.usage.tokens_out),
     )
 
     if proposal.action == "decline":
@@ -329,4 +325,3 @@ async def run_fix_loop(
         re_run_ok=False,
         re_run_detail=re_run.detail,
     )
-

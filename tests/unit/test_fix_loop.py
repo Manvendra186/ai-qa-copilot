@@ -58,9 +58,7 @@ BROKEN_TEST = (
     "  expect(await page.locator('#count').textContent()).toBe('50');\n"
     "});\n"
 )
-FIXED_TEST = BROKEN_TEST.replace("count of 50", "count of 49").replace(
-    "toBe('50')", "toBe('49')"
-)
+FIXED_TEST = BROKEN_TEST.replace("count of 50", "count of 49").replace("toBe('50')", "toBe('49')")
 PATCH = make_patch(BROKEN_TEST, FIXED_TEST, "e2e/loop_probe.spec.js")
 
 #: A syntactically valid hunk whose old-side block is not in the broken
@@ -285,9 +283,7 @@ def test_passing_when_initial_run_is_green() -> None:
 def test_fixed_when_patch_approved_and_re_run_is_green() -> None:
     runner = FakeSpecRunner([False, True])
     investigator, fixer = FakeInvestigator(), FakeFixer()
-    report = _loop(
-        runner, investigator=investigator, fixer=fixer, decision=APPROVE, model=MODEL
-    )
+    report = _loop(runner, investigator=investigator, fixer=fixer, decision=APPROVE, model=MODEL)
     assert report.outcome == "fixed"
     assert report.closed
     assert report.initial_run_ok is False
@@ -386,9 +382,7 @@ def test_error_when_patch_does_not_apply() -> None:
     """The S4.2 "applicable" gate precedes the human gate — nothing is put
     to the operator that cannot be applied."""
     runner = FakeSpecRunner([False])
-    report = _loop(
-        runner, fixer=FakeFixer(proposal=_proposal(patch=BAD_PATCH)), decision=APPROVE
-    )
+    report = _loop(runner, fixer=FakeFixer(proposal=_proposal(patch=BAD_PATCH)), decision=APPROVE)
     assert report.outcome == "error"
     assert not report.closed
     assert "patch does not apply" in (report.error or "")

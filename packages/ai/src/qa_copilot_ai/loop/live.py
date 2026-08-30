@@ -53,9 +53,7 @@ class PlaywrightLoopRunner:
         flags: frozenset[str],
     ) -> SpecRun:
         """Write *spec_text* to the probe spec, run it, and report pass/fail."""
-        ok, detail = await self._verifier.run_spec(
-            spec_text, spec_name=spec_name, flags=flags
-        )
+        ok, detail = await self._verifier.run_spec(spec_text, spec_name=spec_name, flags=flags)
         return SpecRun(ok=ok, detail=detail or None)
 
     async def aclose(self) -> None:

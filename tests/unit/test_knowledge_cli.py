@@ -106,9 +106,7 @@ class TestIndexAndSearchCommands:
         assert main(["index", str(tmp_path / "missing")]) == EXIT_USAGE
         assert "error:" in capsys.readouterr().err
 
-    def test_search_finds_the_file(
-        self, repo: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_search_finds_the_file(self, repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["search", str(repo), "orders table"]) == EXIT_OK
         out, err = capsys.readouterr()
         result = json.loads(out)
@@ -116,9 +114,7 @@ class TestIndexAndSearchCommands:
         assert result["hits"][0]["chunk"]["document_ref"] == REPO_FILE
         assert "search:" in err
 
-    def test_search_respects_top_k(
-        self, repo: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_search_respects_top_k(self, repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
         (repo / "e2e" / "more.spec.ts").write_text("test('more', () => {});", encoding="utf-8")
         assert main(["search", str(repo), "test", "--top-k", "1"]) == EXIT_OK
         result = json.loads(capsys.readouterr().out)

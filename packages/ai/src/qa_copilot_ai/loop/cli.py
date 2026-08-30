@@ -71,8 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fixture",
         default=None,
         help=(
-            "golden fixture id (e.g. FIX-002) — defaults to the first fixable "
-            "clean-stack fixture"
+            "golden fixture id (e.g. FIX-002) — defaults to the first fixable clean-stack fixture"
         ),
     )
     parser.add_argument(
@@ -110,9 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="reject the patch — nothing is applied, no re-run",
     )
-    parser.add_argument(
-        "--report", default=None, help="also write the JSON report to this file"
-    )
+    parser.add_argument("--report", default=None, help="also write the JSON report to this file")
     return parser
 
 
@@ -191,9 +188,7 @@ async def _execute(args: argparse.Namespace, base_url: str, model: str) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    demo_app = Path(
-        args.demo_app or os.environ.get("DEMO_APP_DIR") or _DEFAULT_DEMO_APP
-    ).resolve()
+    demo_app = Path(args.demo_app or os.environ.get("DEMO_APP_DIR") or _DEFAULT_DEMO_APP).resolve()
     if (
         not (demo_app / "playwright.config.js").is_file()
         or not (demo_app / "node_modules/@playwright/test/cli.js").is_file()
@@ -209,9 +204,7 @@ async def _execute(args: argparse.Namespace, base_url: str, model: str) -> int:
     # Read-only application context for the Fix Agent (v2 prompt) — the S4.2
     # app under test (§23). Opt out with LOOP_NO_APP_CONTEXT=1.
     opt_out = (os.environ.get("LOOP_NO_APP_CONTEXT") or "").strip().lower()
-    app_context = (
-        "" if opt_out in {"1", "true", "yes", "on"} else build_app_context(demo_app)
-    )
+    app_context = "" if opt_out in {"1", "true", "yes", "on"} else build_app_context(demo_app)
 
     store = FilePromptStore(_PROMPTS_DIR)
     try:
@@ -284,9 +277,7 @@ def _print_summary(report: LoopReport, *, file: TextIO) -> None:
             file=file,
         )
     if report.action is not None:
-        approval = (
-            f" · approval {report.approval.decided_by}" if report.approval else ""
-        )
+        approval = f" · approval {report.approval.decided_by}" if report.approval else ""
         print(f"  proposal     {report.action}{approval}", file=file)
     if report.re_run_ok is not None:
         print(f"  re-run       {'PASSED' if report.re_run_ok else 'FAILED'}", file=file)
@@ -297,5 +288,3 @@ def _print_summary(report: LoopReport, *, file: TextIO) -> None:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-

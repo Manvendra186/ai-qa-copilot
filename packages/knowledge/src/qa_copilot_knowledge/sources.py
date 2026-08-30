@@ -28,17 +28,36 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 #: File extensions that can carry source knowledge (lowercase, with dot).
 _KNOWLEDGE_EXTENSIONS: frozenset[str] = frozenset(
     {
-        ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-        ".py", ".json", ".yaml", ".yml", ".toml",
-        ".md", ".html", ".css", ".scss", ".sql", ".sh", ".txt",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".py",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".md",
+        ".html",
+        ".css",
+        ".scss",
+        ".sql",
+        ".sh",
+        ".txt",
     }
 )
 
 #: Lockfiles / generated noise that never carry QA knowledge.
 _SKIP_FILE_NAMES: frozenset[str] = frozenset(
     {
-        "pnpm-lock.yaml", "package-lock.json", "yarn.lock",
-        "bun.lockb", "poetry.lock", "uv.lock",
+        "pnpm-lock.yaml",
+        "package-lock.json",
+        "yarn.lock",
+        "bun.lockb",
+        "poetry.lock",
+        "uv.lock",
     }
 )
 _SKIP_SUFFIXES: tuple[str, ...] = (".min.js", ".min.css", ".map")

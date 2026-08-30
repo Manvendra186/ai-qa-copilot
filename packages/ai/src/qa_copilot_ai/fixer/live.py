@@ -79,9 +79,7 @@ def required_flags(app_env: Mapping[str, str]) -> frozenset[str]:
     true-valued entries count. The S4.3 loop derives its S3-run flags the
     same way (single source of truth for both gates).
     """
-    return frozenset(
-        name for name, value in app_env.items() if str(value).strip().lower() in _TRUE
-    )
+    return frozenset(name for name, value in app_env.items() if str(value).strip().lower() in _TRUE)
 
 
 def _required_flags(fixture: FixFixture) -> frozenset[str]:
@@ -219,11 +217,7 @@ class PlaywrightVerifier:
 
     def _check_spec_name(self, spec_name: str) -> None:
         """Spec names are confined to the demo app root (no ``..`` escape)."""
-        if (
-            not spec_name
-            or spec_name.startswith(("/", "\\"))
-            or ".." in Path(spec_name).parts
-        ):
+        if not spec_name or spec_name.startswith(("/", "\\")) or ".." in Path(spec_name).parts:
             raise ValueError(f"unsafe spec_name: {spec_name!r}")
 
     async def aclose(self) -> None:

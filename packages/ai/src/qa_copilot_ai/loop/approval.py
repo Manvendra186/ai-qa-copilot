@@ -80,9 +80,7 @@ def resolve_approval(
     if decision == REJECT:
         return ApprovalDecision(approved=False, decided_by="explicit:reject")
     if decision is not None:
-        raise ValueError(
-            f"unknown approval decision: {decision!r} (use {APPROVE!r} or {REJECT!r})"
-        )
+        raise ValueError(f"unknown approval decision: {decision!r} (use {APPROVE!r} or {REJECT!r})")
     if not is_tty:
         return ApprovalDecision(approved=False, decided_by="auto:reject-no-tty")
     answer = prompt(patch).strip().lower()

@@ -94,8 +94,10 @@ class LexicalIndex:
                 matched.append(term)
                 df = self._df[term]
                 idf = math.log(1.0 + (n - df + 0.5) / (df + 0.5))
-                score += idf * (count * (self._k1 + 1.0)) / (
-                    count + self._k1 * (1.0 - self._b + self._b * doc_len / avgdl)
+                score += (
+                    idf
+                    * (count * (self._k1 + 1.0))
+                    / (count + self._k1 * (1.0 - self._b + self._b * doc_len / avgdl))
                 )
             if score > 0.0:
                 scored.append((score, chunk, matched))
