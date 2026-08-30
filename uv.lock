@@ -1105,6 +1105,18 @@ source = { editable = "packages/integrations" }
 name = "qa-copilot-knowledge"
 version = "0.1.0"
 source = { editable = "packages/knowledge" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "qa-copilot-domain" },
+    { name = "qa-copilot-repository" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "qa-copilot-domain", editable = "packages/domain" },
+    { name = "qa-copilot-repository", editable = "packages/repository" },
+]
 
 [[package]]
 name = "qa-copilot-repository"

@@ -1218,3 +1218,94 @@
   Phase 4: full loop E2E S3 → S4 → re-run; the fixer patch is already
   reviewable — wire human approval of the `applied` patch to re-execute
   the patched test and close the loop) — see `STATE.md` §1.
+
+## 2026-08-30 — S4.3 Approve → re-run loop: live full-loop E2E PASSED (backfill)
+
+> Backfill — this session was never appended (same as S4.1). Full record:
+> `STATE.md` §2 (2026-08-30 S4.3 entry), commit `3a78db6`.
+
+- **Goal:** close the loop — investigate → fix → **human approve/reject** →
+  re-run the patched test (bible §19 Phase 4 exit: "Full loop E2E
+  (S3 → S4 → re-run)").
+- **Did:** new `qa_copilot_ai.loop` package — `run_fix_loop()` over
+  injectable protocols (`LoopInvestigator`/`LoopFixer`/`SpecVerifier`);
+  `PlaywrightLoopRunner` (`loop/live.py`) adapts the S4.2 verifier via its
+  new `run_spec()` primitive; approval gate (`loop/approval.py`): explicit
+  `--approve`/`--reject` always wins → TTY prompt → non-TTY fail-safe
+  **reject**; patch apply + re-run strictly approval-gated; `LoopReport`
+  `fix-loop-report/v1` JSON on stdout + `--report`, summary on stderr; CLI
+  `python -m qa_copilot_ai.loop.cli` / `scripts/loop_run.py`; exit 0 = loop
+  closed (fixed/declined/passing), 1 = ran but open (rejected/not_fixed),
+  2 = config/LLM/patch error · `tests/unit/test_fix_loop.py` 26 tests
+  (protocol fakes — no Playwright/LLM in unit) · Windows hardening:
+  cp1252-safe help text, `_harden_streams()` (`errors="replace"`).
+- **Verified:** 474 tests ✓ · mypy strict ✓ · ruff ✓ · **live (Qwen3.8-27B,
+  all 10 fixtures `--approve`)**: 7/8 fixable `fixed` + re-run PASSED (incl.
+  FIX-008/009 on defect-flag server instances); FIX-007/010 `declined`
+  (correct); FIX-005 `declined` — investigator said `product_defect` (golden
+  `test_data_defect`), fixer safely refused a patch chasing an app bug;
+  `--reject` fail-safe verified (proposal produced, nothing applied, exit 1);
+  demo app left clean (probe specs deleted, `git status` unchanged).
+- **Next session start:** **S5.1 — knowledge core** (bible §19 Phase 5) —
+  see `STATE.md` §1.
+
+## 2026-08-30 — S5.1 Knowledge/retrieval core: golden gate 13/13, all gates green
+
+- **Goal:** Phase 5 step 1 — deterministic, LLM-free project
+  knowledge/retrieval core (bible §19 Phase 5: "retrieval core: BM25 +
+  chunking + golden set ≥ 90% top-1").
+- **Did:** new package `packages/knowledge` (`qa_copilot_knowledge`,
+  src layout, `py.typed`):
+  - `models.py` — pydantic `KnowledgeDocument` / `KnowledgeChunk` (stable
+    chunk IDs: `sha1(doc_id + ":" + chunk_index)`), `SearchHit` /
+    `SearchResult`, `GoldenCase` / `GoldenSet` (gate
+    `top1_accuracy >= 0.9`) / `GoldenReport` / `IndexRunRecord`.
+  - `chunking.py` — `chunk_text` (hard caps `max_chars` ≤ 2000,
+    `min_chars` ≥ 20; blank-line paragraph split → sentence split →
+    hard-cut of over-long words; ≤ 64 chunks; content preserved for
+    fitting input) + `chunk_document`.
+  - `search.py` — `BM25Index` (Okapi BM25, `k1=1.5`, `b=0.75`; lowercase
+    alnum tokenization; `top_k` hard-capped at 5) + `search` convenience;
+    deterministic tie-breaking (score desc → doc_id asc → chunk_index asc).
+  - `sources.py` — pure-function adapters (no DB/network/LLM):
+    `document_from_text`, `requirement_document`, `test_case_document`
+    (steps + expected outcomes as bullets), `convention_document` (rules as
+    bullets), `run_history_document` (evidence capped to first 2 lines,
+    200 chars/line — keeps generated docs small), `repository_file_document`
+    (binary/skip → `None`), `load_documents`.
+  - `golden.py` — strict loader (missing file / bad schema / bad gate →
+    `KnowledgeGoldenSetError`) + `run_golden_set` (top-1 + top-5 accuracy,
+    per-case failure reasons).
+  - `cli.py` + `__main__.py` — `python -m qa_copilot_knowledge
+    {index,search,golden}` (`--root` / `--query` / `--top-k` /
+    `--golden-path` / `--report`); JSON on stdout, human summary on stderr;
+    exit 0 gate met / 1 gate missed / 2 usage.
+  - `packages/knowledge/golden/retrieval_v1.json` — **13 hand-written
+    fixtures** (7 requirement, 3 test-case, 1 standard, 1 run-history,
+    1 repo file; each with a plausible wrong doc as a distractor).
+  - Tests (NEW, all deterministic): `tests/unit/test_knowledge_chunking.py`
+    (11), `test_knowledge_search.py` (13), `test_knowledge_sources.py`
+    (10), `test_knowledge_golden.py` (6), `test_knowledge_cli.py` (11).
+- **Verified:** `uv run pytest -q` → **539 passed** · `uv run mypy` →
+  **Success, no issues in 106 source files** (strict) ·
+  `uv run ruff check` + `uv run ruff format --check` → all green ·
+  **live CLI against this repo**: `index .` → 221 docs / 675 chunks,
+  exit 0; `search . "golden gate top1 accuracy" --top-k 3` → golden-set
+  doc ranked #1 with sensible hits, exit 0; `golden` → **PASS 13/13,
+  top-1 100%, top-5 100%, gate_met true, exit 0**.
+- **Gotchas:** the first 2 test failures were assertion mismatches, not
+  core bugs (the live golden gate already passed): history evidence renders
+  only the FIRST 2 lines (200 chars/line) — a 4th evidence item never
+  appears; chunking hard-cuts any word longer than `max_chars` —
+  content-preservation tests must use words that fit. PowerShell
+  `-replace`/`Set-Content` with backtick-n inserted literal `` `n `` text
+  (single-quoted PS strings don't process escapes) — repaired with a small
+  Python script, not more shell surgery. mypy strict flags
+  `args.handler` (Any) in argparse dispatch — annotate
+  `Callable[[argparse.Namespace], int]` before `return handler(args)`.
+- **Decisions:** S5.1 is deterministic and LLM-free by design (bible:
+  knowledge core first, embeddings later) — BM25 only, no network in the
+  retrieval path; embeddings/vector seam deferred to S5.2.
+- **Next session start:** **S5.2 — embeddings/vector seam** (choose source:
+  hosted API vs local model vs defer; keep BM25 as baseline until the
+  vector path is golden-gated) — see `STATE.md` §1.

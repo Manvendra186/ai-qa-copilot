@@ -347,7 +347,24 @@ User request → Intent / task classifier
 | S4.2 | Fix Agent: reviewable patch/diff | ≥ 5/10 fixes applicable and passing |
 | S4.3 | Approve → re-run loop | Full loop E2E (S3 → S4 → re-run) |
 
-### Phases 5–8
+### Phase 5 — Project Knowledge
+
+> Note (S5.0): the local LLM (Qwen3.8-27B, OpenAI-compatible) is **completion-only**
+> (`POST /v1/embeddings` → 501). Retrieval therefore starts as deterministic
+> lexical search (BM25) — no LLM in the retrieval path — with a pluggable
+> `EmbeddingProvider` seam (S5.2) that upgrades to vector retrieval once an
+> embedding endpoint exists. The `knowledge_documents`/`embeddings` (pgvector)
+> tables from S0.5 already exist and are the persistence target.
+
+| Step | Work | Exit criterion |
+|---|---|---|
+| S5.1 | Knowledge core (LLM-free): `qa_copilot_knowledge` — document/chunk models, hard size-capped chunking (§13), deterministic BM25 retrieval (top-k ≤ 5, §14), sources (requirements, test cases, standards/conventions, run+failure history, repository files), golden retrieval gate, CLI | Golden retrieval gate passes (≥ 90% top-1, tamper detected); "a repository can be indexed" (MVP item) |
+| S5.2 | Embeddings seam: `EmbeddingProvider` protocol + OpenAI-compat provider (fake-server tests) → `embeddings` table; graceful lexical fallback when endpoint unavailable (501) | Fake-embedding unit tests green; lexical path unchanged |
+| S5.3 | Knowledge API + web: `POST /projects/{id}/knowledge/index` (202+job), `GET /projects/{id}/knowledge?q=&top_k=5`, `GET .../documents`; "Project Knowledge" tab | API search returns project-specific chunks with source metadata; visible in UI |
+| S5.4 | RAG Q&A agent: `knowledge-qa@1` strict grounded-answer contract (answer + citations + refusal), parser, runner + CLI over the golden Q&A set, **live gate** | Live: ≥ 80% in-scope questions grounded with project-specific facts; 100% out-of-scope refused |
+| S5.5 | Ask API + web Q&A view: `POST /projects/{id}/knowledge/ask` (202+job) + chat view | Ask → 202 → job → grounded answer with citations in the UI |
+
+### Phases 6–8
 
 ## 20. MVP definition of done
 

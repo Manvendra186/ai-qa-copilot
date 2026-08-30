@@ -1,0 +1,172 @@
+{
+  "name": "retrieval-golden",
+  "version": "v1",
+  "gate": { "top1_min": 0.9 },
+  "corpus": [
+    {
+      "source_type": "requirement",
+      "source_ref": "REQ-001",
+      "title": "Order history with sorting and pagination",
+      "content": "Requirement: Order history with sorting and pagination\n\nThe buyer can open the order history page and see every past order in one table. Orders are listed newest first by default. The buyer can sort by order date, total price, and status. The table paginates ten orders per page. When an order ships, its status changes from processing to shipped and the updated status is visible on the order history page without a reload. The buyer can export the filtered table to CSV.\n\nAcceptance criteria:\n- Orders default to newest-first order date sort\n- Sorting by total price is descending\n- Pagination shows exactly ten orders per page\n- Shipped status updates are visible on the order history page\n- CSV export reflects the current filter and sort\n\nRisk: high",
+      "metadata": { "risk": "high" }
+    },
+    {
+      "source_type": "requirement",
+      "source_ref": "REQ-002",
+      "title": "Password reset flow",
+      "content": "Requirement: Password reset flow\n\nA buyer who forgets their password can request a reset from the sign-in page. The request email contains a single-use link. The link expires after 30 minutes. Using the link signs the buyer out of any other sessions and forces a fresh sign-in.\n\nAcceptance criteria:\n- Reset link expires after 30 minutes\n- A used link cannot be reused\n- Other sessions are signed out after a reset\n\nRisk: medium",
+      "metadata": { "risk": "medium" }
+    },
+    {
+      "source_type": "test_case",
+      "source_ref": "TC-001",
+      "title": "Order history shows newest first and paginates",
+      "content": "Test case: Order history shows newest first and paginates\n(type: functional, priority: high)\n\nPreconditions:\n- A signed-in buyer account with 25 seeded orders\n\nSteps:\n1. Open the order history page\n2. Check the default sort order of the order table\n3. Move to page two of the pagination control\n\nExpected results:\n- The newest order appears in the first row\n- Page two shows orders 11 to 20\n\nRequirement refs: REQ-001",
+      "metadata": { "type": "functional", "priority": "high" }
+    },
+    {
+      "source_type": "test_case",
+      "source_ref": "TC-002",
+      "title": "Expired reset link is rejected",
+      "content": "Test case: Expired reset link is rejected\n(type: negative, priority: high)\n\nSteps:\n1. Request a password reset\n2. Open the reset link after it expires (30 minutes)\n\nExpected results:\n- The page shows an expired link message\n- No password is changed\n\nRequirement refs: REQ-002",
+      "metadata": { "type": "negative", "priority": "high" }
+    },
+    {
+      "source_type": "standard",
+      "source_ref": "standards/test-conventions",
+      "title": "Test conventions for demo-shop",
+      "content": "Test conventions for demo-shop\n\nTest file patterns:\n- *.spec.ts\n\nLocator APIs in use:\n- getByRole (playwright, 18 uses)\n- getByTestId (playwright, 7 uses)\n- locator (playwright, 2 uses)\n\nPage object files:\n- e2e/pages/order-history.ts\n\nFixture files:\n- e2e/fixtures.ts\n\nTest configs:\n- playwright.config.ts\n\ndata-testid vocabulary:\n- checkout-button\n- order-table\n- pagination-next\n\nBase URL: http://localhost:3000\n\nTest scripts:\n- e2e: playwright test",
+      "metadata": { "base_url": "http://localhost:3000" }
+    },
+    {
+      "source_type": "standard",
+      "source_ref": "standards/api-rules",
+      "title": "API and business rules for demo-shop",
+      "content": "API and business rules for demo-shop\n\nThe REST API is mounted at /api/v1. Endpoints used by the UI:\n- GET /api/v1/orders (params: sort, page, status)\n- POST /api/v1/auth/reset-password\n- POST /api/v1/auth/reset-password/confirm\n\nBusiness rules:\n- Discounts apply before tax; tax is computed on the discounted subtotal\n- Refunds are accepted within 14 days of delivery\n- Order totals are stored in cents, not dollars\n\nAuth: Bearer tokens; reset links expire after 30 minutes.",
+      "metadata": {}
+    },
+    {
+      "source_type": "run_history",
+      "source_ref": "run-2026-01",
+      "title": "Run 2026-01 (completed)",
+      "content": "Test run 2026-01: status completed (commit 9f31c2a, 2026-08-28)\n\nResults:\n- e2e/order-history.spec.ts > Order history shows newest first and paginates: passed\n- e2e/order-history.spec.ts > Exports the filtered table to CSV: failed (product_defect: the /api/v1/orders export ignores the page param and times out; evidence: Test timeout of 30000ms exceeded)\n- e2e/auth.spec.ts > Password reset with a fresh link: passed",
+      "metadata": {}
+    },
+    {
+      "source_type": "run_history",
+      "source_ref": "run-2026-02",
+      "title": "Run 2026-02 (completed)",
+      "content": "Test run 2026-02: status completed (commit d41e88b, 2026-08-29)\n\nResults:\n- e2e/order-history.spec.ts > Order history shows newest first and paginates: passed\n- e2e/order-history.spec.ts > Exports the filtered table to CSV: passed\n- e2e/auth.spec.ts > Password reset with a fresh link: passed",
+      "metadata": {}
+    },
+    {
+      "source_type": "failure",
+      "source_ref": "FAIL-001",
+      "title": "Failure analysis: Exports the filtered table to CSV",
+      "content": "Failure analysis for e2e/order-history.spec.ts > Exports the filtered table to CSV\n\nCategory: product_defect\nRoot cause: the /api/v1/orders export handler ignores the page query param and streams all orders, so the export times out on the seeded 25-order dataset\nConfidence: 0.9\nEvidence:\n- Test timeout of 30000ms exceeded\n- Network: GET /api/v1/orders?export=csv took 31412ms\nSuggested fix: paginate the export endpoint or stream it in chunks",
+      "metadata": {}
+    },
+    {
+      "source_type": "repository_file",
+      "source_ref": "client/src/pages/OrderHistoryPage.tsx",
+      "title": "client/src/pages/OrderHistoryPage.tsx",
+      "content": "// client/src/pages/OrderHistoryPage.tsx (excerpt)\nconst [sort, setSort] = useState(\"date_desc\");\nconst [page, setPage] = useState(1);\n// Sort dropdown: order date, total price, status (REQ-001)\n// Pagination: ten orders per page, driven by the\n// data-testid=\"pagination-next\" button\nasync function exportCsv() {\n  // Exports the filtered table to CSV via GET /api/v1/orders?export=csv\n  const response = await fetch(`/api/v1/orders?sort=${sort}&page=${page}&export=csv`);\n  const blob = await response.blob();\n  saveBlobAs(blob, \"orders.csv\");\n}",
+      "metadata": { "path": "client/src/pages/OrderHistoryPage.tsx", "language": "tsx", "is_test": false }
+    },
+    {
+      "source_type": "repository_file",
+      "source_ref": "server/src/api/orders.js",
+      "title": "server/src/api/orders.js",
+      "content": "// server/src/api/orders.js (excerpt)\n// endpoint: GET /api/v1/orders — list orders with sort (date|price|status),\n// page, status filter, and a csv export\n// BUG(FAIL-001): the csv export ignores the page param and streams all orders\napp.get(\"/api/v1/orders\", (req, res) => {\n  const sort = req.query.sort || \"date_desc\";\n  const page = Number(req.query.page || 1);\n  const results = db.orders({ sort, page, pageSize: 10 });\n  if (req.query.export === \"csv\") {\n    return res.csv(db.ordersAll()); // ignores page — times out\n  }\n  res.json(results);\n});",
+      "metadata": { "path": "server/src/api/orders.js", "language": "js", "is_test": false }
+    },
+    {
+      "source_type": "repository_file",
+      "source_ref": "e2e/order-history.spec.ts",
+      "title": "e2e/order-history.spec.ts",
+      "content": "// e2e/order-history.spec.ts (excerpt)\ntest(\"Order history shows newest first and paginates\", async ({ page }) => {\n  await page.getByRole(\"link\", { name: \"Order history\" }).click();\n  const firstRow = page.getByTestId(\"order-table\").locator(\"tr\").first();\n  expect(await firstRow.textContent()).toContain(\"Order #1025\");\n  await page.getByTestId(\"pagination-next\").click();\n});\ntest(\"Exports the filtered table to CSV\", async ({ page }) => {\n  const [download] = await Promise.all([\n    page.waitForEvent(\"download\"),\n    page.getByRole(\"button\", { name: \"Export CSV\" }).click(),\n  ]);\n  expect(download.suggestedFilename()).toBe(\"orders.csv\");\n});",
+      "metadata": { "path": "e2e/order-history.spec.ts", "language": "ts", "is_test": true }
+    },
+    {
+      "source_type": "repository_file",
+      "source_ref": "server/src/api/auth.js",
+      "title": "server/src/api/auth.js",
+      "content": "// server/src/api/auth.js (excerpt)\nconst RESET_LINK_TTL_MINUTES = 30; // reset links expire after 30 minutes (REQ-002)\napp.post(\"/api/v1/auth/reset-password\", (req, res) => {\n  const token = crypto.randomUUID();\n  db.resetTokens.insert({\n    token,\n    email: req.body.email,\n    expires_at: Date.now() + RESET_LINK_TTL_MINUTES * 60_000,\n    used: false,\n  });\n  mail.sendResetLink(req.body.email, token);\n  res.status(202).json({ queued: true });\n});",
+      "metadata": { "path": "server/src/api/auth.js", "language": "js", "is_test": false }
+    },
+    {
+      "source_type": "repository_file",
+      "source_ref": "server/src/seed.js",
+      "title": "server/src/seed.js",
+      "content": "// server/src/seed.js (excerpt)\n// Seed data for the demo: 25 orders for the buyer account qa@local.dev,\n// three products, one discount code SAVE10 (10 percent off, before tax)\nseedOrders(25, \"qa@local.dev\");",
+      "metadata": { "path": "server/src/seed.js", "language": "js", "is_test": false }
+    }
+  ],
+  "queries": [
+    {
+      "id": "Q01",
+      "query": "How do discounts apply relative to tax?",
+      "expect_top1": "standards/api-rules"
+    },
+    {
+      "id": "Q02",
+      "query": "Which server endpoint provides the orders csv export?",
+      "expect_top1": "server/src/api/orders.js"
+    },
+    {
+      "id": "Q03",
+      "query": "Which UI component holds the exportCsv function and the sort dropdown?",
+      "expect_top1": "client/src/pages/OrderHistoryPage.tsx"
+    },
+    {
+      "id": "Q04",
+      "query": "Which locator APIs are used in the test code?",
+      "expect_top1": "standards/test-conventions"
+    },
+    {
+      "id": "Q05",
+      "query": "Why did the CSV export test time out in run 2026 01?",
+      "expect_top1": "run-2026-01"
+    },
+    {
+      "id": "Q06",
+      "query": "What is the reset link TTL constant in the auth code?",
+      "expect_top1": "server/src/api/auth.js"
+    },
+    {
+      "id": "Q07",
+      "query": "What are the acceptance criteria for order history sorting?",
+      "expect_top1": "REQ-001"
+    },
+    {
+      "id": "Q08",
+      "query": "Which test script launches the Playwright suite?",
+      "expect_top1": "standards/test-conventions"
+    },
+    {
+      "id": "Q09",
+      "query": "How does the orders endpoint list, sort and page results?",
+      "expect_top1": "server/src/api/orders.js"
+    },
+    {
+      "id": "Q10",
+      "query": "Which run completed with every test passed?",
+      "expect_top1": "run-2026-02"
+    },
+    {
+      "id": "Q11",
+      "query": "What seed data is loaded for the buyer account?",
+      "expect_top1": "server/src/seed.js"
+    },
+    {
+      "id": "Q12",
+      "query": "Which test case covers an expired password reset link?",
+      "expect_top1": "TC-002"
+    },
+    {
+      "id": "Q13",
+      "query": "Which endpoint issues password reset tokens?",
+      "expect_top1": "standards/api-rules"
+    }
+  ]
+}
