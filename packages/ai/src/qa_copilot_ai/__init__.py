@@ -16,12 +16,18 @@ S2.3: the Automation Agent (build bible §19 Phase 2) — prompt v1 +
 schema-validated :class:`GeneratedTest` from ``RepositoryProfile`` (S2.1) +
 ``TestConventions`` (S2.2); the §21 lint/type gate and the golden-set eval
 live in :mod:`qa_copilot_ai.automation`.
+
+S4.1: the Failure Investigator (build bible §19 Phase 4) — prompt v1 +
+schema-validated :class:`Diagnosis` (the §12 failure-analysis contract) over
+the S3.3 :class:`~qa_copilot_domain.entities.NormalizedFailure`; the
+top-1 ≥ 80% golden-set gate lives in :mod:`qa_copilot_ai.investigator`.
 """
 
 from .agents import (
     AGENT_NAME,
     AUTOMATOR_NAME,
     FRAMEWORKS,
+    INVESTIGATOR_NAME,
     LANGUAGES,
     PRIORITIES,
     RISK_LEVELS,
@@ -31,7 +37,11 @@ from .agents import (
     AutomationAgent,
     AutomationAgentResult,
     AutomationInput,
+    Diagnosis,
+    FailureInvestigatorAgent,
+    FailureInvestigatorAgentResult,
     GeneratedTest,
+    InvestigatorInput,
     RequirementAgent,
     RequirementAgentResult,
     RequirementAnalysis,
@@ -41,6 +51,7 @@ from .agents import (
     TestDesignAgentResult,
     TestDesignInput,
     TestSuite,
+    parse_diagnosis,
     parse_generated_test,
 )
 from .config import ModelSettings, load_dotenv, load_extra_body, load_model_settings
@@ -76,10 +87,15 @@ __all__ = [
     "AutomationAgentResult",
     "AutomationInput",
     "DEFAULT_REDACTOR",
+    "Diagnosis",
     "FRAMEWORKS",
+    "FailureInvestigatorAgent",
+    "FailureInvestigatorAgentResult",
     "FilePromptStore",
     "GeneratedTest",
+    "INVESTIGATOR_NAME",
     "InMemoryPromptStore",
+    "InvestigatorInput",
     "LANGUAGES",
     "LLMError",
     "LLMGateway",
@@ -112,6 +128,7 @@ __all__ = [
     "load_extra_body",
     "load_model_settings",
     "load_prompt_file",
+    "parse_diagnosis",
     "parse_generated_test",
     "render_prompt",
 ]

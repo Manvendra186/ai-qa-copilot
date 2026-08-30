@@ -130,7 +130,7 @@ _AUTO_DOM = re.compile(
     r"|intercepts pointer events|is outside of the (?:visible )?viewport",
     re.IGNORECASE,
 )
-_AUTO_TIMEOUT = re.compile(r"Timeout \d+ ms? exceeded", re.IGNORECASE)
+_AUTO_TIMEOUT = re.compile(r"Timeout \d+ ?ms? exceeded", re.IGNORECASE)
 
 #: Priority order encodes env > data > flaky > product > automation (plus
 #: ``unknown`` when nothing matches); every match is still reported.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -241,7 +242,7 @@ class TestCli:
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(failure.sys, "stdin", io.StringIO("net::ERR_CONNECTION_REFUSED"))
+        monkeypatch.setattr(sys, "stdin", io.StringIO("net::ERR_CONNECTION_REFUSED"))
         assert main(["-"]) == EXIT_OK
         assert "environment_defect" in capsys.readouterr().out
 

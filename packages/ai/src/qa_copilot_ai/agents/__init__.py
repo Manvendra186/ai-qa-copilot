@@ -1,4 +1,4 @@
-"""LLM-backed agents. S1.1 Requirement, S1.2 Test Design, S2.3 Automation."""
+"""LLM-backed agents. S1.1 Requirement, S1.2 Test Design, S2.3 Automation, S4.1 Investigator."""
 
 from .automation import (
     AUTOMATOR_NAME,
@@ -9,6 +9,14 @@ from .automation import (
     AutomationInput,
     GeneratedTest,
     parse_generated_test,
+)
+from .failure_investigator import (
+    INVESTIGATOR_NAME,
+    Diagnosis,
+    FailureInvestigatorAgent,
+    FailureInvestigatorAgentResult,
+    InvestigatorInput,
+    parse_diagnosis,
 )
 from .requirement import (
     AGENT_NAME,
@@ -34,6 +42,7 @@ __all__ = [
     "AGENT_NAME",
     "AUTOMATOR_NAME",
     "FRAMEWORKS",
+    "INVESTIGATOR_NAME",
     "LANGUAGES",
     "PRIORITIES",
     "RISK_LEVELS",
@@ -43,7 +52,11 @@ __all__ = [
     "AutomationAgent",
     "AutomationAgentResult",
     "AutomationInput",
+    "Diagnosis",
+    "FailureInvestigatorAgent",
+    "FailureInvestigatorAgentResult",
     "GeneratedTest",
+    "InvestigatorInput",
     "RequirementAgent",
     "RequirementAgentResult",
     "RequirementAnalysis",
@@ -53,5 +66,6 @@ __all__ = [
     "TestDesignInput",
     "TestCase",
     "TestSuite",
+    "parse_diagnosis",
     "parse_generated_test",
 ]
