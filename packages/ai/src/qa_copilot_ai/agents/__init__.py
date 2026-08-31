@@ -1,4 +1,5 @@
-"""LLM-backed agents. S1.1 Requirement, S1.2 Test Design, S2.3 Automation, S4.1 Investigator."""
+"""LLM-backed agents. S1.1 Requirement, S1.2 Test Design, S2.3 Automation,
+S4.1 Investigator, S5.4 Knowledge Q&A."""
 
 from .automation import (
     AUTOMATOR_NAME,
@@ -26,6 +27,17 @@ from .fixer import (
     FixProposal,
     parse_fix_proposal,
 )
+from .knowledge_qa import (
+    KNOWLEDGE_QA_NAME,
+    KnowledgeContext,
+    KnowledgeQAAgent,
+    KnowledgeQAAgentResult,
+    KnowledgeQAInput,
+    QAAnswer,
+    QACitation,
+    parse_qa_answer,
+    render_context,
+)
 from .requirement import (
     AGENT_NAME,
     SUGGESTED_TEST_TYPES,
@@ -52,6 +64,7 @@ __all__ = [
     "FIXER_NAME",
     "FRAMEWORKS",
     "INVESTIGATOR_NAME",
+    "KNOWLEDGE_QA_NAME",
     "LANGUAGES",
     "PRIORITIES",
     "RISK_LEVELS",
@@ -70,6 +83,12 @@ __all__ = [
     "FixerInput",
     "GeneratedTest",
     "InvestigatorInput",
+    "KnowledgeContext",
+    "KnowledgeQAAgent",
+    "KnowledgeQAAgentResult",
+    "KnowledgeQAInput",
+    "QAAnswer",
+    "QACitation",
     "RequirementAgent",
     "RequirementAgentResult",
     "RequirementAnalysis",
@@ -82,4 +101,6 @@ __all__ = [
     "parse_diagnosis",
     "parse_fix_proposal",
     "parse_generated_test",
+    "parse_qa_answer",
+    "render_context",
 ]

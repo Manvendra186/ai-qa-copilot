@@ -26,6 +26,12 @@ S4.2: the Fix Agent (build bible §19 Phase 4) — prompt v1 +
 schema-validated :class:`FixProposal` (patch or decline, §26 category guard)
 derived from the broken test file + S3.3 failure + S4.1 diagnosis; the
 ≥ 5/10 applicable-and-passing gate lives in :mod:`qa_copilot_ai.fixer`.
+
+S5.4: the Knowledge Q&A agent (build bible §19 Phase 5) — prompt v1 +
+schema-validated :class:`QAAnswer` (the strict grounded-answer contract:
+grounded in-scope answers with real citations, or a strict refusal) over
+S5.1/S5.2 retrieved passages; the ≥ 80% grounded / 100% refused live gate
+lives in :mod:`qa_copilot_ai.knowledge_qa`.
 """
 
 from .agents import (
@@ -34,6 +40,7 @@ from .agents import (
     FIXER_NAME,
     FRAMEWORKS,
     INVESTIGATOR_NAME,
+    KNOWLEDGE_QA_NAME,
     LANGUAGES,
     PRIORITIES,
     RISK_LEVELS,
@@ -52,6 +59,12 @@ from .agents import (
     FixProposal,
     GeneratedTest,
     InvestigatorInput,
+    KnowledgeContext,
+    KnowledgeQAAgent,
+    KnowledgeQAAgentResult,
+    KnowledgeQAInput,
+    QAAnswer,
+    QACitation,
     RequirementAgent,
     RequirementAgentResult,
     RequirementAnalysis,
@@ -64,6 +77,8 @@ from .agents import (
     parse_diagnosis,
     parse_fix_proposal,
     parse_generated_test,
+    parse_qa_answer,
+    render_context,
 )
 from .config import ModelSettings, load_dotenv, load_extra_body, load_model_settings
 from .gateway import (
@@ -112,6 +127,11 @@ __all__ = [
     "INVESTIGATOR_NAME",
     "InMemoryPromptStore",
     "InvestigatorInput",
+    "KNOWLEDGE_QA_NAME",
+    "KnowledgeContext",
+    "KnowledgeQAAgent",
+    "KnowledgeQAAgentResult",
+    "KnowledgeQAInput",
     "LANGUAGES",
     "LLMError",
     "LLMGateway",
@@ -123,6 +143,8 @@ __all__ = [
     "PromptRenderError",
     "PromptSpec",
     "PromptStore",
+    "QAAnswer",
+    "QACitation",
     "REDACTED",
     "RISK_LEVELS",
     "RedactResult",
@@ -147,5 +169,7 @@ __all__ = [
     "parse_diagnosis",
     "parse_fix_proposal",
     "parse_generated_test",
+    "parse_qa_answer",
+    "render_context",
     "render_prompt",
 ]

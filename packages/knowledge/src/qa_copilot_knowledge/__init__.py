@@ -49,6 +49,15 @@ from .models import (
     TestOutcomeRecord,
 )
 from .persist import embed_and_store, load_document_embeddings, store_document_embedding
+from .qa_golden import (
+    QAExpectations,
+    QAGate,
+    QAGoldenSet,
+    QAGoldenSetError,
+    QAQuestion,
+    default_qa_golden_path,
+    load_qa_golden_set,
+)
 from .search import MAX_TOP_K, KnowledgeIndex, LexicalIndex, tokenize
 from .sources import (
     history_documents,
@@ -81,6 +90,11 @@ __all__ = [
     "LexicalIndex",
     "MAX_TOP_K",
     "OpenAICompatibleEmbeddingProvider",
+    "QAGate",
+    "QAExpectations",
+    "QAQuestion",
+    "QAGoldenSet",
+    "QAGoldenSetError",
     "RetrievalGate",
     "RetrievalGoldenSet",
     "RetrievalQuery",
@@ -93,11 +107,13 @@ __all__ = [
     "chunk_text",
     "cosine_similarity",
     "default_golden_path",
+    "default_qa_golden_path",
     "embed_and_store",
     "history_documents",
     "hybrid_search",
     "load_document_embeddings",
     "load_golden_set",
+    "load_qa_golden_set",
     "parse_embedding_response",
     "requirement_documents",
     "repository_file_documents",

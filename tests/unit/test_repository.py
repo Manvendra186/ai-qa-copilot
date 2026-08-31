@@ -7,9 +7,12 @@ reachable, so ``pytest`` stays green without docker.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 import sqlalchemy as sa
 from qa_copilot_ai import AICallResult, PromptNotFound, TokenUsage
+from qa_copilot_knowledge.persist import load_document_embeddings, store_document_embedding
 from qa_copilot_repository import audit, db, models, prompts
 
 # --- URL resolution ---------------------------------------------------------
@@ -130,16 +133,59 @@ def test_db_smoke_seed_rows_present() -> None:
 
 
 def test_db_smoke_vector_roundtrip() -> None:
+    """pgvector round-trip: store a VECTOR_DIM vector, read it back.
+
+    Self-contained (S5.2 guarded-persistence pattern): one temporary
+    org/project/document/embedding chain inside a transaction that is
+    rolled back, so the smoke test does not depend on seeded data.
+    """
     engine = _engine_or_skip()
     if engine is None:
         pytest.skip("dev database not reachable (docker compose up -d?)")
+    session = db.make_session_factory(engine)()
     try:
-        with engine.connect() as conn:
-            row = conn.execute(
-                sa.text("SELECT vector_dims(vector) FROM embeddings LIMIT 1")
-            ).scalar_one_or_none()
-        assert row == models.VECTOR_DIM
+        org_id, project_id, doc_id = (str(uuid.uuid4()) for _ in range(3))
+        conn = session.connection()
+        conn.execute(
+            sa.insert(models.Organization),
+            {"id": org_id, "name": "s05-vector-smoke", "plan": "dev"},
+        )
+        conn.execute(
+            sa.insert(models.Project),
+            {
+                "id": project_id,
+                "organization_id": org_id,
+                "name": "s05-vector-smoke",
+                "settings": {},
+            },
+        )
+        conn.execute(
+            sa.insert(models.KnowledgeDocument),
+            {
+                "id": doc_id,
+                "project_id": project_id,
+                "source_type": "standard",
+                "source_ref": "s05-vector-smoke",
+                "content": "S0.5 vector smoke test document",
+                "metadata": {},
+            },
+        )
+        document = session.get(models.KnowledgeDocument, doc_id)
+        assert document is not None
+        vector = [0.01 * (i + 1) for i in range(models.VECTOR_DIM)]
+        store_document_embedding(session, document, vector)
+        dims = session.execute(
+            sa.text("SELECT vector_dims(vector) FROM embeddings WHERE knowledge_document_id = :id"),
+            {"id": doc_id},
+        ).scalar_one()
+        assert dims == models.VECTOR_DIM
+        # pgvector stores float4, so compare with a small tolerance.
+        loaded = load_document_embeddings(session, [doc_id])[doc_id]
+        assert len(loaded) == models.VECTOR_DIM
+        assert all(abs(a - b) < 1e-5 for a, b in zip(loaded, vector, strict=True))
     finally:
+        session.rollback()
+        session.close()
         engine.dispose()
 
 
