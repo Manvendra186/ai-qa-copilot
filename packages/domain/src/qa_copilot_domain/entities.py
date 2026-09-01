@@ -30,6 +30,7 @@ from .enums import (
     Priority,
     ProjectRole,
     RiskLevel,
+    TestResultStatus,
     TestType,
 )
 
@@ -287,4 +288,93 @@ class ImpactSet(DomainModel):
     impacted: list[ImpactedTest] = Field(default_factory=list)
     test_files_scanned: int = Field(default=0, ge=0)
     notes: list[str] = Field(default_factory=list)
+    computed_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# S6.2 — Regression Intelligence: flaky + risk core (build bible §7, §19 S6.2).
+# ---------------------------------------------------------------------------
+
+#: Policy defaults for the deterministic flaky/failing flags (build bible
+#: §19 S6.2). Single source of truth — the repository core and the web/API
+#: both read these so the flagging policy never drifts between layers.
+DEFAULT_MIN_SAMPLE = 3
+DEFAULT_RECENT_WINDOW = 5
+DEFAULT_FLAKY_THRESHOLD = 0.25
+DEFAULT_FAILING_THRESHOLD = 0.50
+
+
+class TestHistoryStats(DomainModel):
+    """Deterministic per-test history statistics (build bible §19 S6.2).
+
+    Computed LLM-free from a test's ``test_results`` history (and the
+    ``failures`` diagnoses linked to it). Every rate is a 0.0–1.0 fraction of
+    *executed* runs (``passed`` / ``failed`` / ``flaky``); ``skipped`` is
+    reported but excluded from the denominators.
+
+    - ``flakiness_rate`` — the share of executions that were flaky (a ``flaky``
+      outcome *or* a ``flaky_behavior`` diagnosis);
+    - ``failure_rate`` — the share of executions that ended ``failed``;
+    - ``recent_failure_rate`` — the share of the most recent ``recent_window``
+      executions that ended ``failed`` (the "broke recently" signal).
+
+    ``insufficient_samples`` is True when fewer than ``min_sample`` executions
+    exist — then neither ``is_flaky`` nor ``is_failing`` may be raised (the
+    build bible's "no flags from a single run"). Equal inputs always produce
+    equal JSON (the S2.1/S3.3/S5.1 deterministic-core pattern).
+    """
+
+    test_key: NonBlankStr
+    executions: int = Field(default=0, ge=0)
+    passed: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    flaky: int = Field(default=0, ge=0)
+    skipped: int = Field(default=0, ge=0)
+    flakiness_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    failure_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    recent_failure_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    is_flaky: bool = False
+    is_failing: bool = False
+    insufficient_samples: bool = False
+    last_status: TestResultStatus | None = None
+    last_run_id: str | None = None
+
+
+class TestRisk(DomainModel):
+    """One ranked test in a regression-risk set (build bible §19 S6.2).
+
+    ``risk_score`` is the deterministic
+    ``f(impact kind, failure rate, flakiness rate, requirement risk,
+    test-case priority)``; the S6.3 recommender orders the set by it (stable
+    tie-break on ``test_key``). ``stats`` carries the full per-test history
+    evidence; ``signals`` are the deterministic, human-readable reasons that
+    fired (the S6.4 UI's per-test chips).
+    """
+
+    test_key: NonBlankStr
+    risk_score: float = Field(default=0.0, ge=0.0)
+    signals: list[str] = Field(default_factory=list)
+    stats: TestHistoryStats
+    impact_kind: ImpactKind | None = None
+    requirement_risk: RiskLevel | None = None
+    test_case_priority: Priority | None = None
+
+
+class RiskRanking(DomainModel):
+    """Deterministic flaky + risk ranking over a project's run history (§19 S6.2).
+
+    The LLM-free core output: per-test :class:`TestHistoryStats` plus the
+    deterministic :class:`TestRisk` score. ``ranked`` is ordered by
+    ``risk_score`` descending, then ``test_key`` ascending — stable and
+    reproducible (equal inputs ⇒ equal JSON, ``computed_at`` excepted). The
+    flagging policy (``min_sample`` / window / thresholds) is echoed so the
+    S6.4 UI can explain *why* a flag fired.
+    """
+
+    project_id: NonBlankStr
+    ranked: list[TestRisk] = Field(default_factory=list)
+    min_sample: int = Field(default=DEFAULT_MIN_SAMPLE, ge=1)
+    recent_window: int = Field(default=DEFAULT_RECENT_WINDOW, ge=1)
+    flaky_threshold: float = Field(default=DEFAULT_FLAKY_THRESHOLD, ge=0.0, le=1.0)
+    failing_threshold: float = Field(default=DEFAULT_FAILING_THRESHOLD, ge=0.0, le=1.0)
     computed_at: datetime | None = None

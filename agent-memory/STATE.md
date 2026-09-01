@@ -9,12 +9,41 @@
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
   Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
-  **Phase 6 — Regression Intelligence: started — S6.1 ✓ (change-impact core), S6.2–S6.5 next**
-- **Step:** S0.1–S6.1 ✓ (S6.1 = change-impact core, LLM-free — 40-test suite, goldens green; see §2) ·
-  **next:** **S6.2 — flaky + risk core (LLM-free)** — see §3
+  **Phase 6 — Regression Intelligence: in progress — S6.1 ✓ (change-impact core), S6.2 ✓ (flaky + risk core), S6.3–S6.5 next**
+- **Step:** S0.1–S6.2 ✓ (S6.1 change-impact core + S6.2 flaky/risk core, both LLM-free; see §2) ·
+  **next:** **S6.3 — recommender (deterministic top-N)** — see §3
 
 ## 2. Just completed
 
+- 2026-09-01 · **S6.2 (flaky + risk core, LLM-free) — all gates green**
+  (bible §19 S6.2; exit: synthetic run-history fixtures → flaky/failing flags
+  + deterministic risk ranking 100% · pytest/mypy/ruff green):
+  - `qa_copilot_repository.history` (new) — `TestOutcome` (run_id, run_order,
+    status, flaky_diagnosis) + `TestRiskInput` (test_key, outcomes, impact_kind,
+    requirement_risk, test_case_priority) · `compute_test_stats` (flakiness /
+    failure / recent-failure rates, `is_flaky` / `is_failing` flags,
+    `insufficient_samples`) · `compute_risk_score` (bounded [0,110] monotonic
+    sum: impact direct 40 / generated 25 / referenced 15 · failure 30 · flaky
+    20 · requirement risk / test-case priority 10/5/2) · `strongest_impact_kind`
+    · `rank_tests` · `build_risk_ranking` · `project_test_history` (ORM seam) ·
+    thresholds from `qa_copilot_domain` (MIN_SAMPLE=3, RECENT_WINDOW=5,
+    FLAKY=0.25, FAILING=0.50);
+  - `tests/unit/test_history.py` (new, **18 tests**): flaky/failing flags +
+    risk ranking over synthetic run-history fixtures · min-sample gate (no
+    flags from < 3 runs) · determinism (equal inputs ⇒ equal output) ·
+    fake-`Session` ORM mapping · full-query E2E against a **dedicated** scratch
+    Postgres `qa_copilot_history_test` on :5433 (created + dropped by the
+    fixture; `vector` ext installed) — main dev `qa_copilot` schema untouched;
+  - **gates**: pytest **73 passed** (focused impact+runs+history; +18) ·
+    mypy strict ✓ (test file) · ruff check ✓ · ruff format ✓ · full pre-commit
+    mypy hook blocked by network (GitHub `mypy-hook` env install fails) —
+    direct mypy authoritative + clean;
+  - **gotchas:** `TestResult.test_case_id` is NOT an FK (E2E seed needs no
+    `TestCase` row) · FK-safe seed order org/project → run → result → failure
+    with grouped flushes · drop the scratch DB *after* the session closes (else
+    `DROP` blocks on the SELECTs' ACCESS SHARE locks) · pytest emits
+    `PytestCollectionWarning` for the production `TestOutcome` / `TestRiskInput`
+    names — benign, left as-is (renaming would break the API).
 - 2026-09-01 · **S6.1 (change-impact core, LLM-free) — all gates green**
   (bible §19 S6.1; exit: golden impact sets 100% on ≥ 2 sample repos,
   no LLM in the path, CLI → JSON):
@@ -419,25 +448,24 @@
 
 ## 3. NEXT STEP (start here)
 
-**S6.2 — Flaky + risk core (LLM-free)** (bible §19 S6.2):
-`qa_copilot_repository.history` — per-test history stats from
-`test_runs`/`test_results`/`failures`: flakiness rate (`flaky` status +
-`flaky_behavior` diagnoses) · recent failure rate · min-sample threshold
-(no flaky flags from a single run) · deterministic risk score =
-f(impact kind, failure rate, flakiness rate, requirement `risk`,
-test-case `priority`) with stable ordering.
-- **Exit criterion:** synthetic run-history fixtures → flaky flags +
-  risk ranking match expected 100% · deterministic (same input → same
-  output) · gates green (pytest/mypy/ruff).
-- **Then:** S6.3 (recommender `qa_copilot_ai.regression` —
-  deterministic top-N from S6.1 ∩ S6.2, stable tie-break + per-test
-  rationale · optional `regression-advisor@1` human summary (stub
-  fallback) · golden `regression_v1.json` eval + `scripts/regression_run.py`)
-  → S6.4 (API + web "Regression" tab) → S6.5 (live E2E + baseline
-  report) — full table: bible §19.
-- S6.1 is done (see §2): `compute_impact` is the S6.3 recommender's
-  impact input — S6.2 risk joins onto the same `ImpactSet` · every MVP
-  §20 "definition of done" item is met (S0.1–S5.5 ✓).
+**S6.3 — Recommender (deterministic top-N)** (bible §19 S6.3):
+`qa_copilot_ai.regression` — rank the S6.1 ∩ S6.2 intersection: join
+`compute_impact` (per-test impact kinds, via `strongest_impact_kind`) with
+S6.2 `compute_risk_score` / `build_risk_ranking` → deterministic top-N (stable
+tie-break on `test_key`) + per-test rationale (impact kind, failure/flakiness
+rates, requirement risk, test-case priority) · optional `regression-advisor@1`
+human summary (stub fallback) · golden `regression_v1.json` eval +
+`scripts/regression_run.py`.
+- **Exit criterion:** golden `regression_v1.json` top-N set matches on ≥ 2
+  sample repos · deterministic (same input ⇒ same JSON) · no LLM in the ranking
+  path (LLM only for the optional summary, stub fallback) · gates green
+  (pytest/mypy/ruff).
+- **Then:** S6.4 (API `POST /projects/{id}/regression/analyze` + web
+  "Regression" tab) → S6.5 (live E2E + baseline report) — full table: bible §19.
+- S6.1 + S6.2 are done (see §2): `compute_impact` (S6.1) +
+  `compute_risk_score` / `build_risk_ranking` (S6.2) are the S6.3 recommender's
+  inputs — rank the intersection, stable tie-break, explainable rationale ·
+  every MVP §20 "definition of done" item is met (S0.1–S5.5 ✓).
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker
   deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
   `test_golden_demo_app` conventions-golden re-baseline on clean trees
