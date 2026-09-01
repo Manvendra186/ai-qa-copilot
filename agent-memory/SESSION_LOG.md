@@ -1625,3 +1625,38 @@
   complete and every MVP §20 "definition of done" item is met.** See
   `STATE.md` §1/§3.
 
+## 2026-09-01 — Phase 6 defined: Regression Intelligence step table (bible §19) — no code
+
+- **Goal:** `STATE.md` §3 handoff — "Phase 6 — define it, then build" (bible §18:
+  change impact, test prioritization, flaky detection; exit: "recommend a
+  focused regression set").
+- **Did:**
+  - Grounding audit (read-only, no code): `generated_tests` provenance
+    (`test_case_id` → `file_path` + `repository_path`, S2.3/S2.4) ·
+    `requirement_test_cases` M:N join + `requirements.risk` +
+    `test_cases.priority` · `TestRun.commit_sha` · `TestResultStatus.FLAKY` +
+    `FailureCategory.FLAKY_BEHAVIOR` (S3.3/S4.1) · S2.1 test-file patterns +
+    S2.2 `TestConventions` (test files, `data-testid` vocabulary) · `JobType`
+    enum (S6.4 adds `REGRESSION_ANALYSIS`) · S4.3 subset re-run path available
+    for S6.4 "Run this set".
+  - `docs/AI_QA_Copilot_Build_Bible_v1.1.md`:
+    - §19: empty `### Phases 6–8` placeholder → **`### Phase 6 — Regression
+      Intelligence`** — S6.0 note (deterministic-first rationale + building
+      blocks) + step table **S6.1–S6.5**; placeholder now `### Phases 7–8`.
+    - §31.7: +2 numeric targets (regression impact precision ≥ 90%; expected
+      test in the recommended top-N ≥ 90%).
+    - §22: + Phase 6 golden-set bullet (`regression_v1.json`).
+    - §29: +2 decision rows (2026-09-01): Phase 6 deterministic-first (LLM
+      only for the optional human summary, stub fallback) · change-impact
+      anchors = `generated_tests` provenance + S2.1/S2.2 conventions.
+  - `agent-memory/STATE.md`: §1 position (Phase 6 defined, not started) · §2
+    just-completed entry · §3 next step = S6.1 with exit criterion.
+- **Verified:** bible §19 step table present, section numbering intact ·
+  §31.7/§22/§29 rows added · STATE/SESSION_LOG consistent · no code changes
+  (definition step per §32 protocol).
+- **Decisions:** see the two §29 rows above (deterministic-first;
+  provenance + conventions as change-impact anchors).
+- **Next session start:** **S6.1 — Change-impact core (LLM-free)** —
+  `qa_copilot_repository.impact`, golden impact sets on ≥ 2 sample repos,
+  CLI → JSON. Exit + full step table: bible §19. See `STATE.md` §3.
+

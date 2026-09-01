@@ -364,7 +364,27 @@ User request → Intent / task classifier
 | S5.4 | RAG Q&A agent: `knowledge-qa@1` strict grounded-answer contract (answer + citations + refusal), parser, runner + CLI over the golden Q&A set, **live gate** | Live: ≥ 80% in-scope questions grounded with project-specific facts; 100% out-of-scope refused |
 | S5.5 | Ask API + web Q&A view: `POST /projects/{id}/knowledge/ask` (202+job) + chat view | Ask → 202 → job → grounded answer with citations in the UI |
 
-### Phases 6–8
+### Phase 6 — Regression Intelligence
+
+> Note (S6.0): Phase 6 builds on the deterministic foundation already in place:
+> `generated_tests` provenance (S2.3/S2.4: `test_case_id` → `file_path` +
+> `repository_path`), S2.1 scanner test-file patterns, S2.2 conventions (test
+> files + `data-testid` vocabulary), `test_runs.commit_sha`,
+> `test_results.status` (incl. `flaky`) + `failures.category` (incl.
+> `flaky_behavior`), and the `requirement_test_cases` join (`risk`,
+> `priority`). Core analysis is **LLM-free** (the S2.1/S3.3/S5.1 pattern —
+> deterministic, auditable, reproducible); the local model is used only for
+> the optional human-facing summary (S6.3) with the S2.3/S5.4 stub fallback.
+
+| Step | Work | Exit criterion |
+|---|---|---|
+| S6.1 | Change-impact core (LLM-free): `qa_copilot_repository.impact` — changed files (explicit list or a `base..head` git range on the repo checkout) → impact set: **direct** (changed files that are test files, S2.1/S2.2 patterns) · **generated** (changed file = an applied `generated_tests.file_path` → its `test_case` → linked requirements via the M:N join) · **referenced** (non-test changed file → tests importing/requiring it or using its `data-testid` from the S2.2 vocabulary) | Golden impact sets match 100% on ≥ 2 sample repos (js-web-app + demo app) for known diffs; no LLM in the path; CLI `python -m qa_copilot_repository.impact <root> --changed …` → JSON |
+| S6.2 | Flaky + risk core (LLM-free): `qa_copilot_repository.history` — per-test history stats from `test_runs`/`test_results`/`failures`: flakiness rate (`flaky` status + `flaky_behavior` diagnoses), recent failure rate, min-sample threshold (no flags from a single run); deterministic risk score = f(impact kind, failure rate, flakiness rate, requirement `risk`, test-case `priority`) with stable ordering | Synthetic run-history fixtures → flaky flags + risk ranking match expected 100%; deterministic (same input → same output) |
+| S6.3 | Recommender + eval: `qa_copilot_ai.regression` — deterministic top-N focused set from S6.1 ∩ S6.2 (default N = 10, stable tie-break) with per-test rationale (which signals fired); optional `regression-advisor@1` human summary (gateway §31.1, grounded in the ranked list only; no model → deterministic stub); golden set `regression_v1.json` (§22) + runner + CLI + `scripts/regression_run.py` | Golden: impact precision ≥ 90% and expected test in the recommended top-N; schema-valid ≥ 99%; `regression_run` exits 0 vs §31.7 targets |
+| S6.4 | Regression API + web: `JobType.REGRESSION_ANALYSIS`; `POST /projects/{id}/regression/analyze` (202 + `job_id` + `Location`; member-or-above RBAC, unknown project → 403 §31.3; body = `files[]` or `{base_ref, head_ref}` — 422 on invalid); `RegressionJobAgent` → **`regression.set` SSE event** (impact + ranked set + flaky flags + optional summary) · `output_ref` = stable `regression://<project>` ref → `ai_actions` audit row; "Regression" tab: input → job progress → ranked set with per-test rationale chips + flaky flags; "Run this set" → S3 execution over the selected tests | analyze → 202 → job → ranked set visible in UI; running the recommended set through the S3 path stores artifacts; contract/RBAC/SSE tests green |
+| S6.5 | Live E2E + baseline report: demo app (seeded run history with ≥ 1 flaky + ≥ 1 fail→pass test) · change a component/test-id (or `DEFECT_LOCATOR_DRIFT`) → analyze → affected tests land in the recommended set · flaky test flagged · run the recommended set → artifacts; live eval `regression_run --report reports/regression_v1.json` (LM Studio) | Live E2E green; baseline report committed (drift tracking, §31.6/§31.7) |
+
+### Phases 7–8
 
 ## 20. MVP definition of done
 
@@ -406,6 +426,7 @@ User request → Intent / task classifier
 - Golden outputs for test case structure and failure classification.
 - Regression tests for every important prompt/schema/tool change (prompts pinned by `name@version`, §31.6).
 - **v1.1:** every broken test is tagged with the defect-injection flag that produced it (§31.8), so evals are reproducible.
+- **Phase 6 (2026-09-01):** `regression_v1.json` — fixture repo + changed files + run history + expected impact/ranking/set; gates per §31.7 (S6.3).
 
 ## 23. Demo application
 
@@ -483,6 +504,8 @@ LLM capability + QA reasoning + repository structure + business rules + test his
 | 2026-08-26 | **Agent-memory folder + STATE.md protocol** | Cross-session continuity under limited context | — |
 | 2026-08-26 | **Step-based execution (S#.x, one step per session)** | Token-efficient, verifiable progress | — |
 | 2026-08-26 | **Auth baseline at S0.8 (dev user + JWT + roles)** | Avoid retrofitting permissions | — |
+| 2026-09-01 | **Phase 6 (Regression Intelligence) is deterministic-first**: change-impact, flaky detection, risk ranking, top-N set are LLM-free; local model only for the optional human summary (stub when no model) | Follows S2.1/S3.3/S5.1; recommendations must be reproducible + auditable; local-model latency (§31.1) | If evals show the summary layer adds value, make it required |
+| 2026-09-01 | **Change-impact anchors = `generated_tests` provenance (S2.3) + S2.1/S2.2 conventions** (direct/generated/referenced kinds; no LLM guessing) | Provenance already persisted; deterministic mapping is auditable | When a project carries substantial hand-written tests unlinked from `test_cases` |
 
 ## 30. One-page build mantra
 
@@ -554,6 +577,8 @@ LLM capability + QA reasoning + repository structure + business rules + test his
 | Failure classification top-1 (30-test broken set) | ≥ 80% |
 | Generated code passes lint + type | ≥ 95% |
 | Test-design step coverage vs oracle | ≥ 85% |
+| Regression impact precision (golden set, S6.3) | ≥ 90% |
+| Regression set coverage — expected test in top-N (golden set, S6.3) | ≥ 90% |
 ### 31.8 Demo application
 
 Per §23: own repo, React + Vite + Express + SQLite, env-flag defect injection mapping 1:1 to the failure taxonomy; run it as a compose service so Playwright workers reach it via `APP_UNDER_TEST`.

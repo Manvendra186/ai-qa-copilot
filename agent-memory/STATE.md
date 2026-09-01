@@ -8,15 +8,24 @@
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
-  Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓)
-- **Step:** S0.1–S5.5 ✓ (S5.5 = Ask API + web Q&A view: `POST .../knowledge/ask`
-  202+job → `knowledge.answer` SSE event (grounded answer + citations, or a
-  contract-valid refusal) — **live E2E green**; see §2) ·
-  **next:** **Phase 6** (bible §19 "Phases 6–8" is a detail-on-demand
-  placeholder — define it next; all MVP §20 items are now met — see §3)
+  Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
+  **Phase 6 — Regression Intelligence: defined (S6.1–S6.5), not started**
+- **Step:** S0.1–S5.5 ✓ (S5.5 = Ask API + web Q&A view — live E2E green; see §2) ·
+  Phase 6 step table defined in bible §19 on 2026-09-01 (see §2) ·
+  **next:** **S6.1 — change-impact core (LLM-free)** — see §3
 
 ## 2. Just completed
 
+- 2026-09-01 · **Phase 6 defined — Regression Intelligence** (bible §19,
+  detail-on-demand per §18; definition step, no code): S6.1 change-impact core
+  (LLM-free; direct/generated/referenced over `generated_tests` provenance +
+  S2.1/S2.2 conventions) · S6.2 flaky + risk core (LLM-free stats over
+  `test_runs`/`test_results`/`failures`) · S6.3 recommender + optional
+  `regression-advisor@1` summary + golden `regression_v1.json` eval · S6.4
+  `POST /projects/{id}/regression/analyze` (202+job) → `regression.set` SSE +
+  "Regression" tab ("Run this set" via S3) · S6.5 live E2E + baseline report;
+  bible §31.7 +2 numeric targets · §22 + `regression_v1.json` · §29 +2
+  decisions (deterministic-first; provenance + conventions as impact anchors).
 - 2026-09-01 · **S5.5 (Ask API + web Q&A view) — all gates green + live E2E
   passed** (bible §19 S5.5; exit: ask → 202 → job → grounded answer with
   citations in the UI):
@@ -352,21 +361,21 @@
 
 ## 3. NEXT STEP (start here)
 
-**Phase 6 — define it, then build** (bible §19 "Phases 6–8" is a
-detail-on-demand placeholder — the step table is intentionally not yet
-written; propose it from the bible's §21 quality gates / §22 eval dataset
-/ user priorities before coding).
-- **Phase 5 is complete** (S5.1–S5.5 ✓) and **every MVP §20 "definition of
-  done" item is met**: project → requirement → structured test cases →
-  repository indexed → Playwright generation with repo conventions →
-  human diff review → execution → artifacts stored/visible → AI failure
-  analysis (evidence + confidence) → reviewable fix → re-run loop · all
-  meaningful AI actions auditable (`ai_actions`) · safe synthetic demo app.
-- S5.5 is green: Ask API + web Q&A view over the S5.4 contract —
-  `knowledge.answer` SSE event carries the grounded answer + citations
-  (full text rides SSE; `output_ref` is the stable `knowledge-ask://<project>`
-  ref); no-model dev mode = deterministic contract-valid refusal
-  (`KnowledgeQARefusalStub`) — see §2.
+**S6.1 — Change-impact core (LLM-free)** (bible §19 S6.1):
+`qa_copilot_repository.impact` — changed files (explicit list or a `base..head`
+git range on the repo checkout) → impact set: **direct** (changed files that
+are test files, S2.1/S2.2 patterns) · **generated** (changed file = an applied
+`generated_tests.file_path` → its `test_case` → linked requirements via the
+M:N join) · **referenced** (non-test changed file → tests importing/requiring
+it or using its `data-testid` from the S2.2 vocabulary).
+- **Exit criterion:** golden impact sets match 100% on ≥ 2 sample repos
+  (js-web-app + demo app) for known diffs · no LLM in the path ·
+  CLI `python -m qa_copilot_repository.impact <root> --changed …` → JSON ·
+  gates green (pytest/mypy/ruff).
+- **Then:** S6.2 (flaky + risk core) → S6.3 (recommender + eval) → S6.4
+  (API + web) → S6.5 (live E2E + baseline report) — full table: bible §19.
+- Phase 6 is **defined, not started**; every MVP §20 "definition of done"
+  item is already met (S0.1–S5.5 ✓).
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker
   deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
   `test_golden_demo_app` conventions-golden re-baseline on clean trees
