@@ -196,9 +196,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # S5.3: the Knowledge Index job (knowledge_index) — deterministic, no LLM.
     app.state.jobs_knowledge_agent = jobs.KnowledgeIndexJobAgent(app.state.engine)
     # S5.5: the Knowledge Ask job (knowledge_ask) — grounded QA over the base.
-    app.state.jobs_knowledge_ask_agent = _build_knowledge_ask_jobs_agent(
-        settings, app.state.engine
-    )
+    app.state.jobs_knowledge_ask_agent = _build_knowledge_ask_jobs_agent(settings, app.state.engine)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

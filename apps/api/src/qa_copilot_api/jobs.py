@@ -652,7 +652,7 @@ class KnowledgeQARefusalStub(KnowledgeQARunner):
 
     async def run(self, qa_input: KnowledgeQAInput) -> KnowledgeQAAgentResult:
         """A contract-valid refusal: ``in_scope=False``, no answer, no citations."""
-        answer = QAAnswer(in_scope=False, answer=None, citations=(), confidence=0.0)
+        answer = QAAnswer(in_scope=False, answer=None, citations=[], confidence=0.0)
         call = AICallResult(
             agent="knowledge-qa",
             model="none",

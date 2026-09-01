@@ -8,15 +8,61 @@
 - **Phase:** 0 — Foundation **complete** · Phase 1 — Requirement → Test Design → Eval **complete** ·
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
-  Phase 5 — Project Knowledge **in progress** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓)
-- **Step:** S0.1–S5.4 ✓ (S5.4 = RAG Q&A agent: `knowledge-qa@1` strict
-  grounded-answer contract, golden Q&A set (12 questions), runner + CLI;
-  **live gate green — 8/8 in-scope grounded, 4/4 out-of-scope refused**) ·
-  **next:** **S5.5 — Ask API + web Q&A view** (bible §19 Phase 5:
-  `POST .../knowledge/ask` 202+job + chat view — see §3)
+  Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓)
+- **Step:** S0.1–S5.5 ✓ (S5.5 = Ask API + web Q&A view: `POST .../knowledge/ask`
+  202+job → `knowledge.answer` SSE event (grounded answer + citations, or a
+  contract-valid refusal) — **live E2E green**; see §2) ·
+  **next:** **Phase 6** (bible §19 "Phases 6–8" is a detail-on-demand
+  placeholder — define it next; all MVP §20 items are now met — see §3)
 
 ## 2. Just completed
 
+- 2026-09-01 · **S5.5 (Ask API + web Q&A view) — all gates green + live E2E
+  passed** (bible §19 S5.5; exit: ask → 202 → job → grounded answer with
+  citations in the UI):
+  - `apps/api` — `routes.py` `POST /projects/{id}/knowledge/ask` (**202 +
+    `{job_id}` + `Location: /api/v1/jobs/{id}`**; member-or-above RBAC —
+    unknown project → 403 not 404 §31.3; blank/missing question → 422) ·
+    `jobs.py` `KnowledgeAskJobAgent` (S5.3 `search_project_knowledge`
+    top-5 → S5.4 `KnowledgeQARunner` → **`knowledge.answer` SSE event** —
+    `{in_scope, answer, citations[{document_ref, source_type, title,
+    score}], confidence}` — full text rides SSE, `output_ref` stays the
+    stable `knowledge-ask://<project>` 1024-char ref → `ai_actions` audit
+    row, answer JSON in `output_ref`) + `KnowledgeQARefusalStub` (no model
+    configured → deterministic contract-valid refusal, Ask never fails or
+    goes silent — mirrors the S2.3 `AutomationStub` pattern) · `main.py`
+    wiring · `schemas.py` `AskRequest`;
+  - `apps/web` — "Project Knowledge" tab Q&A panel (`ProjectKnowledge.tsx`:
+    ask box → job progress → grounded answer with citation cards (source
+    type, title, score) or a refusal state; `lib/api.ts` `askKnowledge` +
+    types — the panel renders exactly the `knowledge.answer` SSE contract);
+  - tests: `tests/unit/test_knowledge_ask.py` (202/Location contract, RBAC
+    401/403/422, `knowledge.answer` over SSE — refusal + grounded variants —
+    job row, audit row, agent-level grounding with real `KnowledgeQAAgent`
+    over fake transports, no-model stub path);
+  - **gates**: pytest **645 passed** · mypy strict ✓ (117 files) · ruff
+    check ✓ · ruff format ✓ · pnpm lint ✓ · format:check ✓ · build ✓;
+  - **live E2E (this machine, uvicorn `:8000`, LM Studio `:8080`
+    Qwen3.8-27B; script `scripts/e2e_s55_ask.py`)**: login `dev@local.dev`
+    (owner, `Demo App`) → status `document_count 24` → ask "How should the
+    order history list be displayed to users?" → **202** → SSE
+    `job.started` → `stage.started` → `progress 0.2/0.5` →
+    **`knowledge.answer` in_scope=true** ("…newest-first order, with each
+    order showing its status and total amount…") + **2 citations**
+    (requirement "Order history" score 8.79 · test case "Order history is
+    accessible with keyboard and screen reader" score 7.89) →
+    `job.completed` → job row `completed`,
+    `output_ref knowledge-ask://7804b95c-…` → out-of-scope "What is the
+    capital of France?" → **refusal** (in_scope=false, no answer, no
+    citations — contract held) → 3 `ai_actions` rows (tokens + latency) →
+    **E2E OK**;
+  - **gotcha:** the seeded `Demo App` corpus (5 requirements / 18 test
+    cases / 1 run history) is **not** the S5.4 golden demo-shop corpus
+    (14 docs) — e.g. order-list *pagination* (10 per page) lives only in
+    the golden corpus, so the agent correctly **refuses** it for Demo App;
+    pick in-scope E2E questions grounded in the seeded corpus (e.g. order
+    history display) · `QAAnswer.citations` must be a **list** (not tuple)
+    in the API path.
 - 2026-08-30 · **S5.4 (RAG Q&A agent) — all gates green + live gate passed**:
   `knowledge-qa@1` strict grounded-answer contract (bible §19 S5.4; in-scope
   → grounded answer + corpus citations, out-of-scope → refusal only):
@@ -306,21 +352,30 @@
 
 ## 3. NEXT STEP (start here)
 
-**S5.5 — Ask API + web Q&A view** (build bible §19 Phase 5): `POST
-/projects/{id}/knowledge/ask` (202+job) + chat view — exit: ask → 202 → job
-→ grounded answer with citations in the UI.
-- S5.4 is green: `knowledge-qa@1` agent + strict contract + golden Q&A set +
-  runner/CLI; live gate passed (8/8 in-scope grounded, 4/4 out-of-scope
-  refused — see §2). The agent takes caller-retrieved `KnowledgeContext`
-  passages, so S5.5 wires S5.3 project-scoped search → agent → job → UI with
-  the same contract.
+**Phase 6 — define it, then build** (bible §19 "Phases 6–8" is a
+detail-on-demand placeholder — the step table is intentionally not yet
+written; propose it from the bible's §21 quality gates / §22 eval dataset
+/ user priorities before coding).
+- **Phase 5 is complete** (S5.1–S5.5 ✓) and **every MVP §20 "definition of
+  done" item is met**: project → requirement → structured test cases →
+  repository indexed → Playwright generation with repo conventions →
+  human diff review → execution → artifacts stored/visible → AI failure
+  analysis (evidence + confidence) → reviewable fix → re-run loop · all
+  meaningful AI actions auditable (`ai_actions`) · safe synthetic demo app.
+- S5.5 is green: Ask API + web Q&A view over the S5.4 contract —
+  `knowledge.answer` SSE event carries the grounded answer + citations
+  (full text rides SSE; `output_ref` is the stable `knowledge-ask://<project>`
+  ref); no-model dev mode = deterministic contract-valid refusal
+  (`KnowledgeQARefusalStub`) — see §2.
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker
   deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
   `test_golden_demo_app` conventions-golden re-baseline on clean trees
   (S4.1 note) · FIX-005 investigator classification (`product_defect` vs
   golden `test_data_defect`) — candidate for a failure-investigator prompt
   nudge · eval reports live in gitignored `reports/` — commit one baseline
-  after each prompt/model change if we want drift tracking.
+  after each prompt/model change if we want drift tracking · **vector
+  retrieval** is still lexical-only (LM Studio has no embeddings endpoint,
+  501) — the S5.2 `EmbeddingProvider` seam is ready for a real endpoint.
 
 ## 4. Environment facts (verified 2026-08-26)
 

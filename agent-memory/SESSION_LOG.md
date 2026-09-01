@@ -1549,3 +1549,79 @@
   → 202 → job → grounded answer with citations in the UI. Reuse the
   `knowledge-qa@1` agent + contract from S5.4. See `STATE.md` §1/§3.
 
+## 2026-09-01 — S5.5 Ask API + web Q&A view: `POST /knowledge/ask` 202+job → `knowledge.answer` SSE (grounded answer + citations / refusal) — all gates green + live E2E PASSED
+
+- **Goal:** Phase 5 final step (bible §19 S5.5): Ask API + web Q&A view —
+  exit: ask → 202 → job → grounded answer with citations in the UI.
+- **Did:**
+  - `apps/api/src/qa_copilot_api/jobs.py` (new) — `KnowledgeAskJobAgent`:
+    S5.3 `search_project_knowledge` (top-5, project-scoped) → S5.4
+    `KnowledgeQAAgent`/`KnowledgeQARefusalStub` → emit **`knowledge.answer`**
+    SSE event (`{in_scope, answer, citations[{document_ref, source_type,
+    title, score}], confidence}`) → `ai_actions` audit row (answer JSON in
+    `output_ref`; the column is 1024-char capped so the full text rides SSE,
+    `output_ref` stays the stable `knowledge-ask://<project>`). No model
+    configured → `KnowledgeQARefusalStub` returns a deterministic
+    contract-valid refusal (Ask never fails or goes silent — same pattern as
+    the S2.3 `AutomationStub`).
+  - `apps/api/src/qa_copilot_api/routes.py` (new) —
+    `POST /projects/{id}/knowledge/ask`: `AskRequest{question: min_length=1,
+    max_length=2000}`; **202 `{job_id}` + `Location: /api/v1/jobs/{id}`**;
+    member-or-above RBAC (unknown project → 403 not 404, §31.3); blank or
+    missing question → 422.
+  - `apps/api/src/qa_copilot_api/schemas.py` (new) — `AskRequest`.
+  - `apps/web/src/components/ProjectKnowledge.tsx` (new) — Q&A panel in the
+    "Project Knowledge" tab: ask box → job progress → grounded answer with
+    citation cards (source type, title, score) or the refusal state; renders
+    exactly the `knowledge.answer` SSE contract. `apps/web/src/lib/api.ts` —
+    `askKnowledge` + types.
+  - `tests/unit/test_knowledge_ask.py` (new, 12 tests) — 202/Location
+    contract, RBAC 401/403/422, `knowledge.answer` over SSE (refusal +
+    grounded variants), job row, audit row, agent-level grounding with the
+    real `KnowledgeQAAgent` over fake transports, no-model stub path.
+  - `scripts/e2e_s55_ask.py` (new) — live E2E: login → knowledge status →
+    in-scope ask (202 → SSE `knowledge.answer` in_scope=true with ≥1
+    non-empty citation) → out-of-scope ask (refusal, no answer, no
+    citations) → `ai_actions` rows → exit 0/1.
+  - **Gate fixes:** `QAAnswer(in_scope=False, …, citations=())` →
+    `citations=[]` (the pydantic model wants a list, not a tuple — the
+    refusal stub would have raised `ValidationError` at runtime); test-file
+    typing for mypy strict (`_session -> Iterator[Session]`, `_drive_agent`
+    annotated).
+- **Verified (gates):** `pytest tests/unit` → **645 passed** (0 failed) ·
+  `mypy` strict → clean (117 files) · `ruff check .` ✓ ·
+  `ruff format --check .` ✓ (154 files) · `pnpm lint` ✓ ·
+  `pnpm format:check` ✓ · `pnpm build` ✓ (vite, 41 modules).
+- **Verified (live E2E, uvicorn `127.0.0.1:8000` + LM Studio
+  `http://localhost:8080` Qwen3.8-27B, seeded `Demo App` project,
+  `dev@local.dev` owner):** login 200 → knowledge status
+  `document_count 24` → ask **"How should the order history list be
+  displayed to users?"** → **202** `job_id` + `Location` → SSE
+  `job.started` → `stage.started` → `progress 0.2/0.5` →
+  **`knowledge.answer` in_scope=true**: "…in a **newest-first** order, with
+  each order showing its **status** and **total amount**…" + **2 citations**
+  (requirement "Order history" score 8.79 · test case "Order history is
+  accessible with keyboard and screen reader" score 7.89) → `job.completed`
+  → job row `completed`, `output_ref knowledge-ask://7804b95c-…` → out-of-
+  scope **"What is the capital of France?"** → **refusal** (in_scope=false,
+  no answer, no citations — contract held) → **3 `ai_actions` rows** (agent
+  `knowledge-qa`, tokens + latency recorded) → **E2E OK (exit 0)**.
+- **Gotchas:** the seeded `Demo App` corpus (5 requirements / 18 test cases
+  / 1 run history) is **not** the S5.4 golden demo-shop corpus (14 docs) —
+  order-list *pagination* (10 per page) exists only in the golden corpus, so
+  the agent correctly **refused** "How many orders per page…?" for Demo App.
+  Pick in-scope E2E questions grounded in the seeded corpus (order history
+  display, cart total, discount cap, session timeout, keyboard/screen-reader
+  access). `QAAnswer.citations` must be a **list** in the API path.
+- **Decisions:** the answer rides the `knowledge.answer` SSE event;
+  `output_ref` is a stable short ref (`knowledge-ask://<project>`) because
+  the `ai_actions.output_ref` column is capped at 1024 chars and the full
+  answer is also stored in `output_ref` (truncated if over the cap). No-model
+  dev mode is a contract-valid refusal, never an error — mirroring S2.3's
+  stub pattern.
+- **Next session start:** **Phase 6** — bible §19 "Phases 6–8" is a
+  detail-on-demand placeholder; define its step table first (from §21
+  quality gates / §22 eval dataset / user priorities). **Phase 5 is
+  complete and every MVP §20 "definition of done" item is met.** See
+  `STATE.md` §1/§3.
+

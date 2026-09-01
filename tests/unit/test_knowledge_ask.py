@@ -54,6 +54,7 @@ from qa_copilot_api.knowledge_store import (
 from qa_copilot_api.main import create_app
 from qa_copilot_domain.enums import JobType, ProjectRole
 from qa_copilot_repository import db, models
+from sqlalchemy.orm import Session
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -199,7 +200,7 @@ def client(env: dict[str, Any]) -> Iterator[TestClient]:
 
 
 @contextmanager
-def _session(env: dict[str, Any]):
+def _session(env: dict[str, Any]) -> Iterator[Session]:
     with db.make_session_factory(env["engine"])() as session:
         yield session
 
@@ -334,7 +335,9 @@ def _grounded_agent(citation_ref: str, citation_title: str) -> KnowledgeQAAgent:
     """A real :class:`KnowledgeQAAgent` whose model returns a grounded answer."""
     payload = {
         "in_scope": True,
-        "answer": "Retries use an exponential backoff schedule before surfacing a permanent failure.",
+        "answer": (
+            "Retries use an exponential backoff schedule before surfacing a permanent failure."
+        ),
         "citations": [{"source_ref": citation_ref, "title": citation_title}],
         "confidence": 0.9,
     }
@@ -377,8 +380,7 @@ def test_ask_returns_202_job_and_location(client: TestClient) -> None:
 
 def test_ask_requires_auth(client: TestClient) -> None:
     assert (
-        client.post(f"/api/v1/projects/{ACME_ID}/knowledge/ask", json={"question": "x"})
-        .status_code
+        client.post(f"/api/v1/projects/{ACME_ID}/knowledge/ask", json={"question": "x"}).status_code
         == 401
     )
 
@@ -390,8 +392,7 @@ def test_ask_requires_member_or_above(client: TestClient) -> None:
             f"/api/v1/projects/{ACME_ID}/knowledge/ask",
             json={"question": QUESTION},
             headers=_auth("carol"),
-        )
-        .status_code
+        ).status_code
         == 403
     )
     # non-member of the project
@@ -400,8 +401,7 @@ def test_ask_requires_member_or_above(client: TestClient) -> None:
             f"/api/v1/projects/{ACME_ID}/knowledge/ask",
             json={"question": QUESTION},
             headers=_auth("dave"),
-        )
-        .status_code
+        ).status_code
         == 403
     )
     # unknown project: 403, not 404 — no existence leak (§31.3)
@@ -411,8 +411,7 @@ def test_ask_requires_member_or_above(client: TestClient) -> None:
             f"/api/v1/projects/{ghost}/knowledge/ask",
             json={"question": QUESTION},
             headers=_auth("alice"),
-        )
-        .status_code
+        ).status_code
         == 403
     )
 
@@ -424,8 +423,7 @@ def test_ask_validation(client: TestClient) -> None:
             f"/api/v1/projects/{ACME_ID}/knowledge/ask",
             json={"question": ""},
             headers=_auth("alice"),
-        )
-        .status_code
+        ).status_code
         == 422
     )
     # missing question → 422 (required)
@@ -434,8 +432,7 @@ def test_ask_validation(client: TestClient) -> None:
             f"/api/v1/projects/{ACME_ID}/knowledge/ask",
             json={},
             headers=_auth("alice"),
-        )
-        .status_code
+        ).status_code
         == 422
     )
 
@@ -470,7 +467,12 @@ def test_ask_refusal_answer_event_over_sse(client: TestClient) -> None:
 # --- job agent: grounded answer (real S5.4 runner) + failure path ------------
 
 
-def _drive_agent(agent, engine: Any, question: str, ai_session_id: str | None = None):
+def _drive_agent(
+    agent: KnowledgeQARunner,
+    engine: Any,
+    question: str,
+    ai_session_id: str | None = None,
+) -> tuple[str | None, list[tuple[str, dict[str, Any]]]]:
     """Run a :class:`KnowledgeAskJobAgent` and capture its emitted events."""
     captured: list[tuple[str, dict[str, Any]]] = []
 
@@ -493,9 +495,7 @@ def _drive_agent(agent, engine: Any, question: str, ai_session_id: str | None = 
     return output_ref, captured
 
 
-def test_ask_agent_grounds_answer_with_citations(
-    env: dict[str, Any], tmp_path: Path
-) -> None:
+def test_ask_agent_grounds_answer_with_citations(env: dict[str, Any], tmp_path: Path) -> None:
     """S5.5: retrieve S5.3 chunks, ground via S5.4, emit a rich
     ``knowledge.answer`` with citations carrying ``document_ref`` /
     ``source_type`` / ``title`` / ``score``."""
@@ -541,12 +541,10 @@ def test_ask_agent_grounds_answer_with_citations(
     assert output_ref == f"knowledge-ask://{ACME_ID}"
 
 
-def test_ask_agent_refusal_payload(
-    env: dict[str, Any], tmp_path: Path
-) -> None:
+def test_ask_agent_refusal_payload(env: dict[str, Any], tmp_path: Path) -> None:
     """Even with an empty corpus the contract holds: a valid refusal payload."""
     # No corpus indexed for this project → no hits → the runner refuses.
-    _grounded_payload = {
+    _grounded_payload: dict[str, object] = {
         "in_scope": False,
         "answer": None,
         "citations": [],
