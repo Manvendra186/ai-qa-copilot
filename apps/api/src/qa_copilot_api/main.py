@@ -31,6 +31,7 @@ from fastapi import FastAPI
 from qa_copilot_ai import (
     AutomationAgent,
     FilePromptStore,
+    KnowledgeQAAgent,
     LLMGateway,
     RequirementAgent,
     TestDesignAgent,
@@ -138,6 +139,31 @@ def _build_automation_jobs_agent(settings: Settings, engine: Engine) -> jobs.Job
     return jobs.AutomationJobAgent(runner, engine)
 
 
+def _build_knowledge_ask_jobs_agent(settings: Settings, engine: Engine) -> jobs.JobAgent:
+    """Build the S5.5 knowledge Ask job agent: grounded QA over the project base.
+
+    S5.5: when ``llm_base_url`` and ``llm_model`` are set, wire the
+    :class:`KnowledgeAskJobAgent` around the real S5.4
+    :class:`KnowledgeQAAgent` (``knowledge-qa`` prompt registry + gateway,
+    §31.6/§31.1). Otherwise fall back to the deterministic
+    :class:`KnowledgeQARefusalStub` (no model) so the 202/SSE contract stays
+    verifiable without a model — Ask still emits a well-formed refusal
+    (``in_scope=False``) instead of failing or going silent.
+    """
+    if not settings.llm_base_url or not settings.llm_model:
+        logger.info("LLM not configured; using KnowledgeQARefusalStub for knowledge_ask")
+        runner: jobs.KnowledgeQARunner = jobs.KnowledgeQARefusalStub()
+    else:
+        prompts_dir = (
+            Path(__file__).parent.parent.parent.parent.parent / "packages" / "ai" / "prompts"
+        )
+        store = FilePromptStore(prompts_dir)
+        gateway = LLMGateway(base_url=settings.llm_base_url, model=settings.llm_model)
+        runner = KnowledgeQAAgent(store, gateway)
+        logger.info("LLM configured (model=%s); using KnowledgeAskJobAgent", settings.llm_model)
+    return jobs.KnowledgeAskJobAgent(runner, engine)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Application factory; settings injectable for tests and overrides."""
     settings = settings or get_settings()
@@ -169,6 +195,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs_automation_agent = _build_automation_jobs_agent(settings, app.state.engine)
     # S5.3: the Knowledge Index job (knowledge_index) — deterministic, no LLM.
     app.state.jobs_knowledge_agent = jobs.KnowledgeIndexJobAgent(app.state.engine)
+    # S5.5: the Knowledge Ask job (knowledge_ask) — grounded QA over the base.
+    app.state.jobs_knowledge_ask_agent = _build_knowledge_ask_jobs_agent(
+        settings, app.state.engine
+    )
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

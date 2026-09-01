@@ -20,6 +20,8 @@ export interface JobState {
   outputRef: string | null;
   /** Terminal or stream error message, if any. */
   error: string | null;
+  /** The `knowledge.answer` payload, when the job emitted one (S5.5 Ask). */
+  lastAnswer: Record<string, unknown> | null;
   stages: StageState[];
   log: EventLogEntry[];
 }
@@ -39,6 +41,7 @@ type Action =
   | { type: 'stage.started'; stage: StageId }
   | { type: 'progress'; stage: StageId; value: number }
   | { type: 'stage.completed'; stage: StageId }
+  | { type: 'knowledge.answer'; payload: Record<string, unknown> }
   | { type: 'job.completed'; outputRef: string | null }
   | { type: 'job.failed'; error: string }
   | { type: 'stream.error'; message: string }
@@ -54,6 +57,7 @@ function initialState(): JobState {
     outcome: 'running',
     outputRef: null,
     error: null,
+    lastAnswer: null,
     stages: PIPELINE_STAGES.map((id) => ({ id, status: 'pending', progress: 0 })),
     log: [],
   };
@@ -125,6 +129,12 @@ function reducer(state: JobState, action: Action): JobState {
           progress: 1,
         })),
         log: withLog(state, 'stage.completed', STAGE_LABELS[action.stage]),
+      };
+    case 'knowledge.answer':
+      return {
+        ...state,
+        lastAnswer: action.payload,
+        log: withLog(state, 'knowledge.answer', 'answer received'),
       };
     case 'job.completed':
       return {
@@ -213,6 +223,9 @@ export function useJobEvents(): JobEvents {
             case 'stage.completed':
               if (isStage(payload.stage))
                 dispatch({ type: 'stage.completed', stage: payload.stage });
+              break;
+            case 'knowledge.answer':
+              dispatch({ type: 'knowledge.answer', payload: data });
               break;
             case 'job.completed':
               dispatch({

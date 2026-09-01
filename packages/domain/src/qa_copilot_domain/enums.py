@@ -48,6 +48,7 @@ class JobType(StrEnum):
     FIX_PROPOSAL = "fix_proposal"
     REPOSITORY_INDEXING = "repository_indexing"
     KNOWLEDGE_INDEX = "knowledge_index"
+    KNOWLEDGE_ASK = "knowledge_ask"
 
 
 class JobStatus(StrEnum):

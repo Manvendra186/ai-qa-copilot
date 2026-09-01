@@ -52,6 +52,10 @@ from qa_copilot_ai.agents import (
     AutomationAgentResult,
     AutomationInput,
     GeneratedTest,
+    KnowledgeContext,
+    KnowledgeQAAgentResult,
+    KnowledgeQAInput,
+    QAAnswer,
     RequirementAgent,
     RequirementAgentResult,
     RequirementInput,
@@ -75,7 +79,11 @@ from qa_copilot_repository import requirements as repo_requirements
 from sqlalchemy import Engine, update
 from sqlalchemy.engine import CursorResult
 
-from qa_copilot_api.knowledge_store import build_project_knowledge, persist_project_knowledge
+from qa_copilot_api.knowledge_store import (
+    build_project_knowledge,
+    persist_project_knowledge,
+    search_project_knowledge,
+)
 
 __all__ = [
     "AutomationJobAgent",
@@ -87,7 +95,10 @@ __all__ = [
     "JobContext",
     "JobRunner",
     "JobSnapshot",
+    "KnowledgeAskJobAgent",
     "KnowledgeIndexJobAgent",
+    "KnowledgeQARunner",
+    "KnowledgeQARefusalStub",
     "RequirementJobAgent",
     "StubAgent",
     "TestDesignJobAgent",
@@ -616,6 +627,161 @@ class KnowledgeIndexJobAgent:
         await ctx.emit("progress", {"stage": "knowledge_index", "value": 0.9})
         await ctx.emit("stage.completed", {"stage": "knowledge_index", "documents": count})
         return f"knowledge://{project_id}"
+
+
+class KnowledgeQARunner(Protocol):
+    """What :class:`KnowledgeAskJobAgent` needs from the S5.4 grounding agent.
+
+    The real :class:`qa_copilot_ai.agents.KnowledgeQAAgent` (prompt registry +
+    gateway) satisfies this; so does :class:`KnowledgeQARefusalStub` when no LLM
+    is configured. Keeps the job layer decoupled from a live model — the same
+    seam :class:`AutomationJobAgent` uses for its :class:`AutomationStub`.
+    """
+
+    async def run(self, qa_input: KnowledgeQAInput) -> KnowledgeQAAgentResult:
+        """Ground *qa_input* into a contract-valid ``QAAnswer`` + audit call."""
+
+
+class KnowledgeQARefusalStub(KnowledgeQARunner):
+    """No-LLM stand-in for the S5.4 agent: a deterministic, contract-valid refusal.
+
+    When no local model is configured (dev/demo), Ask still honours its SSE
+    contract — it emits a ``knowledge.answer`` refusal (out of scope) instead of
+    failing or going silent. Mirrors the S2.3 ``AutomationStub`` pattern.
+    """
+
+    async def run(self, qa_input: KnowledgeQAInput) -> KnowledgeQAAgentResult:
+        """A contract-valid refusal: ``in_scope=False``, no answer, no citations."""
+        answer = QAAnswer(in_scope=False, answer=None, citations=(), confidence=0.0)
+        call = AICallResult(
+            agent="knowledge-qa",
+            model="none",
+            text="",
+            usage=TokenUsage(tokens_in=0, tokens_out=0, source="estimated"),
+            latency_ms=0,
+            redactions=0,
+            retries=0,
+            input_hash="0" * 64,
+        )
+        return KnowledgeQAAgentResult(answer=answer, call=call, prompt_ref="knowledge-qa@stub")
+
+
+class KnowledgeAskJobAgent:
+    """S5.5 project-knowledge Ask (build bible §7, §14, §19 Phase 5).
+
+    Answers a project question grounded **only** in the project's knowledge
+    base. Flow (S5.3 → S5.4 → S5.5):
+
+    1. retrieve the project's top-k chunks (S5.3
+       ``search_project_knowledge``);
+    2. hand them to the S5.4 runner (:class:`KnowledgeQARunner`) to produce a
+       contract-valid :class:`QAAnswer` (in-scope answer + citations, or a
+       refusal);
+    3. emit the answer over the ``knowledge.answer`` job event — the full text
+       and citations ride the SSE payload (``jobs.output_ref`` is a 1024-char
+       column and is only a stable ``knowledge-ask://`` reference);
+    4. record the ``ai_actions`` audit row against the job's ``ai_sessions``
+       anchor (§31.5).
+
+    Progress is reported over SSE; the job's ``output_ref`` is a stable
+    ``knowledge-ask://<project>`` reference.
+    """
+
+    stages: tuple[str, ...] = ("knowledge_ask",)
+
+    def __init__(self, agent: KnowledgeQARunner, engine: Engine) -> None:
+        self._agent = agent
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        """Retrieve + ground the answer, emit ``knowledge.answer``, return a ref."""
+        project_id = ctx.project_id or ""
+        question = str(ctx.input.get("question") or "")
+        await ctx.emit("stage.started", {"stage": "knowledge_ask"})
+        await ctx.emit("progress", {"stage": "knowledge_ask", "value": 0.2})
+
+        # 1. S5.3 retrieval (project-scoped, top-k ≤ 5, §14).
+        with repo_db.session_scope(self._engine) as session:
+            search = search_project_knowledge(session, project_id, question, top_k=5)
+        hits = list(search.hits)
+        context = tuple(
+            KnowledgeContext(
+                source_ref=hit.chunk.document_ref,
+                title=hit.chunk.title,
+                content=hit.chunk.content,
+            )
+            for hit in hits
+        )
+        # citation enrichment: document_ref → (source_type, score)
+        cite_meta: dict[str, tuple[str, float]] = {
+            hit.chunk.document_ref: (hit.chunk.source_type.value, hit.score) for hit in hits
+        }
+
+        await ctx.emit("progress", {"stage": "knowledge_ask", "value": 0.5})
+
+        # 2. S5.4 grounded answer (contract-valid QAAnswer).
+        qa_result = await self._agent.run(KnowledgeQAInput(question=question, context=context))
+        answer = qa_result.answer
+
+        # 3. Map the QAAnswer to the ``knowledge.answer`` event body and emit it.
+        payload = self._answer_payload(answer, cite_meta)
+        await ctx.emit("knowledge.answer", payload)
+        await ctx.emit("progress", {"stage": "knowledge_ask", "value": 0.95})
+        await ctx.emit(
+            "stage.completed",
+            {
+                "stage": "knowledge_ask",
+                "in_scope": answer.in_scope,
+                "citations": len(payload["citations"]),
+            },
+        )
+
+        # 4. Audit (ai_actions) against the job's session anchor (§31.5).
+        self._record_action(ctx, qa_result, json.dumps(payload, separators=(",", ":")))
+
+        return f"knowledge-ask://{project_id}"
+
+    @staticmethod
+    def _answer_payload(
+        answer: QAAnswer, cite_meta: dict[str, tuple[str, float]]
+    ) -> dict[str, Any]:
+        """Map the S5.4 ``QAAnswer`` to the ``knowledge.answer`` event body."""
+        citations = [
+            {
+                "document_ref": cite.source_ref,
+                "source_type": cite_meta.get(cite.source_ref, ("", 0.0))[0],
+                "title": cite.title,
+                "score": cite_meta.get(cite.source_ref, ("", 0.0))[1],
+            }
+            for cite in answer.citations
+        ]
+        return {
+            "in_scope": answer.in_scope,
+            "answer": answer.answer or "",
+            "citations": citations,
+            "confidence": answer.confidence,
+        }
+
+    def _record_action(
+        self, ctx: JobContext, result: KnowledgeQAAgentResult, answer_json: str
+    ) -> None:
+        """Record the ``ai_actions`` audit row against the job's session anchor."""
+        if ctx.ai_session_id is None:
+            return
+        audit = result.call.audit_dict()
+        with repo_db.session_scope(self._engine) as session:
+            session.add(
+                models.AIAction(
+                    session_id=ctx.ai_session_id,
+                    agent=str(audit["agent"]),
+                    model=str(audit["model"]),
+                    tokens_in=cast(int, audit["tokens_in"]),
+                    tokens_out=cast(int, audit["tokens_out"]),
+                    latency_ms=cast(int, audit["latency_ms"]),
+                    input_hash=audit.get("input_hash"),
+                    output_ref=answer_json[:1024],
+                )
+            )
 
 
 def _payload(job_id: str, project_id: str | None, **fields: Any) -> dict[str, Any]:

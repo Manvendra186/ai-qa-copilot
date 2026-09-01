@@ -363,3 +363,44 @@ class KnowledgeDocumentOut(BaseModel):
     content: str
     metadata: dict[str, Any]
     created_at: datetime | None = None
+
+
+# --- S5.5: project-knowledge Ask (§7, §14, §19) --------------------------------
+
+
+class KnowledgeAskRequest(BaseModel):
+    """S5.5: body for ``POST /projects/{id}/knowledge/ask``.
+
+    A project-scoped question. The answer is grounded **only** in this
+    project's knowledge base (S5.3 ``search_project_knowledge``) and returned
+    asynchronously as a job (202 + ``job_id``, build bible §11) whose
+    ``knowledge.answer`` event carries the answer text and its citations.
+    """
+
+    question: str = Field(
+        min_length=1,
+        max_length=4000,
+        description="The project question to answer from the project knowledge base.",
+    )
+
+
+class KnowledgeCitation(BaseModel):
+    """S5.5: one grounding source for an answer (mirrors the S5.3 hit metadata)."""
+
+    document_ref: str
+    source_type: str
+    title: str
+    score: float
+
+
+class KnowledgeAnswer(BaseModel):
+    """S5.5: the grounded answer payload (the ``knowledge.answer`` job event).
+
+    ``in_scope`` is ``False`` when the knowledge base has nothing to ground the
+    answer in; ``answer`` then explains why, and ``citations`` is empty.
+    """
+
+    in_scope: bool
+    answer: str
+    citations: list[KnowledgeCitation] = []
+    confidence: float = 0.0

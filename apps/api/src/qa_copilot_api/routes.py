@@ -968,6 +968,52 @@ def index_project_knowledge(
     return schemas.JobCreated(job_id=job.id, status=job.status.value)
 
 
+@projects_router.post(
+    "/{project_id}/knowledge/ask", status_code=202, response_model=schemas.JobCreated
+)
+def ask_project_knowledge(
+    project_id: str,
+    body: schemas.KnowledgeAskRequest,
+    request: Request,
+    response: Response,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """Ask the project knowledge base: **202 + job_id** (S5.5, §11, §14).
+
+    No AI work runs in this request (§31.2) — the ``knowledge_ask`` job
+    retrieves the project's top-k chunks (S5.3) and grounds the answer (S5.4).
+    The answer text and citations ride the ``knowledge.answer`` SSE event — the
+    full payload, since ``jobs.output_ref`` only holds a stable
+    ``knowledge-ask://`` reference. Track via ``GET /api/v1/jobs/{job_id}`` or
+    the SSE feed. ``member`` or above; unknown projects 403 (no existence
+    leak, §31.3).
+    """
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=403, detail="no role for this project")
+    _require_project_role(db, user, project.id, ProjectRole.MEMBER)
+
+    job_input = {"question": body.question}
+    job = models.Job(
+        project_id=project.id,
+        type=JobType.KNOWLEDGE_ASK,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_knowledge_ask_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
 @projects_router.get("/{project_id}/knowledge/status", response_model=schemas.KnowledgeStatus)
 def get_knowledge_status(
     project_id: str,

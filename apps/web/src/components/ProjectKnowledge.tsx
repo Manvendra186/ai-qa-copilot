@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useJobEvents } from '../hooks/useJobEvents';
 import {
+  askKnowledge,
   getProjectKnowledgeStatus,
   indexProjectKnowledge,
   listProjectKnowledgeDocuments,
   searchProjectKnowledge,
+  type KnowledgeAnswer,
   type KnowledgeDocumentOut,
   type KnowledgeSearchResult,
   type KnowledgeStatus,
@@ -35,8 +37,10 @@ interface Props {
  * stored documents.
  */
 export function ProjectKnowledge({ projectId }: Props) {
-  const job = useJobEvents();
-  const indexing = job.jobId !== null && job.outcome === 'running';
+  const indexJob = useJobEvents();
+  const askJob = useJobEvents();
+  const indexing = indexJob.jobId !== null && indexJob.outcome === 'running';
+  const asking = askJob.jobId !== null && askJob.outcome === 'running';
 
   const [status, setStatus] = useState<KnowledgeStatus | null>(null);
   const [docs, setDocs] = useState<KnowledgeDocumentOut[]>([]);
@@ -51,6 +55,11 @@ export function ProjectKnowledge({ projectId }: Props) {
   const [repoPath, setRepoPath] = useState('');
   const [indexError, setIndexError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // --- S5.5 Ask: grounded Q&A over the corpus (build bible §14) ---
+  const [askQuestion, setAskQuestion] = useState('');
+  const [askError, setAskError] = useState<string | null>(null);
+  const askAnswer = askJob.lastAnswer as KnowledgeAnswer | null;
 
   // Initial load, and re-load each time an index job completes (reloadKey bump).
   useEffect(() => {
@@ -81,8 +90,8 @@ export function ProjectKnowledge({ projectId }: Props) {
 
   // The index job reached a terminal completed state → refresh the corpus.
   useEffect(() => {
-    if (job.outcome === 'completed') setReloadKey((k) => k + 1);
-  }, [job.outcome]);
+    if (indexJob.outcome === 'completed') setReloadKey((k) => k + 1);
+  }, [indexJob.outcome]);
 
   const onIndex = async () => {
     setIndexError(null);
@@ -91,7 +100,7 @@ export function ProjectKnowledge({ projectId }: Props) {
         projectId,
         repoPath.trim() ? repoPath.trim() : undefined,
       );
-      job.start(job_id);
+      indexJob.start(job_id);
     } catch (err: unknown) {
       setIndexError(messageOf(err));
     }
@@ -108,7 +117,20 @@ export function ProjectKnowledge({ projectId }: Props) {
     }
   };
 
-  const indexErrorMsg = indexError ?? (job.outcome === 'failed' ? job.error : null) ?? null;
+  const onAsk = async () => {
+    const q = askQuestion.trim();
+    if (!q) return;
+    setAskError(null);
+    try {
+      const { job_id } = await askKnowledge(projectId, q);
+      askJob.start(job_id);
+    } catch (err: unknown) {
+      setAskError(messageOf(err));
+    }
+  };
+
+  const indexErrorMsg =
+    indexError ?? (indexJob.outcome === 'failed' ? indexJob.error : null) ?? null;
 
   return (
     <div className="space-y-6">
@@ -148,10 +170,10 @@ export function ProjectKnowledge({ projectId }: Props) {
         </div>
         {indexing && (
           <p className="mt-3 font-mono text-xs text-slate-500">
-            job {job.jobId} running — the corpus refreshes when it completes
+            job {indexJob.jobId} running — the corpus refreshes when it completes
           </p>
         )}
-        {job.outcome === 'completed' && (
+        {indexJob.outcome === 'completed' && (
           <p className="mt-3 text-xs text-emerald-300">Knowledge indexed and refreshed.</p>
         )}
         {indexErrorMsg !== null && (
@@ -272,6 +294,105 @@ export function ProjectKnowledge({ projectId }: Props) {
                   )}
                 </div>
               ))
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* --- Ask the knowledge base (S5.5, build bible §14) --- */}
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+        <h3 className="text-sm font-semibold text-slate-200">Ask the knowledge base</h3>
+        <p className="mt-1 text-xs text-slate-500">
+          A grounded answer with citations — or an explicit refusal when the corpus can't support
+          one.
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="flex flex-1 flex-col gap-1 text-xs text-slate-400">
+            Question
+            <input
+              type="text"
+              value={askQuestion}
+              onChange={(e) => setAskQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void onAsk();
+              }}
+              placeholder="e.g. how should the payment gateway handle retries?"
+              disabled={asking}
+              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-slate-500 focus:outline-none disabled:opacity-50"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              void onAsk();
+            }}
+            disabled={asking || !askQuestion.trim()}
+            className="rounded-lg border border-indigo-700 bg-indigo-500/15 px-4 py-2 text-sm text-indigo-200 transition hover:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {asking ? 'Thinking…' : 'Ask'}
+          </button>
+        </div>
+
+        {asking && (
+          <p className="mt-3 font-mono text-xs text-slate-500">
+            job {askJob.jobId} running — grounding an answer from the corpus…
+          </p>
+        )}
+
+        {(askError ?? (askJob.outcome === 'failed' ? askJob.error : null)) !== null && (
+          <p className="mt-3 text-sm text-rose-300">{askError ?? askJob.error}</p>
+        )}
+
+        {askAnswer !== null && (
+          <div className="mt-4 space-y-3">
+            {askAnswer.in_scope ? (
+              <>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span className="rounded-full border border-emerald-700 bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-300">
+                    in-scope
+                  </span>
+                  {askAnswer.confidence > 0 && (
+                    <span>confidence {askAnswer.confidence.toFixed(2)}</span>
+                  )}
+                </div>
+                <p className="whitespace-pre-wrap text-sm text-slate-200">
+                  {askAnswer.answer ?? ''}
+                </p>
+                {askAnswer.citations.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-slate-400">Sources</p>
+                    <ul className="mt-2 space-y-2">
+                      {askAnswer.citations.map((cite, i) => (
+                        <li
+                          key={`${cite.document_ref}-${i}`}
+                          className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="rounded-full border border-indigo-700 bg-indigo-500/15 px-2 py-0.5 font-medium text-indigo-300">
+                              {cite.source_type}
+                            </span>
+                            <span className="font-medium text-slate-200">{cite.title}</span>
+                            <span className="ml-auto font-mono text-slate-500">
+                              score {cite.score.toFixed(3)}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="rounded-lg border border-amber-800 bg-amber-950/40 px-3 py-2">
+                <p className="text-sm text-amber-200">
+                  The knowledge base doesn't support an answer to this question.
+                </p>
+                {askAnswer.answer && (
+                  <p className="mt-1 whitespace-pre-wrap text-xs text-amber-200/70">
+                    {askAnswer.answer}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}

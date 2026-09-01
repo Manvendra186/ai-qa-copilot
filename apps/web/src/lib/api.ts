@@ -418,6 +418,23 @@ export interface KnowledgeDocumentOut {
   created_at: string | null;
 }
 
+// --- S5.5: project-knowledge Ask (build bible §7, §19 Phase 5) ----------------
+
+export interface KnowledgeCitation {
+  document_ref: string;
+  source_type: string;
+  title: string;
+  score: number;
+}
+
+/** The grounded answer delivered over the `knowledge.answer` SSE event. */
+export interface KnowledgeAnswer {
+  in_scope: boolean;
+  answer: string | null;
+  citations: KnowledgeCitation[];
+  confidence: number;
+}
+
 /** `POST /projects/{id}/knowledge/index` → 202 + `{job_id}` (S5.3). */
 export function indexProjectKnowledge(
   projectId: string,
@@ -466,4 +483,19 @@ export function getKnowledgeDocument(
   return request<KnowledgeDocumentOut>(
     `/projects/${encodeURIComponent(projectId)}/knowledge/documents/${encodeURIComponent(documentId)}`,
   );
+}
+
+/**
+ * `POST /projects/{id}/knowledge/ask` → 202 + `{job_id}` (S5.5).
+ *
+ * The grounded answer (with citations) is **not** in this response — it rides
+ * the `knowledge.answer` SSE event on the job's `/events` stream (read via
+ * `streamJobEvents`). The job's terminal `output_ref` is the stable
+ * `knowledge-ask://{projectId}` reference.
+ */
+export function askKnowledge(projectId: string, question: string): Promise<JobCreated> {
+  return request<JobCreated>(`/projects/${encodeURIComponent(projectId)}/knowledge/ask`, {
+    method: 'POST',
+    body: JSON.stringify({ question }),
+  });
 }
