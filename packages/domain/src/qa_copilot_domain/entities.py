@@ -24,6 +24,7 @@ from .base import DomainModel
 from .enums import (
     ArtifactType,
     FailureCategory,
+    ImpactKind,
     JobStatus,
     JobType,
     Priority,
@@ -248,3 +249,42 @@ class Job(DomainModel):
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+class ImpactedTest(DomainModel):
+    """One test file in a change-impact set, with why (build bible §19 S6.1).
+
+    ``kinds`` is the deterministic classification
+    (:class:`~qa_copilot_domain.enums.ImpactKind`) — one or more of
+    ``direct`` / ``generated`` / ``referenced``. ``changed_files`` are the
+    changed files that pulled this test in; ``test_case_ids`` and
+    ``requirement_ids`` are the S1.2 links (via the ``requirement_test_cases``
+    join, §10) surfaced so the S6.3 recommendation can rank regressions by
+    ``requirements.risk`` / ``test_cases.priority``. ``signals`` are the
+    human-readable, deterministic reasons (evidence trail for the S6.3 UI).
+    """
+
+    path: NonBlankStr
+    kinds: list[ImpactKind]
+    changed_files: list[str] = Field(default_factory=list)
+    test_case_ids: list[str] = Field(default_factory=list)
+    requirement_ids: list[str] = Field(default_factory=list)
+    signals: list[str] = Field(default_factory=list)
+
+
+class ImpactSet(DomainModel):
+    """Result of change-impact analysis (build bible §19 S6.1).
+
+    The deterministic, LLM-free mapping from a diff (``changed`` files) to
+    the test files that should be re-run. Produced by
+    :func:`qa_copilot_repository.impact.compute_impact` — ``impacted`` is
+    sorted by ``path`` and every list is sorted and deduped, so equal inputs
+    always produce equal JSON (the wall-clock ``computed_at`` excepted;
+    golden tests in ``tests/unit/test_impact.py`` compare the full payload).
+    """
+
+    changed: list[str]
+    impacted: list[ImpactedTest] = Field(default_factory=list)
+    test_files_scanned: int = Field(default=0, ge=0)
+    notes: list[str] = Field(default_factory=list)
+    computed_at: datetime | None = None

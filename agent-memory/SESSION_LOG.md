@@ -1660,3 +1660,82 @@
   `qa_copilot_repository.impact`, golden impact sets on ≥ 2 sample repos,
   CLI → JSON. Exit + full step table: bible §19. See `STATE.md` §3.
 
+## 2026-09-01 — S6.1 Change-impact core (LLM-free): `qa_copilot_repository.impact` + domain contract — gates green
+
+- **Goal:** `STATE.md` §3 handoff — S6.1 (bible §19): changed files
+  (explicit list or a `base..head` git range) → impact set (**direct** /
+  **generated** / **referenced**); golden impact sets 100% on ≥ 2 sample
+  repos for known diffs; no LLM in the path; CLI → JSON.
+- **Did:**
+  - `qa_copilot_domain` (output contract): `ImpactKind` StrEnum
+    (direct / generated / referenced — one file can carry several) ·
+    `ImpactedTest` (path, kinds, changed_files, test_case_ids,
+    requirement_ids, signals — the S6.3 ranking inputs) · `ImpactSet`
+    (changed, impacted, test_files_scanned, notes, computed_at) ·
+    exports in `__init__.py`.
+  - `qa_copilot_repository/impact.py` (new, ~450 lines):
+    `compute_impact(root, changed, generated=())` — **pure core**: no
+    DB, git, network, or LLM; reuses S2.1 `is_test_file()` and scan
+    safety (skip dirs, no symlink follow, file-count cap, read-size cap).
+    **direct** = changed file is itself a test file · **generated** =
+    changed file matches an applied `generated_tests.file_path` → its
+    test case → linked requirements via the `requirement_test_cases`
+    join (S2.4) · **referenced** = a test file statically imports a
+    changed source file (JS/TS static / side-effect / dynamic imports,
+    `require()`, extensionless + `index` resolution; Python `import a.b`
+    / `from a.b import c` incl. `__init__.py` packages) or uses one of
+    its `data-testid` values (S2.2 vocabulary). Every list sorted +
+    deduped → equal inputs give equal JSON (determinism test).
+  - Helpers: `normalize_changed()` (accepts `./` + backslashes; rejects
+    absolute paths, `..` escapes, blanks; dedupes + sorts) ·
+    `GeneratedTestRef` (file_path, test_case_id, requirement_ids) ·
+    `applied_generated_refs(session, project_id)` +
+    `impact_from_session(...)` — thin ORM seam only; the pure core never
+    touches the DB · `changed_files_from_range(root, base, head)` —
+    `git diff --name-only base..head` (60 s timeout; fail-loud
+    `ValueError` with git stderr).
+  - CLI: `python -m qa_copilot_repository.impact <root>` with
+    `--changed PATH[,PATH...]` or `--range BASE..HEAD` → `ImpactSet`
+    JSON on stdout (indent 2, sorted keys), `impact: …` on stderr,
+    exit 0/2.
+  - `tests/unit/test_impact.py` (new, **40 tests**): `normalize_changed`
+    accept/reject (parametrized) · goldens over real repos — js-web-app
+    (referenced source change · direct test change · generated with
+    test-case link · generated orphan · combined direct+generated+
+    referenced), python-api (direct test change · source change not
+    statically referenced), demo-app (fixture referenced by spec ·
+    direct spec change · non-referenced page change; skipped when the
+    repo is absent) · synthetic `tmp_path` repos (extensionless +
+    `index` resolution · Python package imports · `data-testid` match ·
+    missing changed file noted · no-test-files noted · dedupe +
+    determinism · path validation) · fake-`Session` ORM tests (row
+    mapping + sorting · orphan ref · `impact_from_session` combined
+    kinds + ids) · git-range (both refs required · non-repo failure ·
+    real two-commit diff under `needs_git`) · CLI (JSON shape · empty
+    `--changed` · bad `--range` · missing source) · package exports.
+- **Verified (exit criterion met):** goldens grounded in **actual CLI
+  output** on three sample repos (js-web-app, python-api,
+  ai-qa-copilot-demo-app) — expected JSON asserted verbatim · pytest
+  **685 passed** (full suite; +40) · mypy strict ✓ (119 files) ·
+  ruff check ✓ · ruff format ✓ · **no LLM in the path** (core is pure
+  Python file reading).
+- **Decisions / gotchas (also in STATE.md §7):**
+  - `changed_files_from_range` takes **base + head separately** and
+    assembles `base..head` itself; the CLI `--range` splits the string.
+    It validates both refs non-empty (not the `..` shape) and fails
+    loud with git stderr.
+  - The "changed file not present at repo root (deleted or moved)" note
+    text is asserted verbatim by `test_synthetic_changed_file_missing_noted`
+    — change wording with the test.
+  - `applied_generated_refs` sorts refs by (file_path, test_case_id) —
+    tests feed deliberately unsorted rows; `requirement_ids` are sorted
+    + deduped from the test case's requirement links.
+  - Read-tool cache returned **stale file contents** mid-session —
+    re-read via terminal (`Get-Content`) before editing; one `impact.py`
+    edit failed on stale expected-text (no file damage).
+- **Next session start:** **S6.2 — Flaky + risk core (LLM-free)** —
+  `qa_copilot_repository.history`: per-test flakiness + failure-rate
+  stats + deterministic risk score over
+  `test_runs`/`test_results`/`failures`. See `STATE.md` §3; full step
+  table: bible §19.
+

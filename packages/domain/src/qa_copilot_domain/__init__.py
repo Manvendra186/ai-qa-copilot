@@ -11,12 +11,16 @@ S2.4: ``GeneratedTestStatus`` + transition rule — generated-test review
 lifecycle (diff review, approve/apply, reject; build bible §19 S2.4).
 S3.3: ``NormalizedFailure`` — raw failure text normalized onto the §16
 taxonomy (build bible §15, §19 S3.3).
+S6.1: ``ImpactKind`` + ``ImpactedTest`` + ``ImpactSet`` — change-impact
+core output (direct/generated/referenced; build bible §19 S6.1).
 """
 
 from .base import DomainModel
 from .entities import (
     Artifact,
     Failure,
+    ImpactedTest,
+    ImpactSet,
     Job,
     LocatorStyle,
     NormalizedFailure,
@@ -35,6 +39,7 @@ from .enums import (
     ArtifactType,
     FailureCategory,
     GeneratedTestStatus,
+    ImpactKind,
     JobStatus,
     JobType,
     Priority,
@@ -57,6 +62,9 @@ __all__ = [
     "Failure",
     "FailureCategory",
     "GeneratedTestStatus",
+    "ImpactedTest",
+    "ImpactKind",
+    "ImpactSet",
     "Job",
     "JobStatus",
     "JobType",

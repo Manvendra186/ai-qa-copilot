@@ -29,6 +29,10 @@ S2.4: generated-test review persistence — the S2.3 agent output as a
 S3.1: execution-run persistence — the worker's ``RunReport`` mapped onto
 ``test_runs`` / ``test_results`` / ``artifacts`` rows + read helpers
 (:mod:`qa_copilot_repository.runs`, build bible §10, §15).
+
+S6.1: deterministic change-impact analysis — changed files (explicit list
+or a ``base..head`` git range) → impacted test files, LLM-free
+(:mod:`qa_copilot_repository.impact`, build bible §19).
 """
 
 from . import (
@@ -36,6 +40,7 @@ from . import (
     conventions,
     db,
     generated_tests,
+    impact,
     membership,
     models,
     prompts,
@@ -44,19 +49,36 @@ from . import (
     scanner,
 )
 from .conventions import extract_conventions
+from .impact import (
+    GeneratedTestRef,
+    applied_generated_refs,
+    changed_files_from_range,
+    compute_impact,
+    impact_from_session,
+    main,
+    normalize_changed,
+)
 from .scanner import scan_repository
 
 __version__ = "0.1.0"
 
 __all__ = [
     "__version__",
+    "GeneratedTestRef",
+    "applied_generated_refs",
     "audit",
+    "changed_files_from_range",
+    "compute_impact",
     "conventions",
     "db",
     "extract_conventions",
     "generated_tests",
+    "impact",
+    "impact_from_session",
+    "main",
     "membership",
     "models",
+    "normalize_changed",
     "prompts",
     "requirements",
     "runs",

@@ -9,13 +9,71 @@
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
   Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
-  **Phase 6 — Regression Intelligence: defined (S6.1–S6.5), not started**
-- **Step:** S0.1–S5.5 ✓ (S5.5 = Ask API + web Q&A view — live E2E green; see §2) ·
-  Phase 6 step table defined in bible §19 on 2026-09-01 (see §2) ·
-  **next:** **S6.1 — change-impact core (LLM-free)** — see §3
+  **Phase 6 — Regression Intelligence: started — S6.1 ✓ (change-impact core), S6.2–S6.5 next**
+- **Step:** S0.1–S6.1 ✓ (S6.1 = change-impact core, LLM-free — 40-test suite, goldens green; see §2) ·
+  **next:** **S6.2 — flaky + risk core (LLM-free)** — see §3
 
 ## 2. Just completed
 
+- 2026-09-01 · **S6.1 (change-impact core, LLM-free) — all gates green**
+  (bible §19 S6.1; exit: golden impact sets 100% on ≥ 2 sample repos,
+  no LLM in the path, CLI → JSON):
+  - `qa_copilot_domain` — S6.1 output contract: `ImpactKind`
+    (direct/generated/referenced — a file can carry several) ·
+    `ImpactedTest` (path, kinds, changed_files, test_case_ids,
+    requirement_ids, signals — the S6.3 ranking inputs) · `ImpactSet`
+    (changed, impacted, test_files_scanned, notes, computed_at) ·
+    exports in `__init__.py`;
+  - `qa_copilot_repository.impact` (new, ~450 lines) —
+    `compute_impact(root, changed, generated=())` **pure core**
+    (no DB, no git, no network, no LLM; reuses S2.1 `is_test_file()` +
+    scan safety: skip dirs, no symlink follow, file-count cap,
+    read-size cap): **direct** (changed file is a test file) ·
+    **generated** (changed file = applied `generated_tests.file_path` →
+    its `test_case` → linked requirements via the M:N join) ·
+    **referenced** (JS/TS static / side-effect / dynamic imports,
+    `require()`, extensionless + `index` resolution · Python `import` /
+    `from … import` incl. `__init__.py` packages · `data-testid`
+    vocabulary match) — every list sorted + deduped, equal inputs ⇒
+    equal JSON (determinism test);
+  - also: `normalize_changed()` (accepts `./` + backslashes; rejects
+    absolute paths, `..` escapes, blanks; dedupes + sorts) ·
+    `GeneratedTestRef` (file_path, test_case_id, requirement_ids) ·
+    `applied_generated_refs(session, project_id)` +
+    `impact_from_session(...)` (thin ORM seam — the pure core stays
+    DB-free) · `changed_files_from_range(root, base, head)`
+    (`git diff --name-only base..head`; both refs required, fail-loud
+    with git stderr);
+  - CLI: `python -m qa_copilot_repository.impact <root>` with
+    `--changed PATH[,PATH...]` or `--range BASE..HEAD` → `ImpactSet`
+    JSON on stdout (indent 2, sorted keys), `impact: …` on stderr,
+    exit 0/2;
+  - `tests/unit/test_impact.py` (new, **40 tests**): `normalize_changed`
+    accept/reject (parametrized) · **goldens over real repos** —
+    js-web-app (referenced source change · direct test change ·
+    generated with test-case link · generated orphan · combined
+    direct+generated+referenced) · python-api (direct test change ·
+    source change not statically referenced) · demo-app (fixture
+    referenced by spec · direct spec change · non-referenced page
+    change; skipped when the repo is absent) · synthetic `tmp_path`
+    repos (extensionless + `index` resolution · Python package imports ·
+    `data-testid` match · missing changed file noted · no-test-files
+    noted · dedupe + determinism · path validation) · **fake-`Session`
+    ORM** tests (row mapping + sorting · orphan ref ·
+    `impact_from_session` combined kinds + ids) · git-range (both refs
+    required · non-repo failure · real two-commit diff under `needs_git`)
+    · CLI (JSON shape · empty `--changed` · bad `--range` · missing
+    source) · package exports;
+  - **gates**: pytest **685 passed** (full suite; +40) ·
+    mypy strict ✓ (119 files) · ruff check ✓ · ruff format ✓;
+  - **gotchas (see also §7):** `changed_files_from_range` takes `base`
+    + `head` separately and assembles `base..head` itself (CLI `--range`
+    splits the string) · the "changed file not present at repo root
+    (deleted or moved)" note text is asserted verbatim by
+    `test_synthetic_changed_file_missing_noted` — change wording with
+    the test · read-tool cache returned **stale file contents**
+    mid-session — re-read via terminal before editing (one failed
+    `impact.py` edit was stale expected-text, not a file problem).
 - 2026-09-01 · **Phase 6 defined — Regression Intelligence** (bible §19,
   detail-on-demand per §18; definition step, no code): S6.1 change-impact core
   (LLM-free; direct/generated/referenced over `generated_tests` provenance +
@@ -361,21 +419,25 @@
 
 ## 3. NEXT STEP (start here)
 
-**S6.1 — Change-impact core (LLM-free)** (bible §19 S6.1):
-`qa_copilot_repository.impact` — changed files (explicit list or a `base..head`
-git range on the repo checkout) → impact set: **direct** (changed files that
-are test files, S2.1/S2.2 patterns) · **generated** (changed file = an applied
-`generated_tests.file_path` → its `test_case` → linked requirements via the
-M:N join) · **referenced** (non-test changed file → tests importing/requiring
-it or using its `data-testid` from the S2.2 vocabulary).
-- **Exit criterion:** golden impact sets match 100% on ≥ 2 sample repos
-  (js-web-app + demo app) for known diffs · no LLM in the path ·
-  CLI `python -m qa_copilot_repository.impact <root> --changed …` → JSON ·
-  gates green (pytest/mypy/ruff).
-- **Then:** S6.2 (flaky + risk core) → S6.3 (recommender + eval) → S6.4
-  (API + web) → S6.5 (live E2E + baseline report) — full table: bible §19.
-- Phase 6 is **defined, not started**; every MVP §20 "definition of done"
-  item is already met (S0.1–S5.5 ✓).
+**S6.2 — Flaky + risk core (LLM-free)** (bible §19 S6.2):
+`qa_copilot_repository.history` — per-test history stats from
+`test_runs`/`test_results`/`failures`: flakiness rate (`flaky` status +
+`flaky_behavior` diagnoses) · recent failure rate · min-sample threshold
+(no flaky flags from a single run) · deterministic risk score =
+f(impact kind, failure rate, flakiness rate, requirement `risk`,
+test-case `priority`) with stable ordering.
+- **Exit criterion:** synthetic run-history fixtures → flaky flags +
+  risk ranking match expected 100% · deterministic (same input → same
+  output) · gates green (pytest/mypy/ruff).
+- **Then:** S6.3 (recommender `qa_copilot_ai.regression` —
+  deterministic top-N from S6.1 ∩ S6.2, stable tie-break + per-test
+  rationale · optional `regression-advisor@1` human summary (stub
+  fallback) · golden `regression_v1.json` eval + `scripts/regression_run.py`)
+  → S6.4 (API + web "Regression" tab) → S6.5 (live E2E + baseline
+  report) — full table: bible §19.
+- S6.1 is done (see §2): `compute_impact` is the S6.3 recommender's
+  impact input — S6.2 risk joins onto the same `ImpactSet` · every MVP
+  §20 "definition of done" item is met (S0.1–S5.5 ✓).
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker
   deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
   `test_golden_demo_app` conventions-golden re-baseline on clean trees

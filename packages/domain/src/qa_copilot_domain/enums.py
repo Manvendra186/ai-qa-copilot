@@ -183,3 +183,20 @@ ROLE_RANK: dict[ProjectRole, int] = {
 def role_at_least(role: ProjectRole, minimum: ProjectRole) -> bool:
     """True when *role* grants at least the *minimum* permission (§31.3)."""
     return ROLE_RANK[role] >= ROLE_RANK[minimum]
+
+
+class ImpactKind(StrEnum):
+    """Why a test file is in a change-impact set (build bible §19 S6.1).
+
+    - ``direct`` — the changed file is itself a test file (S2.1 heuristics);
+    - ``generated`` — the changed file is an *applied* generated test
+      (``generated_tests.file_path``, S2.4);
+    - ``referenced`` — a test file imports a changed source file or uses one
+      of its ``data-testid`` values (the S2.2 vocabulary).
+
+    One test file can carry several kinds in the same impact set.
+    """
+
+    DIRECT = "direct"
+    GENERATED = "generated"
+    REFERENCED = "referenced"
