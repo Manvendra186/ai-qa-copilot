@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "name": "regression-recommender",
+  "version": "v1",
+  "description": "S6.3 deterministic regression recommender (build bible §19 S6.3, §22). Input/expected-output golden set for the LLM-free recommend() core: S6.1→S6.2 join, risk ordering, stable tie-break, top-N truncation, and no-history handling.",
+  "source": {
+    "build_bible": "v1",
+    "step": "S6.3",
+    "prompt": "regression-advisor@1"
+  },
+  "targets": { "pass_min": 1.0 },
+  "fixtures": [
+    {
+      "id": "REG-001",
+      "title": "rank by risk_score descending",
+      "impact": {
+        "changed": ["src/app.py"],
+        "impacted": [
+          { "path": "tests/test_b.py", "kinds": ["direct"] },
+          { "path": "tests/test_c.py", "kinds": ["direct"] },
+          { "path": "tests/test_a.py", "kinds": ["direct"] }
+        ]
+      },
+      "ranking": {
+        "project_id": "proj",
+        "ranked": [
+          { "test_key": "tests/test_a.py", "risk_score": 0.9, "stats": { "test_key": "tests/test_a.py" } },
+          { "test_key": "tests/test_c.py", "risk_score": 0.6, "stats": { "test_key": "tests/test_c.py" } },
+          { "test_key": "tests/test_b.py", "risk_score": 0.3, "stats": { "test_key": "tests/test_b.py" } }
+        ]
+      },
+      "top_n": 10,
+      "expect": { "ordered_keys": ["tests/test_a.py", "tests/test_c.py", "tests/test_b.py"] }
+    },
+    {
+      "id": "REG-002",
+      "title": "top-N truncation keeps the highest-risk slice",
+      "impact": {
+        "changed": ["src/core.py"],
+        "impacted": [
+          { "path": "tests/test_d.py", "kinds": ["direct"] },
+          { "path": "tests/test_a.py", "kinds": ["direct"] },
+          { "path": "tests/test_b.py", "kinds": ["direct"] },
+          { "path": "tests/test_c.py", "kinds": ["direct"] }
+        ]
+      },
+      "ranking": {
+        "project_id": "proj",
+        "ranked": [
+          { "test_key": "tests/test_a.py", "risk_score": 0.9, "stats": { "test_key": "tests/test_a.py" } },
+          { "test_key": "tests/test_b.py", "risk_score": 0.8, "stats": { "test_key": "tests/test_b.py" } },
+          { "test_key": "tests/test_c.py", "risk_score": 0.7, "stats": { "test_key": "tests/test_c.py" } },
+          { "test_key": "tests/test_d.py", "risk_score": 0.6, "stats": { "test_key": "tests/test_d.py" } }
+        ]
+      },
+      "top_n": 2,
+      "expect": { "ordered_keys": ["tests/test_a.py", "tests/test_b.py"] }
+    },
+    {
+      "id": "REG-003",
+      "title": "equal risk_score ties break by test_key ascending",
+      "impact": {
+        "changed": ["src/util.py"],
+        "impacted": [
+          { "path": "tests/test_z.py", "kinds": ["direct"] },
+          { "path": "tests/test_a.py", "kinds": ["direct"] },
+          { "path": "tests/test_m.py", "kinds": ["direct"] }
+        ]
+      },
+      "ranking": {
+        "project_id": "proj",
+        "ranked": [
+          { "test_key": "tests/test_z.py", "risk_score": 0.5, "stats": { "test_key": "tests/test_z.py" } },
+          { "test_key": "tests/test_a.py", "risk_score": 0.5, "stats": { "test_key": "tests/test_a.py" } },
+          { "test_key": "tests/test_m.py", "risk_score": 0.5, "stats": { "test_key": "tests/test_m.py" } }
+        ]
+      },
+      "top_n": 10,
+      "expect": { "ordered_keys": ["tests/test_a.py", "tests/test_m.py", "tests/test_z.py"] }
+    },
+    {
+      "id": "REG-004",
+      "title": "empty impacted set yields no recommendations (non-impacted never recommended)",
+      "impact": {
+        "changed": ["src/other.py"],
+        "impacted": []
+      },
+      "ranking": {
+        "project_id": "proj",
+        "ranked": [
+          { "test_key": "tests/test_a.py", "risk_score": 0.9, "stats": { "test_key": "tests/test_a.py" } }
+        ]
+      },
+      "top_n": 10,
+      "expect": { "ordered_keys": [] }
+    },
+    {
+      "id": "REG-005",
+      "title": "impacted test with no S6.2 history ranks last at zero risk",
+      "impact": {
+        "changed": ["src/new.py"],
+        "impacted": [
+          { "path": "tests/test_new.py", "kinds": ["direct"] },
+          { "path": "tests/test_old.py", "kinds": ["referenced"] }
+        ]
+      },
+      "ranking": {
+        "project_id": "proj",
+        "ranked": [
+          { "test_key": "tests/test_old.py", "risk_score": 0.4, "stats": { "test_key": "tests/test_old.py" } }
+        ]
+      },
+      "top_n": 10,
+      "expect": { "ordered_keys": ["tests/test_old.py", "tests/test_new.py"] }
+    },
+    {
+      "id": "REG-006",
+      "title": "strongest impact-kind join + stable tie-break",
+      "impact": {
+        "changed": ["src/a.py", "src/b.py", "src/c.py"],
+        "impacted": [
+          { "path": "tests/test_a.py", "kinds": ["direct"] },
+          { "path": "tests/test_b.py", "kinds": ["generated"] },
+          { "path": "tests/test_c.py", "kinds": ["referenced", "direct"] }
+        ]
+      },
+      "ranking": {
+        "project_id": "proj",
+        "ranked": [
+          { "test_key": "tests/test_a.py", "risk_score": 0.5, "stats": { "test_key": "tests/test_a.py" } },
+          { "test_key": "tests/test_b.py", "risk_score": 0.5, "stats": { "test_key": "tests/test_b.py" } },
+          { "test_key": "tests/test_c.py", "risk_score": 0.5, "stats": { "test_key": "tests/test_c.py" } }
+        ]
+      },
+      "top_n": 10,
+      "expect": {
+        "ordered_keys": ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"],
+        "impact_kinds": ["direct", "generated", "direct"]
+      }
+    }
+  ]
+}

@@ -154,9 +154,7 @@ def compute_test_stats(
     total = len(executed)
     passed = sum(1 for o in executed if o.status is TestResultStatus.PASSED)
     failed = sum(1 for o in executed if o.status is TestResultStatus.FAILED)
-    flaky = sum(
-        1 for o in executed if o.status is TestResultStatus.FLAKY or o.flaky_diagnosis
-    )
+    flaky = sum(1 for o in executed if o.status is TestResultStatus.FLAKY or o.flaky_diagnosis)
     skipped = sum(1 for o in outcomes if o.status is TestResultStatus.SKIPPED)
 
     insufficient = total < min_sample
@@ -366,9 +364,7 @@ def project_test_history(
             models.Failure.category,
         )
         .join(models.TestRun, models.TestResult.run_id == models.TestRun.id)
-        .outerjoin(
-            models.Failure, models.Failure.test_result_id == models.TestResult.id
-        )
+        .outerjoin(models.Failure, models.Failure.test_result_id == models.TestResult.id)
         .where(models.TestRun.project_id == project_id)
         .where(models.TestResult.test_case_id.is_not(None))
         .order_by(

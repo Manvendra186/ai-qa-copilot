@@ -33,6 +33,10 @@ S3.1: execution-run persistence — the worker's ``RunReport`` mapped onto
 S6.1: deterministic change-impact analysis — changed files (explicit list
 or a ``base..head`` git range) → impacted test files, LLM-free
 (:mod:`qa_copilot_repository.impact`, build bible §19).
+
+S6.3: deterministic regression recommender — the S6.1 impact set joined
+with the S6.2 flaky/risk ranking into a stable top-N recommendation,
+LLM-free (:mod:`qa_copilot_repository.regression`, build bible §19 S6.3).
 """
 
 from . import (
@@ -45,6 +49,7 @@ from . import (
     membership,
     models,
     prompts,
+    regression,
     requirements,
     runs,
     scanner,
@@ -69,12 +74,14 @@ from .impact import (
     main,
     normalize_changed,
 )
+from .regression import DEFAULT_TOP_N, recommend
 from .scanner import scan_repository
 
 __version__ = "0.1.0"
 
 __all__ = [
     "__version__",
+    "DEFAULT_TOP_N",
     "GeneratedTestRef",
     "TestOutcome",
     "TestRiskInput",
@@ -99,6 +106,8 @@ __all__ = [
     "project_test_history",
     "prompts",
     "rank_tests",
+    "recommend",
+    "regression",
     "requirements",
     "runs",
     "scan_repository",

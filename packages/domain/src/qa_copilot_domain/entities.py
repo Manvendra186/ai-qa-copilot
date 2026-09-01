@@ -378,3 +378,59 @@ class RiskRanking(DomainModel):
     flaky_threshold: float = Field(default=DEFAULT_FLAKY_THRESHOLD, ge=0.0, le=1.0)
     failing_threshold: float = Field(default=DEFAULT_FAILING_THRESHOLD, ge=0.0, le=1.0)
     computed_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# S6.3 — Deterministic regression recommender (build bible §19 S6.3).
+# ---------------------------------------------------------------------------
+
+
+class RecommenderItem(DomainModel):
+    """One ranked regression recommendation (build bible §19 S6.3).
+
+    The S6.3 join of the S6.1 change-impact set (which tests to re-run, and
+    why) with the S6.2 flaky/risk ranking (how risky each is). ``rank`` is the
+    1-based position in the top-N set — the set is ordered by ``risk_score``
+    descending, then ``test_key`` ascending (the stable tie-break, so equal
+    inputs always yield the same order). ``impact_kind`` is the strongest
+    S6.1 impact kind; ``changed_files`` are the changed files that pulled the
+    test in; ``stats`` carries the full S6.2 per-test history evidence;
+    ``rationale`` is the deterministic, human-readable evidence trail (impact
+    kind, failure rate, flakiness rate, requirement risk, test-case priority,
+    changed files) shown next to a ranked test (the S6.4 UI's per-test chips).
+    """
+
+    test_key: NonBlankStr
+    stats: TestHistoryStats
+    rank: int = Field(default=1, ge=1)
+    risk_score: float = Field(default=0.0, ge=0.0)
+    impact_kind: ImpactKind | None = None
+    changed_files: list[str] = Field(default_factory=list)
+    requirement_risk: RiskLevel | None = None
+    test_case_priority: Priority | None = None
+    rationale: list[str] = Field(default_factory=list)
+
+
+class RecommendationSet(DomainModel):
+    """Deterministic top-N regression recommendation set (build bible §19 S6.3).
+
+    The LLM-free core output: the S6.1 impact set joined with the S6.2 risk
+    ranking, ordered by ``risk_score`` descending then ``test_key`` ascending
+    (stable and reproducible) and truncated to ``top_n``. ``recommendations``
+    carries the per-test evidence (impact, history stats, rationale); the
+    flagging policy (``min_sample`` / window / thresholds) is echoed from the
+    S6.2 ranking so the S6.4 UI can explain *why* a flag fired. Equal inputs
+    always produce equal JSON (the wall-clock ``computed_at`` excepted; golden
+    tests drop it before comparing — the S2.1/S3.3/S5.1 deterministic-core
+    pattern).
+    """
+
+    project_id: NonBlankStr
+    changed: list[str]
+    recommendations: list[RecommenderItem] = Field(default_factory=list)
+    top_n: int = Field(default=10, ge=1)
+    min_sample: int = Field(default=DEFAULT_MIN_SAMPLE, ge=1)
+    recent_window: int = Field(default=DEFAULT_RECENT_WINDOW, ge=1)
+    flaky_threshold: float = Field(default=DEFAULT_FLAKY_THRESHOLD, ge=0.0, le=1.0)
+    failing_threshold: float = Field(default=DEFAULT_FAILING_THRESHOLD, ge=0.0, le=1.0)
+    computed_at: datetime | None = None

@@ -1,5 +1,5 @@
 """LLM-backed agents. S1.1 Requirement, S1.2 Test Design, S2.3 Automation,
-S4.1 Investigator, S5.4 Knowledge Q&A."""
+S4.1 Investigator, S5.4 Knowledge Q&A, S6.3 Regression Advisor."""
 
 from .automation import (
     AUTOMATOR_NAME,
@@ -38,6 +38,17 @@ from .knowledge_qa import (
     parse_qa_answer,
     render_context,
 )
+from .regression_advisor import (
+    ADVISOR_NAME,
+    SUMMARY_SOURCE_LLM,
+    SUMMARY_SOURCE_STUB,
+    AdvisorInput,
+    RegressionAdvisorAgent,
+    RegressionAdvisorResult,
+    RegressionSummary,
+    parse_summary,
+    stub_summary,
+)
 from .requirement import (
     AGENT_NAME,
     SUGGESTED_TEST_TYPES,
@@ -60,6 +71,7 @@ from .test_design import (
 
 __all__ = [
     "AGENT_NAME",
+    "ADVISOR_NAME",
     "AUTOMATOR_NAME",
     "FIXER_NAME",
     "FRAMEWORKS",
@@ -68,9 +80,12 @@ __all__ = [
     "LANGUAGES",
     "PRIORITIES",
     "RISK_LEVELS",
+    "SUMMARY_SOURCE_LLM",
+    "SUMMARY_SOURCE_STUB",
     "SUGGESTED_TEST_TYPES",
     "TEST_CASE_TYPES",
     "TEST_DESIGNER_NAME",
+    "AdvisorInput",
     "AutomationAgent",
     "AutomationAgentResult",
     "AutomationInput",
@@ -89,6 +104,9 @@ __all__ = [
     "KnowledgeQAInput",
     "QAAnswer",
     "QACitation",
+    "RegressionAdvisorAgent",
+    "RegressionAdvisorResult",
+    "RegressionSummary",
     "RequirementAgent",
     "RequirementAgentResult",
     "RequirementAnalysis",
@@ -102,5 +120,7 @@ __all__ = [
     "parse_fix_proposal",
     "parse_generated_test",
     "parse_qa_answer",
+    "parse_summary",
     "render_context",
+    "stub_summary",
 ]
