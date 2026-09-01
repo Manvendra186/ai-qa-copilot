@@ -9,12 +9,74 @@
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
   Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
-  **Phase 6 — Regression Intelligence: in progress — S6.1 ✓ (change-impact core), S6.2 ✓ (flaky + risk core), S6.3–S6.5 next**
-- **Step:** S0.1–S6.2 ✓ (S6.1 change-impact core + S6.2 flaky/risk core, both LLM-free; see §2) ·
-  **next:** **S6.3 — recommender (deterministic top-N)** — see §3
+  **Phase 6 — Regression Intelligence: in progress — S6.1 ✓ (change-impact core), S6.2 ✓ (flaky + risk core), S6.3 ✓ (recommender), S6.4–S6.5 next**
+- **Step:** S0.1–S6.3 ✓ (S6.1 change-impact core + S6.2 flaky/risk core + S6.3 deterministic top-N recommender, all LLM-free; see §2) ·
+  **next:** **S6.4 — Regression API + web** — see §3
 
 ## 2. Just completed
 
+- 2026-09-01 · **S6.3 (recommender — deterministic top-N) — all gates green**
+  (bible §19 S6.3; exit: golden `regression_v1.json` top-N order match 100% ·
+  deterministic (same input ⇒ same JSON) · no LLM in the ranking path):
+  - `qa_copilot_repository.regression` (new) — `recommend(impact, ranking,
+    *, top_n=DEFAULT_TOP_N)` **pure core** (no DB, no LLM, no network; joins
+    `ImpactSet.impacted` with `RiskRanking.ranked` by `test_key`): one
+    `RecommenderItem` per **impacted** test — a non-impacted test is never
+    recommended, no matter how risky · an impacted test with no S6.2 history
+    still ranks (score 0, `no-run-history` rationale) · strongest impact kind
+    per test + its changed files ride along · `risk_score` desc → `test_key`
+    asc (stable tie-break), truncated to `top_n`, `rank` is 1-based ·
+    per-test deterministic `rationale` evidence (impact kind, failure % ·
+    flaky % · requirement-risk · priority · `changed:N`) · `top_n < 1` →
+    `ValueError` · `DEFAULT_TOP_N=10`;
+  - `qa_copilot_domain` — `RecommenderItem` (test_key, stats, rank,
+    risk_score, impact_kind, changed_files, requirement_risk,
+    test_case_priority, rationale) + `RecommendationSet` (project_id,
+    changed, recommendations, top_n, min_sample / recent_window / flaky /
+    failing thresholds, computed_at) — shared recommender contract (the S6.4
+    API serializes these); **fixed a pre-existing duplicate `computed_at`
+    field on `RiskRanking`** (mypy strict caught it);
+  - `qa_copilot_ai/agents/regression_advisor.py` (new) — optional
+    `regression-advisor@1` human summary (`RegressionAdvisorAgent` +
+    `AdvisorInput`; gateway §31.1 + registry prompt): JSON `{"summary": ...}`
+    contract — **never re-orders or alters the ranked set** · on LLM error /
+    schema-invalid / missing prompt → deterministic `stub_summary` (logged)
+    so the core works offline;
+  - `packages/ai/prompts/regression-advisor.v1.md` (v1 prompt);
+  - `qa_copilot_ai/regression/` (new package) — `golden.py`
+    (`RegressionGoldenSet` / `RegressionFixture` · `default_golden_path` ·
+    `load_regression_golden_set`) · `runner.py` (`run_regression_eval` —
+    per-fixture `recommend` + order-match scoring; `RegressionReport`) ·
+    `cli.py` (`python -m qa_copilot_ai.regression` → JSON on stdout,
+    `--golden` / `--report` / `--advise`, stderr summary, exit 0/1/2) ·
+    `__main__.py`;
+  - **`packages/ai/golden/regression_v1.json` — 6 synthetic fixtures**:
+    REG-001 risk-desc order · REG-002 top-N truncation keeps the highest-risk
+    slice · REG-003 equal-risk tie → `test_key` asc · REG-004 empty impacted
+    set → no recommendations (non-impacted never recommended) · REG-005
+    impacted test with no S6.2 history ranks last at zero risk · REG-006
+    strongest impact-kind join + stable tie-break; gate `pass_min 1.0`;
+  - `scripts/regression_run.py` — dotenv-aware CLI wrapper (`reports/` is
+    gitignored);
+  - `tests/unit/test_regression.py` (new, **24 tests**): core join / ordering
+    / tie-break / truncation / empty-impacted / no-history / `top_n` guard ·
+    golden 100% green · advisor LLM + stub fallback · CLI contract;
+  - **gates**: pytest **727 passed** (full unit suite) · mypy strict ✓
+    (100 files) · ruff check ✓ · ruff format ✓ ·
+    `uv run python scripts/regression_run.py --report reports/regression_v1.json`
+    → **100% order match, `passed: true`, exit 0**;
+  - **gotchas:** **environment repair (not S6.3)** — dev DB `qa_copilot`
+    (:5433) had been **emptied** (only `alembic_version` left, still stamped
+    at head; all tables gone) → 7 `test_repository.py` DB-smoke tests were
+    failing before this session; repaired with `alembic stamp base` →
+    `alembic upgrade head` (3 migrations re-created the schema) →
+    `scripts/seed.py` (dev fixtures re-seeded); `test_repository.py` now
+    green · PowerShell `2>&1` surfaces uv's stderr warnings as
+    "NativeCommandError" (exit-code quirk) — judge by the actual output,
+    not just `$LASTEXITCODE`;
+  - **next:** S6.4 (bible §19) — `POST /projects/{id}/regression/analyze`
+    (202+job) → `regression.set` SSE + "Regression" tab ("Run this set" via
+    S3) — see §3.
 - 2026-09-01 · **S6.2 (flaky + risk core, LLM-free) — all gates green**
   (bible §19 S6.2; exit: synthetic run-history fixtures → flaky/failing flags
   + deterministic risk ranking 100% · pytest/mypy/ruff green):
@@ -448,24 +510,26 @@
 
 ## 3. NEXT STEP (start here)
 
-**S6.3 — Recommender (deterministic top-N)** (bible §19 S6.3):
-`qa_copilot_ai.regression` — rank the S6.1 ∩ S6.2 intersection: join
-`compute_impact` (per-test impact kinds, via `strongest_impact_kind`) with
-S6.2 `compute_risk_score` / `build_risk_ranking` → deterministic top-N (stable
-tie-break on `test_key`) + per-test rationale (impact kind, failure/flakiness
-rates, requirement risk, test-case priority) · optional `regression-advisor@1`
-human summary (stub fallback) · golden `regression_v1.json` eval +
-`scripts/regression_run.py`.
-- **Exit criterion:** golden `regression_v1.json` top-N set matches on ≥ 2
-  sample repos · deterministic (same input ⇒ same JSON) · no LLM in the ranking
-  path (LLM only for the optional summary, stub fallback) · gates green
-  (pytest/mypy/ruff).
-- **Then:** S6.4 (API `POST /projects/{id}/regression/analyze` + web
-  "Regression" tab) → S6.5 (live E2E + baseline report) — full table: bible §19.
-- S6.1 + S6.2 are done (see §2): `compute_impact` (S6.1) +
-  `compute_risk_score` / `build_risk_ranking` (S6.2) are the S6.3 recommender's
-  inputs — rank the intersection, stable tie-break, explainable rationale ·
-  every MVP §20 "definition of done" item is met (S0.1–S5.5 ✓).
+**S6.4 — Regression API + web** (bible §19 S6.4):
+`JobType.REGRESSION_ANALYSIS` · `POST /projects/{id}/regression/analyze`
+(202 + `job_id` + `Location`; member-or-above RBAC, unknown project → 403
+§31.3; body = `files[]` or `{base_ref, head_ref}` — 422 on invalid) ·
+`RegressionJobAgent` pipeline: S6.1 `compute_impact` (changed files /
+`base..head` git range) ∩ S6.2 `build_risk_ranking` → S6.3 `recommend()`
+top-N `RecommendationSet` → **`regression.set` SSE event** (impact + ranked
+set + flaky flags + optional `regression-advisor@1` summary, stub fallback) ·
+`output_ref` = stable `regression://<project>` ref → `ai_actions` audit row ·
+"Regression" tab: input → job progress → ranked set with per-test rationale
+chips + flaky flags · "Run this set" → S3 execution over the selected tests.
+- **Exit criterion:** analyze → 202 → job → ranked set visible in UI ·
+  running the recommended set through the S3 path stores artifacts ·
+  contract/RBAC/SSE tests green · gates green (pytest/mypy/ruff + web
+  tsc/eslint/build).
+- **Then:** S6.5 (live E2E + baseline report) — full table: bible §19.
+- S6.1 + S6.2 + S6.3 are done (see §2): `compute_impact` (S6.1) +
+  `build_risk_ranking` (S6.2) + `recommend()` (S6.3) are the S6.4 pipeline —
+  the API wires the three pure cores together; every MVP §20 "definition of
+  done" item is met (S0.1–S5.5 ✓).
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker
   deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
   `test_golden_demo_app` conventions-golden re-baseline on clean trees

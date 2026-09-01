@@ -1739,3 +1739,150 @@
   `test_runs`/`test_results`/`failures`. See `STATE.md` §3; full step
   table: bible §19.
 
+## 2026-09-01 — S6.2 Flaky + risk core (LLM-free): `qa_copilot_repository.history` + domain thresholds — gates green
+
+- **Goal:** S6.1 handoff (bible §19 S6.2): per-test flakiness + failure-rate
+  stats + deterministic risk score over `test_runs` / `test_results` /
+  `failures` (LLM-free); flaky tests flagged; synthetic run-history fixtures
+  → flaky/failing flags + deterministic risk ranking 100%; pytest/mypy/ruff
+  green.
+- **Did:**
+  - `qa_copilot_repository.history` (new) — **pure core** (no LLM, no
+    network): `TestOutcome` (run_id, run_order, status, flaky_diagnosis) +
+    `TestRiskInput` (test_key, outcomes, impact_kind, requirement_risk,
+    test_case_priority) · `compute_test_stats` (flakiness / failure /
+    recent-failure rates, `is_flaky` / `is_failing` flags,
+    `insufficient_samples`) · `compute_risk_score` (bounded [0,110] monotonic
+    sum: impact direct 40 / generated 25 / referenced 15 · failure 30 · flaky
+    20 · requirement risk / test-case priority 10/5/2) ·
+    `strongest_impact_kind` · `rank_tests` · `build_risk_ranking` ·
+    `project_test_history` (thin ORM seam);
+  - `qa_copilot_domain` — `TestHistoryStats` + threshold defaults
+    `DEFAULT_MIN_SAMPLE=3` / `DEFAULT_RECENT_WINDOW=5` / `DEFAULT_FLAKY=0.25`
+    / `DEFAULT_FAILING=0.50` (+ exports in `__init__.py`);
+  - `tests/unit/test_history.py` (new, **18 tests**): flaky/failing flags +
+    risk ranking over synthetic run-history fixtures · min-sample gate (no
+    flags from < 3 runs) · determinism (equal inputs ⇒ equal output) ·
+    fake-`Session` ORM mapping · full-query E2E against a **dedicated**
+    scratch Postgres `qa_copilot_history_test` on :5433 (created + dropped by
+    the fixture; `vector` ext installed) — main dev `qa_copilot` schema
+    untouched;
+- **Verified (exit criterion):** pytest **73 passed** (focused
+  impact+runs+history; +18) · mypy strict ✓ · ruff check ✓ · ruff format ✓ ·
+  full pre-commit mypy hook blocked by network (GitHub `mypy-hook` env install
+  fails) — direct mypy authoritative + clean.
+- **Decisions / gotchas:** `TestResult.test_case_id` is NOT an FK (E2E seed
+  needs no `TestCase` row) · FK-safe seed order org/project → run → result →
+  failure with grouped flushes · drop the scratch DB *after* the session
+  closes (else `DROP` blocks on the SELECTs' ACCESS SHARE locks) · pytest
+  emits `PytestCollectionWarning` for the production `TestOutcome` /
+  `TestRiskInput` names — benign, left as-is (renaming would break the API).
+- **Commit:** `666eeea step S6.2: flaky + risk core (LLM-free) -
+  qa_copilot_repository.history (TestOutcome/TestRiskInput; compute_test_stats
+  flaky/failing flags + min-sample gate; compute_risk_score bounded [0,110]
+  monotonic sum; strongest_impact_kind; rank_tests; build_risk_ranking;
+  project_test_history ORM seam) + domain TestHistoryStats +
+  DEFAULT_MIN_SAMPLE/RECENT_WINDOW/FLAKY/FAILING; test_history 18 tests
+  (synthetic run-history fixtures, determinism, fake-Session ORM, E2E
+  dedicated scratch Postgres qa_copilot_history_test :5433 + vector ext);
+  73 passed focused (impact+runs+history), mypy strict, ruff`.
+- **Next session start:** **S6.3 — recommender (deterministic top-N)** (bible
+  §19 S6.3): rank the S6.1 ∩ S6.2 intersection → deterministic top-N
+  `RecommendationSet` + per-test rationale + optional `regression-advisor@1`
+  summary (stub fallback) + golden `regression_v1.json`. See `STATE.md` §3.
+
+## 2026-09-01 — S6.3 Deterministic regression recommender (LLM-free): `qa_copilot_repository.regression` + `qa_copilot_ai.regression` + advisor — gates green
+
+- **Goal:** S6.2 handoff (bible §19 S6.3): rank the S6.1 `ImpactSet` ∩ S6.2
+  `RiskRanking` intersection into a deterministic top-N `RecommendationSet`
+  (same input ⇒ same JSON, no LLM in the ranking path); golden
+  `regression_v1.json` top-N order match 100%; optional `regression-advisor@1`
+  human summary with a safe stub fallback.
+- **Did:**
+  - `qa_copilot_repository.regression` (new) — `recommend(impact, ranking,
+    *, top_n=DEFAULT_TOP_N)` **pure core** (no DB, no LLM, no network; joins
+    `ImpactSet.impacted` with `RiskRanking.ranked` by `test_key`): one
+    `RecommenderItem` per **impacted** test — a non-impacted test is never
+    recommended, no matter how risky · an impacted test with no S6.2 history
+    still ranks (score 0, `no-run-history` rationale) · strongest impact kind
+    per test + its changed files ride along · `risk_score` desc → `test_key`
+    asc (stable tie-break), truncated to `top_n`, `rank` is 1-based ·
+    per-test deterministic `rationale` evidence (impact kind, failure % /
+    flaky % / requirement-risk / priority / `changed:N`) · `top_n < 1` →
+    `ValueError` · `DEFAULT_TOP_N=10`;
+  - `qa_copilot_domain` — `RecommenderItem` (test_key, stats, rank,
+    risk_score, impact_kind, changed_files, requirement_risk,
+    test_case_priority, rationale) + `RecommendationSet` (project_id,
+    changed, recommendations, top_n, min_sample / recent_window / flaky /
+    failing thresholds, computed_at) — shared recommender contract (the S6.4
+    API serializes these); **fixed a pre-existing duplicate `computed_at`
+    field on `RiskRanking`** (mypy strict caught it);
+  - `qa_copilot_ai/agents/regression_advisor.py` (new) — optional
+    `regression-advisor@1` human summary (`RegressionAdvisorAgent` +
+    `AdvisorInput`; gateway §31.1 + registry prompt): JSON `{"summary": ...}`
+    contract — **never re-orders or alters the ranked set** · on LLM error /
+    schema-invalid / missing prompt → deterministic `stub_summary` (logged)
+    so the core works offline;
+  - `packages/ai/prompts/regression-advisor.v1.md` (v1 prompt);
+  - `qa_copilot_ai/regression/` (new package) — `golden.py`
+    (`RegressionGoldenSet` / `RegressionFixture` · `default_golden_path` ·
+    `load_regression_golden_set`) · `runner.py` (`run_regression_eval` —
+    per-fixture `recommend` + order-match scoring; `RegressionReport`) ·
+    `cli.py` (`python -m qa_copilot_ai.regression` → JSON on stdout,
+    `--golden` / `--report` / `--advise`, stderr summary, exit 0/1/2) ·
+    `__main__.py`;
+  - **`packages/ai/golden/regression_v1.json` — 6 synthetic fixtures**:
+    REG-001 risk-desc order · REG-002 top-N truncation keeps the highest-risk
+    slice · REG-003 equal-risk tie → `test_key` asc · REG-004 empty impacted
+    set → no recommendations (non-impacted never recommended) · REG-005
+    impacted test with no S6.2 history ranks last at zero risk · REG-006
+    strongest impact-kind join + stable tie-break; gate `pass_min 1.0`;
+  - `scripts/regression_run.py` — dotenv-aware CLI wrapper (`reports/` is
+    gitignored);
+  - `tests/unit/test_regression.py` (new, **24 tests**): core join / ordering
+    / tie-break / truncation / empty-impacted / no-history / `top_n` guard ·
+    golden 100% green · advisor LLM + stub fallback · CLI contract;
+- **Verified (exit criterion):** `uv run pytest -q` → **727 passed** (full
+  suite) · `uv run mypy apps packages` → clean (100 files) ·
+  `ruff check .` ✓ · `ruff format --check .` ✓ ·
+  `uv run python scripts/regression_run.py --report reports/regression_v1.json`
+  → **100% order match, `passed: true`, exit 0**.
+- **Decisions / gotchas:** **environment repair (not S6.3 code)** — dev DB
+  `qa_copilot` (:5433) had been **emptied** (only `alembic_version` left,
+  still stamped at head; all tables gone) → 7 pre-existing
+  `test_repository.py` DB-smoke failures before this session; repaired with
+  `alembic stamp base` → `alembic upgrade head` (3 migrations re-created the
+  schema) → `scripts/seed.py` (dev fixtures re-seeded); `test_repository.py`
+  now green · PowerShell `2>&1` surfaces uv's stderr warnings as
+  "NativeCommandError" (exit-code quirk) — judge by the actual output, not
+  just `$LASTEXITCODE`.
+- **Commit:** `7477bfe step S6.3: deterministic regression recommender
+  (LLM-free) - qa_copilot_repository.regression (recommend() pure core: S6.1
+  ImpactSet joined with S6.2 RiskRanking by test_key -> deterministic top-N
+  RecommendationSet, risk desc + test_key tie-break, strongest impact kind,
+  per-test rationale evidence, top_n>=1 guard; DEFAULT_TOP_N=10) + domain
+  RecommenderItem/RecommendationSet contract (fixed duplicate computed_at
+  field in RiskRanking); qa_copilot_ai.regression (golden loader 6 fixtures,
+  runner scoring order + impact-kind join, CLI JSON stdout + --report +
+  stderr summary, exit 0/1/2, optional --advise) + optional
+  regression-advisor@1 LLM advisor (safe stub fallback on LLM error /
+  schema-invalid / missing prompt; never re-orders the ranking) + prompt v1;
+  golden regression_v1.json (6 fixtures, pass_min 1.0);
+  scripts/regression_run.py (.env reader); test_regression 24 tests (core
+  join/order/tie-break/truncation/no-history, golden 100% green, advisor
+  LLM+stub fallbacks, CLI contract); gates: pytest 727 passed (dev DB
+  repaired: tables were wiped -> alembic stamp base + upgrade head + reseed;
+  7 pre-existing test_repository DB-smoke failures fixed), mypy strict 100
+  files, ruff check/format green, regression_run exit 0 (100% order match).
+  Phase 6: S6.3 done, next S6.4 (Regression API + web)` — 16 files, +1693.
+- **Next session start:** **S6.4 — Regression API + web** (bible §19 S6.4):
+  `JobType.REGRESSION_ANALYSIS` · `POST /projects/{id}/regression/analyze`
+  (202 + `job_id` + `Location`; member-or-above RBAC, unknown project → 403
+  §31.3; body = `files[]` or `{base_ref, head_ref}` — 422 on invalid) ·
+  `RegressionJobAgent` pipeline: S6.1 `compute_impact` ∩ S6.2
+  `build_risk_ranking` → S6.3 `recommend()` top-N `RecommendationSet` →
+  **`regression.set` SSE event** (impact + ranked set + flaky flags +
+  optional advisor summary) · `output_ref` = stable `regression://<project>`
+  → `ai_actions` audit · "Regression" tab ("Run this set" via S3). See
+  `STATE.md` §3.
+
