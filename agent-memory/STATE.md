@@ -9,14 +9,29 @@
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
   Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
-  **Phase 6 — Regression Intelligence: complete** (S6.1 ✓, S6.2 ✓, S6.3 ✓, S6.4 ✓, S6.5 ✓)
+  Phase 6 — Regression Intelligence **complete** (S6.1 ✓, S6.2 ✓, S6.3 ✓, S6.4 ✓, S6.5 ✓) ·
+  **Phase 7 — Integrations: in progress** (S7.0 ✓ step table defined + approved)
 - **Step:** S0.1–S6.5 ✓ (S6.4 regression API + web, commit `b3fc68c` · S6.5 live E2E 38/38 +
-  committed `reports/regression_v1.json` baseline, 2026-09-02) ·
-  **next:** **Phase 7 — Integrations** (GitHub / Jira / CI/CD, bible §19 phase table) —
-  start with the definition step (bible §19, detail-on-demand per §18) — see §3
+  committed `reports/regression_v1.json` baseline, 2026-09-02) · S7.0 ✓ Phase 7 step
+  table drafted + approved (bible §19, 2026-09-02) ·
+  **next:** **S7.1 — GitHub core (LLM-free)** — see §3
 
 ## 2. Just completed
 
+- 2026-09-02 · **S7.0 (Phase 7 definition — Integrations) — step table drafted +
+  approved** (bible §19; exit: table defined against §20–§22 + sign-off):
+  `### Phases 7–8` → `### Phase 7 — Integrations` (S7.1 GitHub core (typed httpx,
+  PAT redacted §17, `integration_configs` + migration, golden `github_v1.json`,
+  CLI) · S7.2 PR → regression (`pull_request` third exclusive analyze source,
+  idempotent `pr-comment` owner+, web PR input) · S7.3 CI/CD webhook
+  (`/api/v1/webhooks/github` HMAC `X-Hub-Signature-256` is the auth,
+  `webhook_events` dedupe, `qa-copilot.yml` template) · S7.4 Jira linking
+  (failure + S4.1 diagnosis → issue create-or-update, `failures.jira_issue_key`,
+  golden `jira_v1.json`) · S7.5 live E2E + committed baseline
+  `reports/integrations_v1.json`) · stance: integration cores deterministic +
+  LLM-free (S2.1/S3.3/S5.1/S6.1 pattern) — §31.1 gateway off the path; PR files
+  = S6.1 `files[]` input · out of scope per §25 (no other providers, no OAuth,
+  no Jira sync beyond failure-linking) · Phase 8 left detail-on-demand (§18).
 - 2026-09-02 · **S6.5 (live regression E2E + committed baseline) — live E2E
   38/38, baseline report tracked + committed** (bible §19 S6.5; exit: real
   project + changed files → 202 → job → `regression.set` SSE with ranked set
@@ -584,12 +599,18 @@
 
 ## 3. NEXT STEP (start here)
 
-**Phase 7 — Integrations** (bible §19 phase table: GitHub / Jira / CI/CD —
-"Fits engineering workflow"; Phase 6 S6.1–S6.5 is complete):
-- **Start with the definition step** (bible §19, detail-on-demand per §18):
-  draft the Phase 7 step table (e.g. S7.1 GitHub sync/webhooks · S7.2 CI
-  integration · S7.3 Jira linking) against bible §20–§22, get sign-off, then
-  build step by step.
+**S7.1 — GitHub core (LLM-free)** (bible §19 Phase 7; exit: PR → changed-files
+contract matches golden 100% · PAT never appears in logs/audit (red-team check) ·
+no LLM in the path):
+- `qa_copilot_integrations.github` — typed httpx client (PAT via env, never
+  logged/audited; redacted §17): `resolve_repository(owner, repo)` →
+  `repositories` fields (url, default_branch) · `fetch_pull_request(owner, repo,
+  number)` → head/base sha + changed files in exactly the S6.1 `files[]` shape;
+- `integration_configs` table (project_id, provider, base_url, token_ref,
+  enabled; unique on project+provider) + migration; RBAC: owner-or-above
+  config, member-or-above read;
+- golden `github_v1.json` (§22) + fake-server tests (success, 401/404 mapping,
+  token redaction) + CLI `python -m qa_copilot_integrations.github pr-files …` → JSON.
 - **Phase 6 closeout (2026-09-02):** S6.5 live E2E 38/38 passed (analyze →
   202 → `regression.set` SSE → run the set → S3 Playwright 1/1 passed) ·
   baseline `reports/regression_v1.json` committed for drift tracking

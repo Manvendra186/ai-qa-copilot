@@ -1973,3 +1973,74 @@
   Integrations** (GitHub / Jira / CI/CD, bible §19 phase table) — start with
   the definition step (bible §19, §18).
 
+## 2026-09-02 — S7.0 — Define Phase 7 (Integrations) step table
+
+- **Goal:** the Phase 7 definition step (bible §19, detail-on-demand per §18) —
+  draft the Integrations (GitHub / Jira / CI/CD) step table against bible
+  §20–§22 and get sign-off (STATE.md §3).
+- **Did:**
+  - Replaced the empty `### Phases 7–8` heading in
+    `docs/AI_QA_Copilot_Build_Bible_v1.1.md` §19 with **`### Phase 7 —
+    Integrations`** (S7.0 note + step table S7.1–S7.5):
+    - **S7.1 GitHub core (LLM-free):** `qa_copilot_integrations.github` typed
+      httpx client (PAT via env, redacted §17) — `resolve_repository(owner,
+      repo)` → `repositories` fields · `fetch_pull_request(owner, repo, number)`
+      → head/base sha + changed files in exactly the S6.1 `files[]` shape ·
+      `integration_configs` table (project_id, provider, base_url, token_ref,
+      enabled; unique on project+provider) + migration · RBAC owner-or-above
+      config / member-or-above read · golden `github_v1.json` (§22) +
+      fake-server tests + CLI `pr-files` → JSON.
+    - **S7.2 PR → regression (API + web):** `pull_request: {owner, repo, number}`
+      as third exclusive source of `POST /projects/{id}/regression/analyze`
+      (422 unless exactly one of files / base+head / pull_request) ·
+      `RegressionJobAgent` resolves PR → S6.1 impact → ranked set
+      (`regression.set` unchanged) · `POST /projects/{id}/regression/pr-comment`
+      (owner-or-above) idempotent PR comment (marker; re-post updates) ·
+      Regression tab: PR input + "Post to PR".
+    - **S7.3 CI/CD webhook:** `POST /api/v1/webhooks/github` — HMAC
+      `X-Hub-Signature-256` vs the project webhook secret (invalid/missing →
+      401; the signature IS the auth — no token/RBAC) · `pull_request`
+      opened/synchronize → owner/repo → project → `JobType.REGRESSION_ANALYSIS`
+      (202 + `Location` + `regression.set` SSE) · `webhook_events` table
+      (delivery id unique → dedupe) + migration · ship
+      `infra/github/workflows/qa-copilot.yml` template.
+    - **S7.4 Jira linking (LLM-free):** `qa_copilot_integrations.jira` typed
+      client (base_url + PAT, redacted §17) · `POST
+      /projects/{id}/failures/{failure_id}/jira` (202 + job; owner-or-above) —
+      failure + S4.1 diagnosis (category, root_cause, evidence, confidence) →
+      issue create-or-update · link in `failures.jira_issue_key` (nullable
+      column + migration) · `GET` exposes link · golden `jira_v1.json` (§22) +
+      fake-server tests (create/update/idempotency, 4xx mapping, redaction).
+    - **S7.5 Live E2E + baseline report:** local GitHub/Jira HTTP fixtures
+      (S6.5 "live evidence" pattern — no real GitHub/Jira on this machine) —
+      signed webhook (PR) → regression job → ranked set over PR files → "Run
+      this set" via S3 → Jira issue created/linked for a seeded failure · live
+      driver committed (evidence pair) · baseline
+      `reports/integrations_v1.json` (single tracked report, `.gitignore`
+      pattern per S6.5; drift tracking §31.6/§31.7).
+  - **Stance (S7.0 note in the bible):** all integration cores deterministic +
+    LLM-free (the S2.1/S3.3/S5.1/S6.1 pattern) — GitHub/Jira/CI are HTTP APIs,
+    not model calls, so the §31.1 gateway stays off the integration path in V1
+    (a model call in this phase is a red flag) · reused seams: 202+SSE jobs +
+    `JobAgent` + `ai_actions` audit · RBAC §31.3 · S6.1 impact core (PR files =
+    its `files[]` input) · `repositories` entity (§10) · S4.1 diagnosis → Jira
+    payload · redaction + gitleaks fail-closed (§17/§31.4) · out of scope per
+    §25: no GitLab/Bitbucket/Linear/Slack, no OAuth (PAT + webhook HMAC only),
+    no Jira sync beyond failure-linking.
+  - `### Phase 8 — Commercialization` left as a detail-on-demand stub (§18:
+    decompose only when entered — do not pre-write).
+- **Verified:** bible §19 section reads in place (Phase 7 heading + S7.0 note +
+  5-row table + Phase 8 stub; §20 follows, numbering intact) · table style
+  matches the Phase 5/6 rows · no other files touched.
+- **Commit:** `step S7.0: define Phase 7 (Integrations) step table` (this
+  commit).
+- **Decisions:** phase order = GitHub core → PR→regression linkage → CI/CD
+  webhook → Jira → live E2E/baseline (matches the STATE.md §3 suggested
+  GitHub → CI → Jira order, with GitHub split into core + linkage) · webhook
+  auth = the HMAC signature itself (no token/RBAC on that endpoint) ·
+  `JobType.REGRESSION_ANALYSIS` reused for PR-driven jobs (no new JobType) ·
+  integration credentials in a new `integration_configs` table (not
+  `projects.settings`) · Jira writes owner-or-above.
+- **Next session start:** **S7.1 — GitHub core (LLM-free)** (bible §19 S7.1).
+  See `STATE.md` §3.
+

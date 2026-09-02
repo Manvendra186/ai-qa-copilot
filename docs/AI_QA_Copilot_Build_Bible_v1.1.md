@@ -384,7 +384,33 @@ User request → Intent / task classifier
 | S6.4 | Regression API + web: `JobType.REGRESSION_ANALYSIS`; `POST /projects/{id}/regression/analyze` (202 + `job_id` + `Location`; member-or-above RBAC, unknown project → 403 §31.3; body = `files[]` or `{base_ref, head_ref}` — 422 on invalid); `RegressionJobAgent` → **`regression.set` SSE event** (impact + ranked set + flaky flags + optional summary) · `output_ref` = stable `regression://<project>` ref → `ai_actions` audit row; "Regression" tab: input → job progress → ranked set with per-test rationale chips + flaky flags; "Run this set" → S3 execution over the selected tests | analyze → 202 → job → ranked set visible in UI; running the recommended set through the S3 path stores artifacts; contract/RBAC/SSE tests green |
 | S6.5 | Live E2E + baseline report: demo app (seeded run history with ≥ 1 flaky + ≥ 1 fail→pass test) · change a component/test-id (or `DEFECT_LOCATOR_DRIFT`) → analyze → affected tests land in the recommended set · flaky test flagged · run the recommended set → artifacts; live eval `regression_run --report reports/regression_v1.json` (LM Studio) | Live E2E green; baseline report committed (drift tracking, §31.6/§31.7) |
 
-### Phases 7–8
+### Phase 7 — Integrations
+
+> Note (S7.0): Phase 7 makes the copilot fit the engineering workflow (bible §18
+> roadmap: GitHub, Jira, CI/CD). All integration cores are **deterministic and
+> LLM-free** (the S2.1/S3.3/S5.1/S6.1 pattern — typed REST clients + typed
+> contracts + fake-server tests + golden gates): GitHub/Jira/CI are HTTP APIs, not
+> model calls, so the §31.1 gateway stays off the integration path in V1 (a model
+> call in this phase is a red flag, not a feature). Reused seams: async jobs
+> (202 + SSE, §31.2) + `JobAgent` protocol + `ai_actions` audit · project-scoped
+> RBAC (§31.3, role check precedes project lookup) · S6.1 impact core (PR changed
+> files are exactly its `files[]` input) · `repositories` row already carries
+> `provider`/`url`/`default_branch` (§10) · S4.1 diagnosis as the Jira payload ·
+> secret redaction + gitleaks fail-closed (§17/§31.4). Out of scope per §25: no
+> GitLab/Bitbucket/Linear/Slack, no OAuth flows (PAT + webhook HMAC only), no Jira
+> sync beyond failure-linking.
+
+| Step | Work | Exit criterion |
+|---|---|---|
+| S7.1 | GitHub core (LLM-free): `qa_copilot_integrations.github` — typed httpx client (PAT via env, never logged/audited; redacted §17) — `resolve_repository(owner, repo)` → `repositories` fields (url, default_branch) · `fetch_pull_request(owner, repo, number)` → head/base sha + changed files in exactly the S6.1 `files[]` shape; `integration_configs` table (project_id, provider, base_url, token_ref, enabled; unique on project+provider) + migration; RBAC: owner-or-above config, member-or-above read; golden `github_v1.json` (§22) + fake-server tests (success, 401/404 mapping, token redaction) + CLI `python -m qa_copilot_integrations.github pr-files …` → JSON | PR → changed-files contract matches golden 100%; PAT never appears in logs/audit (red-team check); no LLM in the path |
+| S7.2 | PR → regression (API + web): `RegressionAnalysisRequest` gains a third exclusive source — `pull_request: {owner, repo, number}` (422 unless exactly one of `files` / `base_ref`+`head_ref` / `pull_request`); `RegressionJobAgent` resolves the PR via the S7.1 core → S6.1 impact → ranked set (`regression.set` SSE unchanged); `POST /projects/{id}/regression/pr-comment` (owner-or-above; body = PR ref) idempotently posts the ranked set to the PR (marker comment, re-post updates instead of duplicating); "Regression" tab: PR input + "Post to PR" action | PR input → 202 → `regression.set` with PR-derived impact; comment posts once (idempotent); contract/RBAC/SSE tests green |
+| S7.3 | CI/CD webhook: `POST /api/v1/webhooks/github` — `X-Hub-Signature-256` HMAC verified against the project webhook secret (invalid/missing → 401; the signature IS the auth — no token, no RBAC); `pull_request` opened/synchronize → owner/repo → project lookup → `JobType.REGRESSION_ANALYSIS` with the PR body (202 + `Location`; `regression.set` SSE); `webhook_events` table (delivery id unique → dedupe) + migration; ship the `infra/github/workflows/qa-copilot.yml` template (PR event → signed call to the webhook) | signed webhook → 202 → job → `regression.set` SSE green; unsigned → 401; duplicate delivery id → 200 with no second job; workflow YAML parses |
+| S7.4 | Jira linking (LLM-free): `qa_copilot_integrations.jira` — typed client (base_url + PAT, redacted §17) — `POST /projects/{id}/failures/{failure_id}/jira` (202 + job; owner-or-above): failure + S4.1 diagnosis (category, root_cause, evidence, confidence) → issue create-or-update; link stored in `failures.jira_issue_key` (nullable column + migration); `GET .../failures/{failure_id}` exposes the link; golden `jira_v1.json` (§22) + fake-server tests (create/update/idempotency, 4xx mapping, token redaction) | failure → issue mapping matches golden 100%; re-link updates, never duplicates; token redacted; RBAC matrix green |
+| S7.5 | Live E2E + baseline report: local stack (API + small local HTTP fixtures standing in for GitHub/Jira — the S6.5 "live evidence" pattern, since no real GitHub/Jira exist on this machine) — signed webhook (PR) → regression job → ranked set over PR files → "Run this set" through S3 → Jira issue created/linked for a seeded failure; live driver committed (evidence pair, S6.5 pattern); baseline `reports/integrations_v1.json` (schema + expected events/links) | Live E2E green; baseline report committed (single tracked report, `.gitignore` pattern per S6.5; drift tracking §31.6/§31.7) |
+
+### Phase 8 — Commercialization
+
+> Detail on demand (§18): decomposed into steps only when entered — do not pre-write.
 
 ## 20. MVP definition of done
 
