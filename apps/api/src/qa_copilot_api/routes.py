@@ -1014,6 +1014,99 @@ def ask_project_knowledge(
     return schemas.JobCreated(job_id=job.id, status=job.status.value)
 
 
+@projects_router.post(
+    "/{project_id}/regression/analyze",
+    status_code=202,
+    response_model=schemas.JobCreated,
+)
+def analyze_project_regression(
+    project_id: str,
+    body: schemas.RegressionAnalysisRequest,
+    request: Request,
+    response: Response,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """Analyze a change for regression risk: **202 + job_id** (S6.4, §19, §11).
+
+    No AI work runs in this request (§31.2) — the ``regression_analysis`` job
+    computes the deterministic S6.1 change-impact set, joins it with the
+    project's S6.2 test history and ranks it (S6.3), and adds the optional
+    S6.5 advisor brief. The recommendation rides the ``regression.set`` SSE
+    event (``jobs.output_ref`` only holds a stable ``regression://`` reference).
+    ``member`` or above; unknown projects 403 (no existence leak, §31.3).
+    """
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=403, detail="no role for this project")
+    _require_project_role(db, user, project.id, ProjectRole.MEMBER)
+
+    job_input = body.model_dump()
+    job = models.Job(
+        project_id=project.id,
+        type=JobType.REGRESSION_ANALYSIS,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_regression_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@projects_router.post("/{project_id}/runs", status_code=202, response_model=schemas.JobCreated)
+def run_project_tests(
+    project_id: str,
+    body: schemas.RunRequest,
+    request: Request,
+    response: Response,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """S6.4 "Run this set": **202 + job_id** (§19 S6.4 exit criteria, §11).
+
+    No AI work runs in this request (§31.2) — the ``run_execution`` job reuses
+    the existing S3.2 execution path: it drives
+    ``qa_copilot_execution.run_playwright`` over the selected test files (the
+    ``regression.set`` recommendation, repo-relative) and persists the run via
+    ``qa_copilot_repository.persist_run`` (so the S6.2 flaky/failure history
+    keeps learning from re-runs). The result rides the ``run.result`` SSE
+    event — ``run_id`` + ``status`` + per-status ``totals`` — and the job's
+    ``output_ref`` is the persisted run id. ``member`` or above; unknown
+    projects 403 (no existence leak, §31.3).
+    """
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=403, detail="no role for this project")
+    _require_project_role(db, user, project.id, ProjectRole.MEMBER)
+
+    job_input = body.model_dump()
+    job = models.Job(
+        project_id=project.id,
+        type=JobType.RUN_EXECUTION,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_run_execution_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
 @projects_router.get("/{project_id}/knowledge/status", response_model=schemas.KnowledgeStatus)
 def get_knowledge_status(
     project_id: str,

@@ -47,8 +47,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
+from uuid import uuid4
 
 from qa_copilot_ai.agents import (
+    ADVISOR_NAME,
+    SUMMARY_SOURCE_STUB,
+    AdvisorInput,
     AutomationAgentResult,
     AutomationInput,
     GeneratedTest,
@@ -56,28 +60,43 @@ from qa_copilot_ai.agents import (
     KnowledgeQAAgentResult,
     KnowledgeQAInput,
     QAAnswer,
+    RegressionAdvisorAgent,
+    RegressionAdvisorResult,
     RequirementAgent,
     RequirementAgentResult,
     RequirementInput,
     TestDesignAgent,
     TestDesignAgentResult,
     TestDesignInput,
+    stub_summary,
 )
-from qa_copilot_ai.gateway import AICallResult, TokenUsage
+from qa_copilot_ai.gateway import AICallResult, LLMGateway, TokenUsage
+from qa_copilot_ai.prompts import PromptStore
+from qa_copilot_domain import ImpactSet, Priority, RecommendationSet, RiskLevel, RiskRanking
 from qa_copilot_domain import TestCase as DomainTestCase
 from qa_copilot_domain.enums import JobStatus, JobType
+from qa_copilot_execution import PlaywrightConfig, run_playwright
+from qa_copilot_repository import (
+    TestRiskInput,
+    build_risk_ranking,
+    changed_files_from_range,
+    extract_conventions,
+    impact_from_session,
+    models,
+    project_test_history,
+    recommend,
+    scan_repository,
+    strongest_impact_kind,
+)
 from qa_copilot_repository import (
     db as repo_db,
 )
-from qa_copilot_repository import (
-    extract_conventions,
-    models,
-    scan_repository,
-)
 from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import requirements as repo_requirements
-from sqlalchemy import Engine, update
+from qa_copilot_repository import runs as repo_runs
+from sqlalchemy import Engine, select, update
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.orm import Session
 
 from qa_copilot_api.knowledge_store import (
     build_project_knowledge,
@@ -99,7 +118,9 @@ __all__ = [
     "KnowledgeIndexJobAgent",
     "KnowledgeQARunner",
     "KnowledgeQARefusalStub",
+    "RegressionJobAgent",
     "RequirementJobAgent",
+    "RunExecutionJobAgent",
     "StubAgent",
     "TestDesignJobAgent",
     "TERMINAL_EVENTS",
@@ -782,6 +803,288 @@ class KnowledgeAskJobAgent:
                     output_ref=answer_json[:1024],
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# S6.4: regression / impact / history / advice (build bible §19 S6.4)
+# ---------------------------------------------------------------------------
+
+# Ordinal weights for "take the strongest" context (deterministic).
+_RISK_ORDER: dict[RiskLevel, int] = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2}
+_PRIORITY_ORDER: dict[Priority, int] = {Priority.LOW: 0, Priority.MEDIUM: 1, Priority.HIGH: 2}
+
+
+class RegressionJobAgent:
+    """S6.4: the regression/impact/history/advice job (build bible §19 S6.4).
+
+    Orchestrates the deterministic cores rather than re-implementing them:
+
+    - S6.1 — the change-impact set (:func:`impact_from_session`, LLM-free);
+    - S6.2 — the flaky/risk ranking keyed by each impacted test's file path
+      (from the project's §10 execution history + requirement risk / test-case
+      priority context);
+    - S6.3 — the deterministic top-N recommendation (:func:`recommend`);
+    - S6.5 — the optional advisor brief (:class:`RegressionAdvisorAgent`),
+      degrading safely to the stub if the model is unavailable, so a flaky
+      model can never change *which* tests are re-run.
+
+    Emits a single ``regression.set`` event carrying the serialized
+    recommendation set (plus the impact / ranking / advice context for the
+    S6.4 UI) and returns a stable ``regression://<project>`` output ref.
+
+    The stable ref is also recorded as the S6.4 ``ai_actions`` audit row on
+    the job's ``ai_sessions`` anchor (§19 S6.4: "``output_ref`` = stable
+    ``regression://<project>`` ref → ``ai_actions`` audit row") — one row
+    per job, carrying the advisor's model-call stats (§31.1) when the LLM
+    ran, or a deterministic ``model="stub"`` marker when it degraded (the
+    audit covers the job's AI activity, not the deterministic ranking).
+    """
+
+    stages: tuple[str, ...] = ("regression",)
+
+    def __init__(self, store: PromptStore, gateway: LLMGateway | None, engine: Engine) -> None:
+        self._store = store
+        self._gateway = gateway  # LLMGateway | None (None → advisor stub)
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        project_id = ctx.project_id or ""
+        repository_path = str(ctx.input.get("repository_path") or "")
+        changed_files = [str(p) for p in (ctx.input.get("files") or [])]
+        base_ref = ctx.input.get("base_ref")
+        head_ref = ctx.input.get("head_ref")
+        top_n = int(ctx.input.get("top_n") or 10)
+
+        await ctx.emit("stage.started", {"stage": "regression"})
+        await ctx.emit("progress", {"stage": "regression", "value": 0.1})
+
+        # Resolve the changed-file set: an explicit diff, or a BASE..HEAD range.
+        if not changed_files and base_ref and head_ref:
+            changed_files = changed_files_from_range(repository_path, base_ref, head_ref)
+
+        with repo_db.session_scope(self._engine) as session:
+            # S6.1: deterministic change-impact set.
+            impact = impact_from_session(session, project_id, repository_path, changed_files)
+            await ctx.emit("progress", {"stage": "regression", "value": 0.4})
+            # S6.2: the flaky/risk ranking for the impacted tests.
+            ranking = self._ranking_for_impact(session, project_id, impact)
+            await ctx.emit("progress", {"stage": "regression", "value": 0.65})
+            # S6.3: deterministic top-N recommendation.
+            recommendation = recommend(impact, ranking, top_n=top_n)
+
+        # S6.5 (optional): the advisor brief (degrades safely to the stub).
+        await ctx.emit("progress", {"stage": "regression", "value": 0.8})
+        advice, advisor_result = await self._advise(recommendation)
+
+        await ctx.emit(
+            "regression.set",
+            {
+                "recommendation": recommendation.model_dump(mode="json"),
+                "impact": impact.model_dump(mode="json"),
+                "ranking": ranking.model_dump(mode="json"),
+                "advice": advice,
+            },
+        )
+        await ctx.emit(
+            "stage.completed",
+            {"stage": "regression", "recommendations": len(recommendation.recommendations)},
+        )
+
+        # S6.4 exit criterion (§19 S6.4, §31.5): the stable output_ref →
+        # the ``ai_actions`` audit row on the job's ``ai_sessions`` anchor.
+        self._record_action(ctx, advisor_result)
+        return f"regression://{project_id}"
+
+    async def _advise(
+        self, recommendation: RecommendationSet
+    ) -> tuple[dict[str, Any], RegressionAdvisorResult | None]:
+        """The S6.5 advisor brief; always succeeds (safe stub fallback).
+
+        Returns the event payload plus the raw advisor result (``None`` when
+        no gateway is configured or the call degraded) so
+        :meth:`_record_action` can audit the model call.
+        """
+        if self._gateway is None:
+            return (
+                {"summary": stub_summary(recommendation), "source": SUMMARY_SOURCE_STUB},
+                None,
+            )
+        try:
+            advisor = RegressionAdvisorAgent(self._store, self._gateway)
+            result = await advisor.run(AdvisorInput(set=recommendation))
+            return {"summary": result.summary, "source": result.source}, result
+        except Exception:  # noqa: BLE001 — the advisor is optional; never fail the job
+            logger.warning("S6.4 advisor failed; using the stub summary", exc_info=True)
+            return (
+                {"summary": stub_summary(recommendation), "source": SUMMARY_SOURCE_STUB},
+                None,
+            )
+
+    def _record_action(
+        self, ctx: JobContext, advisor_result: RegressionAdvisorResult | None
+    ) -> None:
+        """Record the S6.4 ``ai_actions`` audit row against the job's anchor.
+
+        §19 S6.4: "``output_ref`` = stable ``regression://<project>`` ref →
+        ``ai_actions`` audit row". When the LLM ran, the row carries the
+        model-call stats (§31.1); on the deterministic stub path a
+        ``model="stub"`` marker keeps the job's AI activity auditable.
+        """
+        if ctx.ai_session_id is None:
+            return
+        output_ref = f"regression://{ctx.project_id or ''}"
+        if advisor_result is not None and advisor_result.call is not None:
+            audit = advisor_result.call.audit_dict()
+            action = models.AIAction(
+                session_id=ctx.ai_session_id,
+                agent=str(audit["agent"]),
+                model=str(audit["model"]),
+                tokens_in=cast(int, audit["tokens_in"]),
+                tokens_out=cast(int, audit["tokens_out"]),
+                latency_ms=cast(int, audit["latency_ms"]),
+                input_hash=audit.get("input_hash"),
+                output_ref=output_ref,
+            )
+        else:
+            action = models.AIAction(
+                session_id=ctx.ai_session_id,
+                agent=ADVISOR_NAME,
+                model="stub",
+                output_ref=output_ref,
+            )
+        with repo_db.session_scope(self._engine) as session:
+            session.add(action)
+
+    @staticmethod
+    def _ranking_for_impact(session: Session, project_id: str, impact: ImpactSet) -> RiskRanking:
+        """Map the S6.1 impact set to an S6.2 ranking keyed by test file path.
+
+        Each impacted test file is mapped to its §10-linked execution history
+        (``project_test_history``) and its §10 context (requirement risk,
+        test-case priority) so the S6.3 ``recommend`` join — on
+        ``ImpactedTest.path`` — lines up. LLM-free and deterministic.
+        """
+        history = project_test_history(session, project_id)
+        requirement_ids = sorted({rid for imp in impact.impacted for rid in imp.requirement_ids})
+        test_case_ids = sorted({tcid for imp in impact.impacted for tcid in imp.test_case_ids})
+        req_risk = (
+            {
+                r.id: r.risk
+                for r in session.scalars(
+                    select(models.Requirement).where(models.Requirement.id.in_(requirement_ids))
+                ).all()
+            }
+            if requirement_ids
+            else {}
+        )
+        tc_priority = (
+            {
+                t.id: t.priority
+                for t in session.scalars(
+                    select(models.TestCase).where(models.TestCase.id.in_(test_case_ids))
+                ).all()
+            }
+            if test_case_ids
+            else {}
+        )
+
+        inputs = []
+        for imp in impact.impacted:
+            outcomes = [o for tcid in imp.test_case_ids for o in history.get(tcid, ())]
+            req_risks = [req_risk[rid] for rid in imp.requirement_ids if rid in req_risk]
+            tc_prios = [tc_priority[tcid] for tcid in imp.test_case_ids if tcid in tc_priority]
+            inputs.append(
+                TestRiskInput(
+                    test_key=imp.path,
+                    outcomes=tuple(outcomes),
+                    impact_kind=strongest_impact_kind(imp.kinds),
+                    requirement_risk=max(req_risks, key=lambda r: _RISK_ORDER[r])
+                    if req_risks
+                    else None,
+                    test_case_priority=max(tc_prios, key=lambda p: _PRIORITY_ORDER[p])
+                    if tc_prios
+                    else None,
+                )
+            )
+        return build_risk_ranking(project_id, inputs)
+
+
+class RunExecutionJobAgent:
+    """S6.4 "Run this set" (build bible §19 S6.4 exit criteria).
+
+    Runs the selected regression tests through the **existing S3 execution
+    path** — the same Playwright worker the automation pipeline uses
+    (``qa_copilot_execution.run_playwright``): spawn the target repo's
+    Playwright suite filtered to the selected test files, capture the §15
+    artifacts, and persist the run via
+    :func:`qa_copilot_repository.persist_run` (run/results/artifacts rows +
+    the S6.2 history feed).
+
+    Progress rides the ``run_execution`` stage; the terminal ``run.result``
+    event carries the persisted run id and Playwright totals, and the job's
+    ``output_ref`` is the persisted run id (the S3.2 ``GET /runs/{id}`` read
+    path serves its results and artifacts).
+    """
+
+    stages: tuple[str, ...] = ("run_execution",)
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        repository_path = str(ctx.input.get("repository_path") or "")
+        tests = [str(t) for t in (ctx.input.get("tests") or [])]
+        timeout_s = float(ctx.input.get("timeout_s") or 600.0)
+
+        await ctx.emit("stage.started", {"stage": "run_execution"})
+        await ctx.emit("progress", {"stage": "run_execution", "value": 0.1})
+
+        # S3 execution path: the Playwright worker (subprocess) — keep it off
+        # the event loop, then persist the report onto the §10 rows.
+        config = PlaywrightConfig(
+            target_dir=Path(repository_path),
+            test_filter=self._filter_for_tests(tests),
+            timeout_s=timeout_s,
+        )
+        run_id = str(uuid4())
+        report = await asyncio.to_thread(run_playwright, config, run_id)
+
+        with repo_db.session_scope(self._engine) as session:
+            run = repo_runs.persist_run(session, project_id=ctx.project_id or "", report=report)
+        totals = report.totals
+
+        await ctx.emit("progress", {"stage": "run_execution", "value": 1.0})
+        await ctx.emit(
+            "run.result",
+            {
+                "run_id": run.id,
+                "status": report.status.value,
+                "totals": {
+                    "total": totals.total,
+                    "passed": totals.passed,
+                    "failed": totals.failed,
+                    "flaky": totals.flaky,
+                    "skipped": totals.skipped,
+                },
+            },
+        )
+        await ctx.emit("stage.completed", {"stage": "run_execution", "run_id": run.id})
+        return run.id
+
+    @staticmethod
+    def _filter_for_tests(tests: list[str]) -> str:
+        """Playwright filter for the selected test files (repo-relative paths).
+
+        A single file runs on its own; a set is an alternation of the exact
+        file paths — Playwright matches them positionally against the target
+        dir. An empty selection runs the whole suite (the schema forbids an
+        empty body, so this is defensive).
+        """
+        if not tests:
+            return ""
+        if len(tests) == 1:
+            return tests[0]
+        return "|".join(tests)
 
 
 def _payload(job_id: str, project_id: str | None, **fields: Any) -> dict[str, Any]:

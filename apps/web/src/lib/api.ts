@@ -499,3 +499,167 @@ export function askKnowledge(projectId: string, question: string): Promise<JobCr
     body: JSON.stringify({ question }),
   });
 }
+
+// --- S6.4: regression analysis + "Run this set" (build bible §7, §19 Phase 6) --
+
+export interface RegressionAnalysisRequest {
+  /** Server-local path to the repository checkout (for S6.1 impact). */
+  repository_path: string;
+  /** Repo-relative changed files (the diff) — or a `base_ref`/`head_ref` pair. */
+  files?: string[];
+  /** Git base ref (with `head_ref`); mutually exclusive with `files`. */
+  base_ref?: string;
+  /** Git head ref (with `base_ref`); mutually exclusive with `files`. */
+  head_ref?: string;
+  /** Top-N recommendation size (1..500, default 10). */
+  top_n?: number;
+}
+
+export interface RunRequest {
+  /** Server-local path to the repository checkout (Playwright target dir). */
+  repository_path: string;
+  /** Repo-relative Playwright test files to run (from the regression set). */
+  tests: string[];
+  /** Playwright run timeout in seconds (default 600, max 3600). */
+  timeout_s?: number;
+}
+
+/** S6.5 advisor brief (degrades safely to the stub when no LLM is configured). */
+export interface RegressionAdvice {
+  source: string;
+  summary: string;
+}
+
+/** S6.2 — deterministic per-test history statistics. */
+export interface TestHistoryStats {
+  test_key: string;
+  executions: number;
+  passed: number;
+  failed: number;
+  flaky: number;
+  skipped: number;
+  flakiness_rate: number;
+  failure_rate: number;
+  recent_failure_rate: number;
+  is_flaky: boolean;
+  is_failing: boolean;
+  insufficient_samples: boolean;
+}
+
+/** S6.2 — one ranked test in the risk set. */
+export interface TestRisk {
+  test_key: string;
+  risk_score: number;
+  signals: string[];
+  stats: TestHistoryStats;
+  impact_kind: string | null;
+  requirement_risk: string | null;
+  test_case_priority: string | null;
+}
+
+export interface RiskRanking {
+  project_id: string;
+  ranked: TestRisk[];
+  min_sample: number;
+  recent_window: number;
+  flaky_threshold: number;
+  failing_threshold: number;
+}
+
+/** S6.3 — one ranked regression recommendation. */
+export interface RecommenderItem {
+  test_key: string;
+  stats: TestHistoryStats;
+  rank: number;
+  risk_score: number;
+  impact_kind: string | null;
+  changed_files: string[];
+  requirement_risk: string | null;
+  test_case_priority: string | null;
+  rationale: string[];
+}
+
+export interface RecommendationSet {
+  project_id: string;
+  changed: string[];
+  recommendations: RecommenderItem[];
+  top_n: number;
+}
+
+/** S6.1 — one impacted test file, with why. */
+export interface ImpactedTest {
+  path: string;
+  kinds: string[];
+  changed_files: string[];
+  test_case_ids: string[];
+  requirement_ids: string[];
+  signals: string[];
+}
+
+export interface ImpactSet {
+  changed: string[];
+  impacted: ImpactedTest[];
+  test_files_scanned: number;
+  notes: string[];
+}
+
+/** The regression payload delivered over the `regression.set` SSE event. */
+export interface RegressionSet {
+  recommendation: RecommendationSet;
+  impact: ImpactSet;
+  ranking: RiskRanking;
+  advice: RegressionAdvice | null;
+}
+
+export interface RunTotals {
+  total: number;
+  passed: number;
+  failed: number;
+  flaky: number;
+  skipped: number;
+}
+
+/** The run payload delivered over the `run.result` SSE event. */
+export interface RunResult {
+  /** The persisted run id (the S3.2 `GET /runs/{id}` read path). */
+  run_id: string;
+  status: string;
+  totals: RunTotals;
+}
+
+/**
+ * `POST /projects/{id}/regression/analyze` → 202 + `{job_id}` (S6.4).
+ *
+ * The deterministic S6.1 impact set, S6.2 risk ranking, S6.3 top-N
+ * recommendation and the optional S6.5 advisor brief are **not** in this
+ * response — they ride the `regression.set` SSE event on the job's `/events`
+ * stream (read via `streamJobEvents`). The job's terminal `output_ref` is the
+ * stable `regression://{projectId}` reference.
+ */
+export function runRegressionAnalysis(
+  projectId: string,
+  body: RegressionAnalysisRequest,
+): Promise<JobCreated> {
+  return request<JobCreated>(
+    `/projects/${encodeURIComponent(projectId)}/regression/analyze`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}
+
+/**
+ * `POST /projects/{id}/runs` — "Run this set" (S6.4) → 202 + `{job_id}`.
+ *
+ * The selected tests run through the existing S3 execution path
+ * (`run_playwright` + `persist_run`); the `run.result` SSE event carries the
+ * persisted run id and totals, and the job's terminal `output_ref` is the
+ * persisted run id (served by the S3.2 `GET /runs/{id}` read path).
+ */
+export function runRegressionSet(
+  projectId: string,
+  body: RunRequest,
+): Promise<JobCreated> {
+  return request<JobCreated>(
+    `/projects/${encodeURIComponent(projectId)}/runs`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}

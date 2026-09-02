@@ -35,8 +35,10 @@ export interface StageState {
 /**
  * Payload shape of every SSE event (build bible §11; `qa_copilot_api.jobs`).
  * Terminal fields: `job.completed` carries `output_ref` (for
- * `test_case_generation` jobs: the persisted requirement id — S1.3);
- * `job.failed` carries `error`.
+ * `test_case_generation` jobs: the persisted requirement id — S1.3; for
+ * `run_execution` jobs: the persisted run id — S3); `job.failed` carries
+ * `error`. Domain payloads (`knowledge.answer` S5.5, `regression.set` and
+ * `run.result` S6.4) are typed in `api.ts` and read by `useJobEvents`.
  */
 export interface SsePayload {
   job_id: string;

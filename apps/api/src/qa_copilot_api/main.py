@@ -164,6 +164,26 @@ def _build_knowledge_ask_jobs_agent(settings: Settings, engine: Engine) -> jobs.
     return jobs.KnowledgeAskJobAgent(runner, engine)
 
 
+def _build_regression_jobs_agent(settings: Settings, engine: Engine) -> jobs.JobAgent:
+    """Build the S6.4 regression/impact/history/advice job agent (§19 S6.4).
+
+    The deterministic S6.1/S6.2/S6.3 cores are always available (no model
+    required). The optional S6.5 advisor brief is wired to the real
+    :class:`RegressionAdvisorAgent` when ``llm_base_url`` and ``llm_model`` are
+    set; otherwise the agent falls back to the stub summary (``gateway=None``)
+    so a flaky/absent model can never change *which* tests are re-run.
+    """
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "packages" / "ai" / "prompts"
+    store = FilePromptStore(prompts_dir)
+    if not settings.llm_base_url or not settings.llm_model:
+        logger.info("LLM not configured; S6.4 advisor uses the stub summary")
+        gateway = None
+    else:
+        gateway = LLMGateway(base_url=settings.llm_base_url, model=settings.llm_model)
+        logger.info("LLM configured (model=%s); S6.4 advisor is live", settings.llm_model)
+    return jobs.RegressionJobAgent(store, gateway, engine)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Application factory; settings injectable for tests and overrides."""
     settings = settings or get_settings()
@@ -197,6 +217,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs_knowledge_agent = jobs.KnowledgeIndexJobAgent(app.state.engine)
     # S5.5: the Knowledge Ask job (knowledge_ask) — grounded QA over the base.
     app.state.jobs_knowledge_ask_agent = _build_knowledge_ask_jobs_agent(settings, app.state.engine)
+    # S6.4: the regression/impact/history/advice job (regression_analysis).
+    app.state.jobs_regression_agent = _build_regression_jobs_agent(settings, app.state.engine)
+    # S6.4: "Run this set" (run_execution) — reuses the S3 execution path.
+    app.state.jobs_run_execution_agent = jobs.RunExecutionJobAgent(app.state.engine)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

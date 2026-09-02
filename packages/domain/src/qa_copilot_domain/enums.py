@@ -49,6 +49,7 @@ class JobType(StrEnum):
     REPOSITORY_INDEXING = "repository_indexing"
     KNOWLEDGE_INDEX = "knowledge_index"
     KNOWLEDGE_ASK = "knowledge_ask"
+    REGRESSION_ANALYSIS = "regression_analysis"
 
 
 class JobStatus(StrEnum):

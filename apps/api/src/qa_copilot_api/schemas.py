@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -381,6 +381,78 @@ class KnowledgeAskRequest(BaseModel):
         min_length=1,
         max_length=4000,
         description="The project question to answer from the project knowledge base.",
+    )
+
+
+# --- S6.4: regression / impact / history / advice (§19 S6.4) -----------------
+
+
+class RegressionAnalysisRequest(BaseModel):
+    """S6.4: body for ``POST /projects/{id}/regression/analyze`` (§19 S6.4).
+
+    The change to analyze is given one of two ways (exactly one):
+
+    * ``files`` — repo-relative changed paths (the diff); or
+    * ``base_ref`` + ``head_ref`` — a git range resolved server-side
+      (:func:`qa_copilot_repository.changed_files_from_range`).
+
+    The deterministic S6.1 change-impact set (computed from ``repository_path``)
+    is joined with the project's S6.2 test history and ranked (S6.3); the
+    optional S6.5 advisor brief summarizes the top-N. All delivered
+    asynchronously as a job (202 + ``job_id``, §11) whose ``regression.set``
+    SSE event carries the recommendation set.
+    """
+
+    repository_path: str = Field(
+        min_length=1,
+        description="Server-local path to the repository checkout (for S6.1 impact).",
+    )
+    files: list[str] = Field(
+        default_factory=list,
+        description="Repo-relative changed files; mutually exclusive with base_ref/head_ref.",
+    )
+    base_ref: str | None = Field(
+        default=None, description="Git base ref (with head_ref); mutually exclusive with files."
+    )
+    head_ref: str | None = Field(
+        default=None, description="Git head ref (with base_ref); mutually exclusive with files."
+    )
+    top_n: int = Field(default=10, ge=1, le=500, description="Top-N recommendation size.")
+
+    @model_validator(mode="after")
+    def _check_change_source(self) -> "RegressionAnalysisRequest":
+        """Exactly one change source: ``files`` *or* the ``base_ref``/``head_ref`` pair."""
+        has_files = bool(self.files)
+        has_range = self.base_ref is not None and self.head_ref is not None
+        if has_files and has_range:
+            raise ValueError("provide either `files` or a `base_ref`/`head_ref` pair, not both")
+        if not has_files and not has_range:
+            raise ValueError("provide either `files` or both `base_ref` and `head_ref`")
+        return self
+
+
+class RunRequest(BaseModel):
+    """S6.4 "Run this set" (§19 S6.4): run the selected regression tests.
+
+    The selected tests (repo-relative Playwright test files from the
+    ``regression.set`` recommendation) run through the existing S3 execution
+    path: the ``run_execution`` job (202 + ``job_id``, §11) drives
+    ``qa_copilot_execution.run_playwright`` and persists the run via
+    ``qa_copilot_repository.persist_run``; the ``run.result`` SSE event
+    carries the persisted run id and totals, and the job's ``output_ref`` is
+    the persisted run id.
+    """
+
+    repository_path: str = Field(
+        min_length=1,
+        description="Server-local path to the repository checkout (Playwright target dir).",
+    )
+    tests: list[str] = Field(
+        min_length=1,
+        description="Repo-relative Playwright test file paths to run (from the regression set).",
+    )
+    timeout_s: float = Field(
+        default=600.0, gt=0, le=3600, description="Playwright run timeout (seconds)."
     )
 
 

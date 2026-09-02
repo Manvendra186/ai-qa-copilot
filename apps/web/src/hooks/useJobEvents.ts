@@ -22,6 +22,10 @@ export interface JobState {
   error: string | null;
   /** The `knowledge.answer` payload, when the job emitted one (S5.5 Ask). */
   lastAnswer: Record<string, unknown> | null;
+  /** The `regression.set` payload (recommendation/impact/ranking/advice, S6.4). */
+  lastRegressionSet: Record<string, unknown> | null;
+  /** The `run.result` payload (run_id/status/totals, S6.4 "Run this set"). */
+  lastRunResult: Record<string, unknown> | null;
   stages: StageState[];
   log: EventLogEntry[];
 }
@@ -42,6 +46,8 @@ type Action =
   | { type: 'progress'; stage: StageId; value: number }
   | { type: 'stage.completed'; stage: StageId }
   | { type: 'knowledge.answer'; payload: Record<string, unknown> }
+  | { type: 'regression.set'; payload: Record<string, unknown> }
+  | { type: 'run.result'; payload: Record<string, unknown> }
   | { type: 'job.completed'; outputRef: string | null }
   | { type: 'job.failed'; error: string }
   | { type: 'stream.error'; message: string }
@@ -58,6 +64,8 @@ function initialState(): JobState {
     outputRef: null,
     error: null,
     lastAnswer: null,
+    lastRegressionSet: null,
+    lastRunResult: null,
     stages: PIPELINE_STAGES.map((id) => ({ id, status: 'pending', progress: 0 })),
     log: [],
   };
@@ -135,6 +143,18 @@ function reducer(state: JobState, action: Action): JobState {
         ...state,
         lastAnswer: action.payload,
         log: withLog(state, 'knowledge.answer', 'answer received'),
+      };
+    case 'regression.set':
+      return {
+        ...state,
+        lastRegressionSet: action.payload,
+        log: withLog(state, 'regression.set', 'regression set received'),
+      };
+    case 'run.result':
+      return {
+        ...state,
+        lastRunResult: action.payload,
+        log: withLog(state, 'run.result', 'run result received'),
       };
     case 'job.completed':
       return {
@@ -226,6 +246,12 @@ export function useJobEvents(): JobEvents {
               break;
             case 'knowledge.answer':
               dispatch({ type: 'knowledge.answer', payload: data });
+              break;
+            case 'regression.set':
+              dispatch({ type: 'regression.set', payload: data });
+              break;
+            case 'run.result':
+              dispatch({ type: 'run.result', payload: data });
               break;
             case 'job.completed':
               dispatch({
