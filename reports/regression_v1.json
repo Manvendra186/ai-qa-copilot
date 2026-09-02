@@ -1,0 +1,975 @@
+{
+  "schema_version": "s6.5-live-evidence/v1",
+  "generated_at": "2026-09-02T11:35:36+00:00",
+  "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+  "environment": {
+    "api": "http://127.0.0.1:8000/api/v1",
+    "lm_studio": "http://127.0.0.1:8080 (OpenAI-compatible)",
+    "demo_server": "http://localhost:4000",
+    "demo_client": "http://localhost:5174",
+    "app_under_test": "http://localhost:5174",
+    "repository": "c:\\Users\\manve\\Workspace\\ai-qa-copilot-demo-app"
+  },
+  "precondition": {
+    "seeded_history_note": "6 linked executions for the login test case (1 pre-existing seeded passed run + 5 seeded: failed, flaky, flaky, passed, passed); one applied generated_tests row for e2e/demo.spec.js linked to the login test case and 'Login accepts valid credentials' requirement.",
+    "expected_s62_stats": {
+      "executions": 6,
+      "passed": 3,
+      "failed": 1,
+      "flaky": 2,
+      "flakiness_rate": "2/6 ~ 0.333",
+      "failure_rate": "1/6 ~ 0.167",
+      "recent_failure_rate": "1/5 = 0.2",
+      "is_flaky": true,
+      "is_failing": false,
+      "last_status": "passed"
+    },
+    "changed_files": [
+      "e2e/fixtures.js",
+      "e2e/demo.spec.js"
+    ]
+  },
+  "fail_to_pass": {
+    "login_test_case_id": "3cfe1127-ccf9-4dce-9fe5-c241193468e2",
+    "login_requirement_id": "cf4b4237-bbba-4b93-9cf3-0420b3a3649f",
+    "statuses_in_time_order": [
+      "failed",
+      "flaky",
+      "flaky",
+      "passed",
+      "passed",
+      "passed"
+    ],
+    "note": "fail→pass: a prior 'failed' execution (with an S4.1 automation-defect diagnosis) precedes the last 'passed' — and the live S6.4 re-run also passed.",
+    "live_run_id": "a1254dcd-32db-4e48-af31-d82aad8309c4"
+  },
+  "analyze": {
+    "request": {
+      "method": "POST",
+      "path": "/projects/f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe/regression/analyze",
+      "body": {
+        "repository_path": "c:\\Users\\manve\\Workspace\\ai-qa-copilot-demo-app",
+        "files": [
+          "e2e/fixtures.js",
+          "e2e/demo.spec.js"
+        ],
+        "top_n": 10
+      }
+    },
+    "http": {
+      "status": 202,
+      "headers": {
+        "location": "/api/v1/jobs/d5e705e3-b307-479f-9d28-131e78960510"
+      }
+    },
+    "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+    "job_row": {
+      "id": "d5e705e3-b307-479f-9d28-131e78960510",
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "type": "regression_analysis",
+      "status": "completed",
+      "progress": 1.0,
+      "input_ref": "{\"repository_path\":\"c:\\\\Users\\\\manve\\\\Workspace\\\\ai-qa-copilot-demo-app\",\"files\":[\"e2e/fixtures.js\",\"e2e/demo.spec.js\"],\"base_ref\":null,\"head_ref\":null,\"top_n\":10}",
+      "output_ref": "regression://f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "error": null,
+      "created_at": "2026-09-02T11:35:28.121402Z",
+      "started_at": "2026-09-02T11:35:28.127214Z",
+      "completed_at": "2026-09-02T11:35:32.887127Z"
+    },
+    "sse_events": [
+      {
+        "event": "job.started",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "stages": [
+            "regression"
+          ],
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "stage.started",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "stage": "regression",
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "progress",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "stage": "regression",
+          "value": 0.1,
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "progress",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "stage": "regression",
+          "value": 0.4,
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "progress",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "stage": "regression",
+          "value": 0.65,
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "progress",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "stage": "regression",
+          "value": 0.8,
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "regression.set",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "recommendation": {
+            "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+            "changed": [
+              "e2e/demo.spec.js",
+              "e2e/fixtures.js"
+            ],
+            "recommendations": [
+              {
+                "test_key": "e2e/demo.spec.js",
+                "stats": {
+                  "test_key": "e2e/demo.spec.js",
+                  "executions": 6,
+                  "passed": 3,
+                  "failed": 1,
+                  "flaky": 2,
+                  "skipped": 0,
+                  "flakiness_rate": 0.3333333333333333,
+                  "failure_rate": 0.16666666666666666,
+                  "recent_failure_rate": 0.2,
+                  "is_flaky": true,
+                  "is_failing": false,
+                  "insufficient_samples": false,
+                  "last_status": "passed",
+                  "last_run_id": "a17dae87-7907-41d5-a050-3e591dc38aeb"
+                },
+                "rank": 1,
+                "risk_score": 71.666667,
+                "impact_kind": "direct",
+                "changed_files": [
+                  "e2e/demo.spec.js",
+                  "e2e/fixtures.js"
+                ],
+                "requirement_risk": "high",
+                "test_case_priority": "high",
+                "rationale": [
+                  "impact:direct",
+                  "failure 17%",
+                  "flaky 33%",
+                  "requirement-risk:high",
+                  "priority:high",
+                  "changed:2"
+                ]
+              }
+            ],
+            "top_n": 10,
+            "min_sample": 3,
+            "recent_window": 5,
+            "flaky_threshold": 0.25,
+            "failing_threshold": 0.5,
+            "computed_at": "2026-09-02T11:35:28.146348Z"
+          },
+          "impact": {
+            "changed": [
+              "e2e/demo.spec.js",
+              "e2e/fixtures.js"
+            ],
+            "impacted": [
+              {
+                "path": "e2e/demo.spec.js",
+                "kinds": [
+                  "direct",
+                  "generated",
+                  "referenced"
+                ],
+                "changed_files": [
+                  "e2e/demo.spec.js",
+                  "e2e/fixtures.js"
+                ],
+                "test_case_ids": [
+                  "3cfe1127-ccf9-4dce-9fe5-c241193468e2"
+                ],
+                "requirement_ids": [
+                  "cf4b4237-bbba-4b93-9cf3-0420b3a3649f"
+                ],
+                "signals": [
+                  "changed test file",
+                  "generated test applied (test case 3cfe1127-ccf9-4dce-9fe5-c241193468e2)",
+                  "imports e2e/fixtures.js"
+                ]
+              }
+            ],
+            "test_files_scanned": 2,
+            "notes": [],
+            "computed_at": "2026-09-02T11:35:28.136346Z"
+          },
+          "ranking": {
+            "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+            "ranked": [
+              {
+                "test_key": "e2e/demo.spec.js",
+                "risk_score": 71.666667,
+                "signals": [
+                  "impact:direct",
+                  "flaky 33%",
+                  "requirement-risk:high",
+                  "priority:high"
+                ],
+                "stats": {
+                  "test_key": "e2e/demo.spec.js",
+                  "executions": 6,
+                  "passed": 3,
+                  "failed": 1,
+                  "flaky": 2,
+                  "skipped": 0,
+                  "flakiness_rate": 0.3333333333333333,
+                  "failure_rate": 0.16666666666666666,
+                  "recent_failure_rate": 0.2,
+                  "is_flaky": true,
+                  "is_failing": false,
+                  "insufficient_samples": false,
+                  "last_status": "passed",
+                  "last_run_id": "a17dae87-7907-41d5-a050-3e591dc38aeb"
+                },
+                "impact_kind": "direct",
+                "requirement_risk": "high",
+                "test_case_priority": "high"
+              }
+            ],
+            "min_sample": 3,
+            "recent_window": 5,
+            "flaky_threshold": 0.25,
+            "failing_threshold": 0.5,
+            "computed_at": "2026-09-02T11:35:28.143347Z"
+          },
+          "advice": {
+            "summary": "Run e2e/demo.spec.js first; it is the sole recommendation with high requirement-risk, direct impact, and a 33% flakiness rate.",
+            "source": "llm"
+          },
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "stage.completed",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "stage": "regression",
+          "recommendations": 1,
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "job.completed",
+        "payload": {
+          "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+          "output_ref": "regression://f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      }
+    ],
+    "regression_set": {
+      "job_id": "d5e705e3-b307-479f-9d28-131e78960510",
+      "recommendation": {
+        "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+        "changed": [
+          "e2e/demo.spec.js",
+          "e2e/fixtures.js"
+        ],
+        "recommendations": [
+          {
+            "test_key": "e2e/demo.spec.js",
+            "stats": {
+              "test_key": "e2e/demo.spec.js",
+              "executions": 6,
+              "passed": 3,
+              "failed": 1,
+              "flaky": 2,
+              "skipped": 0,
+              "flakiness_rate": 0.3333333333333333,
+              "failure_rate": 0.16666666666666666,
+              "recent_failure_rate": 0.2,
+              "is_flaky": true,
+              "is_failing": false,
+              "insufficient_samples": false,
+              "last_status": "passed",
+              "last_run_id": "a17dae87-7907-41d5-a050-3e591dc38aeb"
+            },
+            "rank": 1,
+            "risk_score": 71.666667,
+            "impact_kind": "direct",
+            "changed_files": [
+              "e2e/demo.spec.js",
+              "e2e/fixtures.js"
+            ],
+            "requirement_risk": "high",
+            "test_case_priority": "high",
+            "rationale": [
+              "impact:direct",
+              "failure 17%",
+              "flaky 33%",
+              "requirement-risk:high",
+              "priority:high",
+              "changed:2"
+            ]
+          }
+        ],
+        "top_n": 10,
+        "min_sample": 3,
+        "recent_window": 5,
+        "flaky_threshold": 0.25,
+        "failing_threshold": 0.5,
+        "computed_at": "2026-09-02T11:35:28.146348Z"
+      },
+      "impact": {
+        "changed": [
+          "e2e/demo.spec.js",
+          "e2e/fixtures.js"
+        ],
+        "impacted": [
+          {
+            "path": "e2e/demo.spec.js",
+            "kinds": [
+              "direct",
+              "generated",
+              "referenced"
+            ],
+            "changed_files": [
+              "e2e/demo.spec.js",
+              "e2e/fixtures.js"
+            ],
+            "test_case_ids": [
+              "3cfe1127-ccf9-4dce-9fe5-c241193468e2"
+            ],
+            "requirement_ids": [
+              "cf4b4237-bbba-4b93-9cf3-0420b3a3649f"
+            ],
+            "signals": [
+              "changed test file",
+              "generated test applied (test case 3cfe1127-ccf9-4dce-9fe5-c241193468e2)",
+              "imports e2e/fixtures.js"
+            ]
+          }
+        ],
+        "test_files_scanned": 2,
+        "notes": [],
+        "computed_at": "2026-09-02T11:35:28.136346Z"
+      },
+      "ranking": {
+        "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+        "ranked": [
+          {
+            "test_key": "e2e/demo.spec.js",
+            "risk_score": 71.666667,
+            "signals": [
+              "impact:direct",
+              "flaky 33%",
+              "requirement-risk:high",
+              "priority:high"
+            ],
+            "stats": {
+              "test_key": "e2e/demo.spec.js",
+              "executions": 6,
+              "passed": 3,
+              "failed": 1,
+              "flaky": 2,
+              "skipped": 0,
+              "flakiness_rate": 0.3333333333333333,
+              "failure_rate": 0.16666666666666666,
+              "recent_failure_rate": 0.2,
+              "is_flaky": true,
+              "is_failing": false,
+              "insufficient_samples": false,
+              "last_status": "passed",
+              "last_run_id": "a17dae87-7907-41d5-a050-3e591dc38aeb"
+            },
+            "impact_kind": "direct",
+            "requirement_risk": "high",
+            "test_case_priority": "high"
+          }
+        ],
+        "min_sample": 3,
+        "recent_window": 5,
+        "flaky_threshold": 0.25,
+        "failing_threshold": 0.5,
+        "computed_at": "2026-09-02T11:35:28.143347Z"
+      },
+      "advice": {
+        "summary": "Run e2e/demo.spec.js first; it is the sole recommendation with high requirement-risk, direct impact, and a 33% flakiness rate.",
+        "source": "llm"
+      },
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+    }
+  },
+  "run": {
+    "request": {
+      "method": "POST",
+      "path": "/projects/f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe/runs",
+      "body": {
+        "repository_path": "c:\\Users\\manve\\Workspace\\ai-qa-copilot-demo-app",
+        "tests": [
+          "e2e/demo.spec.js"
+        ],
+        "timeout_s": 600
+      }
+    },
+    "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+    "job_row": {
+      "id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "type": "run_execution",
+      "status": "completed",
+      "progress": 1.0,
+      "input_ref": "{\"repository_path\":\"c:\\\\Users\\\\manve\\\\Workspace\\\\ai-qa-copilot-demo-app\",\"tests\":[\"e2e/demo.spec.js\"],\"timeout_s\":600.0}",
+      "output_ref": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+      "error": null,
+      "created_at": "2026-09-02T11:35:33.421955Z",
+      "started_at": "2026-09-02T11:35:33.432709Z",
+      "completed_at": "2026-09-02T11:35:35.376278Z"
+    },
+    "sse_events": [
+      {
+        "event": "job.started",
+        "payload": {
+          "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+          "stages": [
+            "run_execution"
+          ],
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "stage.started",
+        "payload": {
+          "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+          "stage": "run_execution",
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "progress",
+        "payload": {
+          "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+          "stage": "run_execution",
+          "value": 0.1,
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "progress",
+        "payload": {
+          "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+          "stage": "run_execution",
+          "value": 1.0,
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "run.result",
+        "payload": {
+          "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+          "run_id": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+          "status": "completed",
+          "totals": {
+            "total": 1,
+            "passed": 1,
+            "failed": 0,
+            "flaky": 0,
+            "skipped": 0
+          },
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "stage.completed",
+        "payload": {
+          "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+          "stage": "run_execution",
+          "run_id": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      },
+      {
+        "event": "job.completed",
+        "payload": {
+          "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+          "output_ref": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+          "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+        }
+      }
+    ],
+    "run_result": {
+      "job_id": "41fe1e8c-defc-4eb8-82b0-aca5784ab670",
+      "run_id": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+      "status": "completed",
+      "totals": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "flaky": 0,
+        "skipped": 0
+      },
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+    },
+    "run_detail": {
+      "id": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "commit_sha": "44218e9",
+      "status": "completed",
+      "started_at": "2026-09-02T11:35:33.443000Z",
+      "completed_at": "2026-09-02T11:35:35.326000Z",
+      "created_at": "2026-09-02T11:35:35.368374Z",
+      "duration_s": 1.883,
+      "totals": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "flaky": 0,
+        "skipped": 0,
+        "pending": 0
+      },
+      "results": [
+        {
+          "id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+          "run_id": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+          "test_case_id": null,
+          "status": "passed",
+          "duration": 0.48,
+          "failure": null,
+          "artifacts": [
+            {
+              "id": "d1048cde-c8a9-4ba3-af0d-7c841b3d34ba",
+              "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+              "type": "screenshot",
+              "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/screenshot",
+              "metadata": {
+                "source": "test-finished-1.png",
+                "size_bytes": 40139
+              },
+              "created_at": "2026-09-02T11:35:35.368374Z",
+              "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/d1048cde-c8a9-4ba3-af0d-7c841b3d34ba/content"
+            },
+            {
+              "id": "c1791e85-f0de-4915-9245-d97cabdb1c94",
+              "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+              "type": "video",
+              "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/video",
+              "metadata": {
+                "source": "video.webm",
+                "size_bytes": 57954
+              },
+              "created_at": "2026-09-02T11:35:35.368374Z",
+              "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/c1791e85-f0de-4915-9245-d97cabdb1c94/content"
+            },
+            {
+              "id": "550b0d9b-4150-4dfc-a07f-6ffbbf61e269",
+              "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+              "type": "trace",
+              "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/trace",
+              "metadata": {
+                "source": "trace.zip",
+                "size_bytes": 249225
+              },
+              "created_at": "2026-09-02T11:35:35.368374Z",
+              "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/550b0d9b-4150-4dfc-a07f-6ffbbf61e269/content"
+            },
+            {
+              "id": "acaa2d84-b561-4d97-bab5-20ce9903927f",
+              "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+              "type": "console",
+              "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/console",
+              "metadata": {
+                "source": "console.jsonl",
+                "size_bytes": 930
+              },
+              "created_at": "2026-09-02T11:35:35.368374Z",
+              "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/acaa2d84-b561-4d97-bab5-20ce9903927f/content"
+            },
+            {
+              "id": "1c82ba90-90f1-4f18-bc0e-d54e82bad026",
+              "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+              "type": "network",
+              "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/network",
+              "metadata": {
+                "source": "network.jsonl",
+                "size_bytes": 4573
+              },
+              "created_at": "2026-09-02T11:35:35.368374Z",
+              "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/1c82ba90-90f1-4f18-bc0e-d54e82bad026/content"
+            }
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "id": "d1048cde-c8a9-4ba3-af0d-7c841b3d34ba",
+          "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+          "type": "screenshot",
+          "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/screenshot",
+          "metadata": {
+            "source": "test-finished-1.png",
+            "size_bytes": 40139
+          },
+          "created_at": "2026-09-02T11:35:35.368374Z",
+          "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/d1048cde-c8a9-4ba3-af0d-7c841b3d34ba/content"
+        },
+        {
+          "id": "c1791e85-f0de-4915-9245-d97cabdb1c94",
+          "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+          "type": "video",
+          "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/video",
+          "metadata": {
+            "source": "video.webm",
+            "size_bytes": 57954
+          },
+          "created_at": "2026-09-02T11:35:35.368374Z",
+          "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/c1791e85-f0de-4915-9245-d97cabdb1c94/content"
+        },
+        {
+          "id": "550b0d9b-4150-4dfc-a07f-6ffbbf61e269",
+          "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+          "type": "trace",
+          "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/trace",
+          "metadata": {
+            "source": "trace.zip",
+            "size_bytes": 249225
+          },
+          "created_at": "2026-09-02T11:35:35.368374Z",
+          "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/550b0d9b-4150-4dfc-a07f-6ffbbf61e269/content"
+        },
+        {
+          "id": "acaa2d84-b561-4d97-bab5-20ce9903927f",
+          "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+          "type": "console",
+          "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/console",
+          "metadata": {
+            "source": "console.jsonl",
+            "size_bytes": 930
+          },
+          "created_at": "2026-09-02T11:35:35.368374Z",
+          "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/acaa2d84-b561-4d97-bab5-20ce9903927f/content"
+        },
+        {
+          "id": "1c82ba90-90f1-4f18-bc0e-d54e82bad026",
+          "test_result_id": "4f1a4d9c-ea96-402a-b3df-d0fd3387f2c8",
+          "type": "network",
+          "uri": "runs/33ee7927-bd26-4c6d-ba0c-c126a702dd74/demo-login-products-signs-in-and-sees-the-product-catalog/network",
+          "metadata": {
+            "source": "network.jsonl",
+            "size_bytes": 4573
+          },
+          "created_at": "2026-09-02T11:35:35.368374Z",
+          "download_url": "/api/v1/runs/a1254dcd-32db-4e48-af31-d82aad8309c4/artifacts/1c82ba90-90f1-4f18-bc0e-d54e82bad026/content"
+        }
+      ]
+    }
+  },
+  "assertions": [
+    {
+      "name": "login.project",
+      "expected": "Demo App membership",
+      "actual": "Demo App owner",
+      "passed": true
+    },
+    {
+      "name": "analyze.http_status",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "analyze.location",
+      "expected": "/jobs/d5e705e3-b307-479f-9d28-131e78960510",
+      "actual": "/api/v1/jobs/d5e705e3-b307-479f-9d28-131e78960510",
+      "passed": true
+    },
+    {
+      "name": "analyze.regression_set_events",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "rec.top_test_key",
+      "expected": "e2e/demo.spec.js",
+      "actual": "e2e/demo.spec.js",
+      "passed": true
+    },
+    {
+      "name": "rec.top_rank",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "impact.kinds",
+      "expected": [
+        "direct",
+        "generated",
+        "referenced"
+      ],
+      "actual": [
+        "direct",
+        "generated",
+        "referenced"
+      ],
+      "passed": true
+    },
+    {
+      "name": "impact.test_case_ids",
+      "expected": "3cfe1127-ccf9-4dce-9fe5-c241193468e2",
+      "actual": [
+        "3cfe1127-ccf9-4dce-9fe5-c241193468e2"
+      ],
+      "passed": true
+    },
+    {
+      "name": "impact.requirement_ids",
+      "expected": "cf4b4237-bbba-4b93-9cf3-0420b3a3649f",
+      "actual": [
+        "cf4b4237-bbba-4b93-9cf3-0420b3a3649f"
+      ],
+      "passed": true
+    },
+    {
+      "name": "stats.is_flaky",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "stats.flakiness_rate>=0.25",
+      "expected": ">= 0.25",
+      "actual": 0.3333333333333333,
+      "passed": true
+    },
+    {
+      "name": "stats.executions>=min_sample(3)",
+      "expected": ">= 3",
+      "actual": 6,
+      "passed": true
+    },
+    {
+      "name": "stats.failed>=1 (prior failure)",
+      "expected": ">= 1",
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "stats.is_failing",
+      "expected": false,
+      "actual": false,
+      "passed": true
+    },
+    {
+      "name": "policy.echo",
+      "expected": {
+        "min_sample": 3,
+        "recent_window": 5,
+        "flaky_threshold": 0.25,
+        "failing_threshold": 0.5
+      },
+      "actual": {
+        "min_sample": 3,
+        "recent_window": 5,
+        "flaky_threshold": 0.25,
+        "failing_threshold": 0.5
+      },
+      "passed": true
+    },
+    {
+      "name": "advice.summary",
+      "expected": "non-empty",
+      "actual": "Run e2e/demo.spec.js first; it is the sole recommendation with high requirement-",
+      "passed": true
+    },
+    {
+      "name": "advice.source",
+      "expected": [
+        "llm",
+        "stub"
+      ],
+      "actual": "llm",
+      "passed": true
+    },
+    {
+      "name": "rec.rationale",
+      "expected": "non-empty list",
+      "actual": [
+        "impact:direct",
+        "failure 17%",
+        "flaky 33%",
+        "requirement-risk:high",
+        "priority:high",
+        "changed:2"
+      ],
+      "passed": true
+    },
+    {
+      "name": "job_row.status",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    },
+    {
+      "name": "job_row.output_ref",
+      "expected": "regression://f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "actual": "regression://f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "passed": true
+    },
+    {
+      "name": "run.http_status",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "run.run_result_events",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "run.result.status",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    },
+    {
+      "name": "totals.total",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "totals.passed",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "totals.failed",
+      "expected": 0,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "name": "run.run_id",
+      "expected": "non-empty",
+      "actual": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+      "passed": true
+    },
+    {
+      "name": "run.job_row.status",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    },
+    {
+      "name": "run.job_row.output_ref",
+      "expected": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+      "actual": "a1254dcd-32db-4e48-af31-d82aad8309c4",
+      "passed": true
+    },
+    {
+      "name": "run_detail.status",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    },
+    {
+      "name": "run_detail.totals",
+      "expected": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      },
+      "actual": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "flaky": 0,
+        "skipped": 0,
+        "pending": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "run_detail.results",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "run_detail.result.status",
+      "expected": "passed",
+      "actual": "passed",
+      "passed": true
+    },
+    {
+      "name": "run_detail.artifacts",
+      "expected": ">= 1",
+      "actual": 5,
+      "passed": true
+    },
+    {
+      "name": "db.login_tc.statuses_in_time_order",
+      "expected": "failed, flaky, flaky, passed, passed, passed",
+      "actual": [
+        "failed",
+        "flaky",
+        "flaky",
+        "passed",
+        "passed",
+        "passed"
+      ],
+      "passed": true
+    },
+    {
+      "name": "db.login_tc.last_status",
+      "expected": "passed",
+      "actual": "passed",
+      "passed": true
+    },
+    {
+      "name": "db.login_tc.prior_failed>=1",
+      "expected": ">= 1",
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "db.live_run.status",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    }
+  ],
+  "failed_assertions": [],
+  "result": {
+    "passed": true,
+    "evidence": [
+      "analyze → 202 → SSE regression.set with S6.1 impact (direct+generated+referenced)",
+      "S6.2 flaky detection: is_flaky=true (flakiness_rate >= 0.25, >= min_sample)",
+      "S6.2 fail->pass: prior failed execution, last_status=passed, is_failing=false",
+      "S6.3 top-1 recommendation = the impacted generated test",
+      "S6.5 advisor brief present (LLM or safe stub)",
+      "run → 202 → SSE run.result → run completed: 1/1 passed, artifacts stored"
+    ]
+  }
+}

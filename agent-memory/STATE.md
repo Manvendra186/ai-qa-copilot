@@ -9,12 +9,86 @@
   Phase 2 — Playwright Copilot **complete** · Phase 3 — Execution **complete** (S3.1 ✓, S3.2 ✓, S3.3 ✓) ·
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
   Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
-  **Phase 6 — Regression Intelligence: in progress — S6.1 ✓ (change-impact core), S6.2 ✓ (flaky + risk core), S6.3 ✓ (recommender), S6.4–S6.5 next**
-- **Step:** S0.1–S6.3 ✓ (S6.1 change-impact core + S6.2 flaky/risk core + S6.3 deterministic top-N recommender, all LLM-free; see §2) ·
-  **next:** **S6.4 — Regression API + web** — see §3
+  **Phase 6 — Regression Intelligence: complete** (S6.1 ✓, S6.2 ✓, S6.3 ✓, S6.4 ✓, S6.5 ✓)
+- **Step:** S0.1–S6.5 ✓ (S6.4 regression API + web, commit `b3fc68c` · S6.5 live E2E 38/38 +
+  committed `reports/regression_v1.json` baseline, 2026-09-02) ·
+  **next:** **Phase 7 — Integrations** (GitHub / Jira / CI/CD, bible §19 phase table) —
+  start with the definition step (bible §19, detail-on-demand per §18) — see §3
 
 ## 2. Just completed
 
+- 2026-09-02 · **S6.5 (live regression E2E + committed baseline) — live E2E
+  38/38, baseline report tracked + committed** (bible §19 S6.5; exit: real
+  project + changed files → 202 → job → `regression.set` SSE with ranked set
+  → run the set through the S3 path → baseline report committed):
+  - **Seed (script `_s65_seed.py`, idempotent; demo project "Demo App"
+    `f500a3b2-…`, login `dev@local.dev` → owner):** one applied
+    `generated_tests` row for `e2e/demo.spec.js` (→ login test case
+    `3cfe1127-…` → requirement "Login accepts valid credentials") + 6 linked
+    executions (1 pre-existing seeded passed + 5 seeded: failed, flaky,
+    flaky, passed, passed) → S6.2 stats `executions=6, passed=3, failed=1,
+    flakiness_rate≈0.333 (≥0.25, ≥min_sample 3) → is_flaky=true` ·
+    `failure_rate 1/6 < 0.5 → is_failing=false` · `last_status=passed`
+    (fail→pass shape) · risk score 71.67 → `recommend()` rank 1 (the only
+    impacted test);
+  - **Live driver (script `_s65_live.py`; API `:8000` + LM Studio `:8080` +
+    demo server `:4000` / client `:5174` all up):**
+    `POST /api/v1/projects/{id}/regression/analyze` `{repository_path,
+    files: [e2e/fixtures.js, e2e/demo.spec.js], top_n: 10}` → **202** +
+    `Location: /api/v1/jobs/d5e705e3-…` → SSE `job.started` → `stage.started`
+    → `progress 0.1→0.8` → **`regression.set`** (S6.1 impact
+    direct+generated+referenced · top-1 `test_key e2e/demo.spec.js`,
+    `impact_kind direct`, `requirement_risk high`, rationale chips ·
+    advisor brief — LLM or safe stub) → job `regression_analysis`
+    `completed`, `output_ref regression://f500a3b2-…` + `ai_actions` audit →
+    `POST /api/v1/projects/{id}/runs` `{tests: [e2e/demo.spec.js]}` →
+    **202** → SSE `run.result` (S3 Playwright path, `run_execution`
+    `completed`, **1/1 passed**, artifacts stored) · **38/38 assertions,
+    exit 0**;
+  - **Baseline report (committed — bible §31.6/§31.7 drift tracking):**
+    `reports/regression_v1.json` — `schema_version s6.5-live-evidence/v1` ·
+    `result.passed=true` · `failed_assertions=[]` · 38 assertions ·
+    precondition + expected S6.2 stats snapshot · `analyze` (request / HTTP /
+    job row / SSE events + regression set) · `run` (job row + SSE + run
+    detail) · `fail_to_pass.statuses_in_time_order = [failed, flaky, flaky,
+    passed, passed, passed]` · `.gitignore`: `reports/` → `reports/*` +
+    `!reports/regression_v1.json` (the single tracked report; other run
+    artifacts stay ignored);
+  - **gotchas (see also §7):** live run results persist with `test_case_id
+    NULL` → flaky/fail→pass evidence comes from the seeded `test_results`
+    history, not live-run rows · `regression.set` impact entries carry
+    `path` (not `test_key`) · API health is `http://127.0.0.1:8000/health`
+    (root, not `/api/v1/…`) · `started_at NULL` history rows sort by
+    `created_at` — observed order `failed, flaky, flaky, passed, passed,
+    passed` · domain `TestHistoryStats` has no `last_status` /
+    `insufficient_samples` — the API schema adds them; assert only exposed
+    contract fields;
+  - **cleanup:** removed one-off probes `_s65_envcheck.py` /
+    `_s65_inspect.py` / `_s65_probe.py` + stray `ersmanveWorkspace…` file
+    (a git-log dump from a broken path write) · kept `_s65_live.py` +
+    `_s65_seed.py` as the reproducible S6.5 evidence pair — re-run after any
+    prompt/model/regression-core change and diff the report.
+- 2026-09-02 · **S6.4 (Regression API + web) — all gates green** (bible
+  §19 S6.4; **backfill — that session committed `b3fc68c` without updating
+  agent memory**): `RegressionJobAgent` orchestrates S6.1
+  `impact_from_session` + S6.2 `build_risk_ranking` over
+  `project_test_history` + S6.3 `recommend()` + optional
+  `regression-advisor@1` summary (safe stub fallback; never re-orders the
+  deterministic ranking) → **`regression.set` SSE** + stable
+  `regression://<project>` `output_ref` + `ai_actions` audit (model stats
+  when the LLM ran, `model="stub"` marker when degraded) ·
+  `RunExecutionJobAgent` runs the selected set through the existing S3
+  Playwright path (`run_playwright`, no model call → no `ai_actions` row) ·
+  `POST /projects/{id}/regression/analyze` (202, changed files XOR
+  base/head refs; member-or-above RBAC, unknown project → 403 §31.3; invalid
+  body → 422) + `POST /projects/{id}/runs` · `JobType.REGRESSION_ANALYSIS` +
+  runner wiring in `main.py` · web: "Regression" tab
+  (`RegressionAnalysis.tsx` — ranked table + rationale chips + flaky flags +
+  "Run this set") + `useJobEvents` / `api.ts` / `pipeline.ts` wiring ·
+  `tests/unit/test_regression_analysis.py` (15 tests: route stub audit,
+  agent LLM audit via fake gateway, negative-execution no-audit,
+  run-execution happy/error, schemas, determinism) · gates: pytest **742
+  passed** · mypy strict ✓ (100 files) · ruff check/format ✓.
 - 2026-09-01 · **S6.3 (recommender — deterministic top-N) — all gates green**
   (bible §19 S6.3; exit: golden `regression_v1.json` top-N order match 100% ·
   deterministic (same input ⇒ same JSON) · no LLM in the ranking path):
@@ -510,35 +584,29 @@
 
 ## 3. NEXT STEP (start here)
 
-**S6.4 — Regression API + web** (bible §19 S6.4):
-`JobType.REGRESSION_ANALYSIS` · `POST /projects/{id}/regression/analyze`
-(202 + `job_id` + `Location`; member-or-above RBAC, unknown project → 403
-§31.3; body = `files[]` or `{base_ref, head_ref}` — 422 on invalid) ·
-`RegressionJobAgent` pipeline: S6.1 `compute_impact` (changed files /
-`base..head` git range) ∩ S6.2 `build_risk_ranking` → S6.3 `recommend()`
-top-N `RecommendationSet` → **`regression.set` SSE event** (impact + ranked
-set + flaky flags + optional `regression-advisor@1` summary, stub fallback) ·
-`output_ref` = stable `regression://<project>` ref → `ai_actions` audit row ·
-"Regression" tab: input → job progress → ranked set with per-test rationale
-chips + flaky flags · "Run this set" → S3 execution over the selected tests.
-- **Exit criterion:** analyze → 202 → job → ranked set visible in UI ·
-  running the recommended set through the S3 path stores artifacts ·
-  contract/RBAC/SSE tests green · gates green (pytest/mypy/ruff + web
-  tsc/eslint/build).
-- **Then:** S6.5 (live E2E + baseline report) — full table: bible §19.
-- S6.1 + S6.2 + S6.3 are done (see §2): `compute_impact` (S6.1) +
-  `build_risk_ranking` (S6.2) + `recommend()` (S6.3) are the S6.4 pipeline —
-  the API wires the three pure cores together; every MVP §20 "definition of
-  done" item is met (S0.1–S5.5 ✓).
+**Phase 7 — Integrations** (bible §19 phase table: GitHub / Jira / CI/CD —
+"Fits engineering workflow"; Phase 6 S6.1–S6.5 is complete):
+- **Start with the definition step** (bible §19, detail-on-demand per §18):
+  draft the Phase 7 step table (e.g. S7.1 GitHub sync/webhooks · S7.2 CI
+  integration · S7.3 Jira linking) against bible §20–§22, get sign-off, then
+  build step by step.
+- **Phase 6 closeout (2026-09-02):** S6.5 live E2E 38/38 passed (analyze →
+  202 → `regression.set` SSE → run the set → S3 Playwright 1/1 passed) ·
+  baseline `reports/regression_v1.json` committed for drift tracking
+  (§31.6/§31.7) · S6.4 backfilled into `SESSION_LOG.md` (that session
+  skipped the memory update) · evidence pair `scripts/_s65_live.py` +
+  `_s65_seed.py` committed · one-off probes + a stray git-log dump file
+  removed.
 - Queued follow-ups (not blockers): SSE bus is in-process — multi-worker
   deploy needs Redis pub/sub · demo-app `Dockerfile` unverified (S3.1) ·
   `test_golden_demo_app` conventions-golden re-baseline on clean trees
   (S4.1 note) · FIX-005 investigator classification (`product_defect` vs
   golden `test_data_defect`) — candidate for a failure-investigator prompt
-  nudge · eval reports live in gitignored `reports/` — commit one baseline
-  after each prompt/model change if we want drift tracking · **vector
-  retrieval** is still lexical-only (LM Studio has no embeddings endpoint,
-  501) — the S5.2 `EmbeddingProvider` seam is ready for a real endpoint.
+  nudge · **re-run `scripts/_s65_live.py` after any prompt/model/regression-
+  core change and diff `reports/regression_v1.json`** (drift tracking,
+  §31.6/§31.7) · **vector retrieval** is still lexical-only (LM Studio has
+  no embeddings endpoint, 501) — the S5.2 `EmbeddingProvider` seam is ready
+  for a real endpoint.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -670,6 +738,15 @@ chips + flaky flags · "Run this set" → S3 execution over the selected tests.
   `GET /generated-tests/{id}`, `/approve` `/reject` `/apply`) · `schemas.py`
   (`AutomationRequest`, `GeneratedTestOut`, `GeneratedTestReviewIn`) ·
   `tests/unit/test_generated_tests.py` (13 tests, hermetic scratch DB + stub pin)
+- Regression (S6.1–S6.5): impact core `packages/repository/src/qa_copilot_repository/impact.py` ·
+  flaky/risk `.../history.py` · recommender `.../regression.py` + advisor
+  `packages/ai/src/qa_copilot_ai/agents/regression_advisor.py` · S6.4 API
+  `apps/api/src/qa_copilot_api/{jobs,routes,schemas}.py` + web
+  `apps/web/src/components/RegressionAnalysis.tsx` · **S6.5 evidence pair**
+  `scripts/_s65_live.py` (38 assertions) + `scripts/_s65_seed.py` (demo
+  flaky/fail→pass seed) · baseline `reports/regression_v1.json` (tracked —
+  the single `.gitignore` exception under `reports/`; re-run the pair after
+  any prompt/model/regression-core change and diff the report).
 
 ## 7. Open questions / gotchas
 
@@ -786,3 +863,23 @@ chips + flaky flags · "Run this set" → S3 execution over the selected tests.
 - **ruff format is repo-wide (S5.2):** `ruff format` normalized a few files
   outside the step (mechanical line-wrap only); the format gate is
   repository-wide, so those changes belong in the step commit.
+- **S6.5 live-run rows have `test_case_id NULL`:** live Playwright results
+  persist without a test-case link → flaky/fail→pass evidence must come from
+  the seeded `test_results` history (`_s65_seed.py`), not live-run rows.
+- **`regression.set` impact entries carry `path`** (not `test_key`) for the
+  impacted test files; the ranked `recommendations[]` entries carry
+  `test_key` — don't mix the two shapes up when asserting.
+- **API health is `GET /health` at the root** (`http://127.0.0.1:8000/health`)
+  — not under `/api/v1`.
+- **`started_at NULL` history rows** sort by `created_at` in
+  `project_test_history` — pre-existing seed rows may land after later runs;
+  assert the observed order (S6.5: `failed, flaky, flaky, passed, passed,
+  passed`), never assume insertion order.
+- **domain `TestHistoryStats` has no `last_status` /
+  `insufficient_samples`** — the API serialization adds them; assert only
+  fields the exposed contract has (the S6.5 driver's first run failed on
+  exactly this).
+- **stale read-tool cache (S6.5 session):** the read tool served an old
+  snapshot of `STATE.md` (pre-S6.3-session wording) — `editor` matches on
+  disk content; when an edit fails with "text not found", re-fetch the exact
+  line via terminal (`Get-Content`) before retrying.
