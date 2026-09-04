@@ -476,3 +476,35 @@ class KnowledgeAnswer(BaseModel):
     answer: str
     citations: list[KnowledgeCitation] = []
     confidence: float = 0.0
+
+
+# --- Integrations (S7.1, §19 S7.1) ---------------------------------------------
+
+
+class IntegrationConfigIn(BaseModel):
+    """``PUT /api/v1/projects/{id}/integrations/{provider}`` body (owner+).
+
+    Only the secret's *reference* is accepted (env-var name or secret-manager
+    key) — a token value has no place in this API (build bible §17).
+    """
+
+    base_url: str | None = Field(default=None, max_length=1024)
+    token_ref: str | None = Field(default=None, max_length=255)
+    enabled: bool = True
+
+
+class IntegrationConfigOut(BaseModel):
+    """An integration config row.
+
+    The token value is never in this payload (§17): callers see
+    ``token_configured`` (a ref is set) plus the ref's name itself.
+    """
+
+    project_id: str
+    provider: str
+    base_url: str | None
+    token_ref: str | None
+    token_configured: bool
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime

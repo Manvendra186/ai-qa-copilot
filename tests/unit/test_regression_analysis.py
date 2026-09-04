@@ -533,7 +533,7 @@ VALID_SUMMARY = {
 }
 
 
-def _assistant(payload: dict[str, object]) -> dict[str, object]:
+def _assistant(payload: dict[str, Any]) -> dict[str, object]:
     """One OpenAI-style chat-completion response body."""
     return {
         "choices": [{"message": {"role": "assistant", "content": json.dumps(payload)}}],
@@ -548,7 +548,8 @@ class _AsyncMockTransport(httpx.AsyncBaseTransport):
         self._handler = handler
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        return self._handler(request)
+        response: httpx.Response = self._handler(request)
+        return response
 
 
 def _fake_gateway(handler: Any) -> LLMGateway:

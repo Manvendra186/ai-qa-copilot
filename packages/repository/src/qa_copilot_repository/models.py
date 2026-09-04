@@ -155,6 +155,47 @@ class Project(Base):
     ai_sessions: Mapped[list[AISession]] = relationship(back_populates="project")
     members: Mapped[list[ProjectMember]] = relationship(back_populates="project")
     generated_tests: Mapped[list[GeneratedTest]] = relationship(back_populates="project")
+    integration_configs: Mapped[list[IntegrationConfig]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class IntegrationConfig(Base):
+    """Per-project external-integration config (build bible §19 S7.1).
+
+    One row per ``(project_id, provider)`` (V1 provider: ``github``).
+    ``token_ref`` names *where* the secret lives (an env-var name or
+    secret-manager key) — the secret itself is never stored in this table
+    and never returned by the API (build bible §17; the S7.1 exit
+    "PAT never appears in logs or audit output"). ``base_url`` overrides
+    the provider default (GHES / self-hosted); ``enabled`` gates use.
+    """
+
+    __tablename__ = "integration_configs"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "project_id", "provider", name="uq_integration_configs_project_provider"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(sa.String(32))
+    base_url: Mapped[str | None] = mapped_column(sa.String(1024))
+    token_ref: Mapped[str | None] = mapped_column(sa.String(255))
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+    project: Mapped[Project] = relationship(back_populates="integration_configs")
 
 
 class ProjectMember(Base):
@@ -608,6 +649,7 @@ __all__ = [
     "Failure",
     "File",
     "GeneratedTest",
+    "IntegrationConfig",
     "Job",
     "KnowledgeDocument",
     "Organization",

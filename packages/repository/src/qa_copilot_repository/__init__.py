@@ -37,6 +37,10 @@ or a ``base..head`` git range) → impacted test files, LLM-free
 S6.3: deterministic regression recommender — the S6.1 impact set joined
 with the S6.2 flaky/risk ranking into a stable top-N recommendation,
 LLM-free (:mod:`qa_copilot_repository.regression`, build bible §19 S6.3).
+
+S7.1: external-integration config — the ``integration_configs`` row
+helpers (project + provider, ``token_ref`` only, never the secret, §17)
+(:mod:`qa_copilot_repository.integrations`, build bible §19 S7.1).
 """
 
 from . import (
@@ -46,6 +50,7 @@ from . import (
     generated_tests,
     history,
     impact,
+    integrations,
     membership,
     models,
     prompts,
@@ -99,6 +104,7 @@ __all__ = [
     "history",
     "impact",
     "impact_from_session",
+    "integrations",
     "main",
     "membership",
     "models",

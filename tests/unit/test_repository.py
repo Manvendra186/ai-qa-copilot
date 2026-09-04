@@ -60,6 +60,7 @@ EXPECTED_TABLES = {
     "jobs",
     "prompt_versions",
     "generated_tests",
+    "integration_configs",
 }
 
 

@@ -3,7 +3,7 @@ name = "qa-copilot-integrations"
 version = "0.1.0"
 description = "GitHub, Jira, CI, and other external integrations"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["httpx>=0.27", "pydantic>=2.7"]
 
 [build-system]
 requires = ["hatchling"]

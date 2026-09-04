@@ -2044,3 +2044,137 @@
 - **Next session start:** **S7.1 — GitHub core (LLM-free)** (bible §19 S7.1).
   See `STATE.md` §3.
 
+## 2026-09-02 — S7.1 GitHub core (LLM-free) — implementation + all gates green
+
+- **Goal:** build bible §19 S7.1 — GitHub core (typed httpx client, PAT
+  redacted §17, `integration_configs` + migration, golden `github_v1.json`,
+  CLI). Deterministic + LLM-free (S2.1/S3.3/S5.1/S6.1 pattern); exit:
+  golden 100% match · PAT never in logs/output (red-team) · no LLM in the
+  path.
+- **Did (implementation):**
+  - `qa_copilot_integrations.github` (new subpackage under the existing
+    `qa-copilot-integrations` workspace member; `pyproject.toml` gained
+    `httpx` + console entry, `uv.lock` updated, `uv sync` clean):
+    - `client.py` — typed async client; PAT travels only as
+      `Authorization: Bearer` (never URL/body);
+      `resolve_repository(owner, repo)` → §10 `repositories` fields
+      (derives `url` from `html_url` when `clone_url` absent) ·
+      `fetch_pull_request(owner, repo, number)` → head/base SHAs + title ·
+      `fetch_pull_request_files(...)` → `Link: rel="next"` pagination, files
+      de-duplicated + sorted (exact S6.1 `files[]` shape); typed errors
+      `GitHubAuthError` (401/403), `GitHubNotFoundError` (404),
+      `GitHubHTTPError` (5xx) with the PAT redacted out of every message;
+    - `golden.py` — strict fail-loud loader (`GitHubGoldenSet` /
+      `GitHubFixture` / `FixtureCall` / `FixtureResponse`; duplicate ids,
+      unknown fields, bad shapes → `GoldenSetError`);
+    - `runner.py` — deterministic replay: in-process fake GitHub server
+      (`ThreadingHTTPServer` on 127.0.0.1, scripted responses, `Link`
+      header rewritten to the live port so pagination actually crosses
+      the wire), auth-expectation + redaction expectations,
+      `run_github_eval` + `GitHubReport` (per-fixture pass/fail,
+      `pass_min`);
+    - `cli.py` + `__main__.py` — `python -m qa_copilot_integrations.github
+      repo|pr-files|golden`: machine JSON on stdout, human summary on
+      stderr, stable exit 0/1/2 (0 pass · 1 eval failed · 2 bad usage/
+      load error);
+  - **`packages/integrations/golden/github_v1.json` — 10 canonical
+    fixtures** (`github_client v1`, `pass_min 1.0`): `resolve_repo_ok` ·
+    `resolve_repo_missing_clone_url` · `pr_fetch_ok` · `pr_pagination_link`
+    (2 pages merged) · `pr_dedupe_and_sort` · `pr_empty_files` ·
+    `auth_401` · `auth_403_rate_limit` · `not_found_404` ·
+    `http_500_redaction` (PAT echoed in the 5xx body must come back
+    `***REDACTED***`);
+  - **PAT redaction gap found + fixed (real bug):** the redaction regex
+    `\b([?&]token=)` missed `?token=` at line start or after a space
+    (`\b` is not a boundary there) — dropped the `\b` anchor; golden
+    `http_500_redaction` + the PAT-in-URL fixtures now pin the contract
+    (fixtures use PAT-shaped sentinels, not one fixed literal);
+  - `qa_copilot_repository` — `IntegrationConfig` model
+    (`integration_configs`: id, project_id FK, provider, token_ref,
+    base_url nullable (GHES/self-hosted), enabled, timestamps; unique on
+    (project_id, provider)) + `integrations.py` helpers (get/upsert/delete
+    by project+provider) + migration `9f3c5d7a1b2e`
+    (`integration_configs (S7.1 external integrations)`) · model exported
+    from `qa_copilot_repository`;
+  - API (`apps/api`) — `schemas.py` + `routes.py` + `main.py` wiring:
+    `GET /api/v1/projects/{id}/integrations` (member-or-above) ·
+    `PUT …/integrations/{provider}` (owner-or-above; idempotent per
+    project+provider) · `DELETE …/integrations/{provider}` (owner-or-above;
+    404 when absent) · provider slug `^[a-z0-9][a-z0-9_-]{0,31}$`
+    (invalid → 422; open to `gitlab`/`bitbucket` later without schema
+    changes) · **token-safe contract**: requests/responses carry only
+    `token_ref` + `token_configured`; a raw token value smuggled into the
+    body is neither stored nor echoed;
+  - tests (55 targeted, all green):
+    - `tests/unit/test_github_client.py` — typed client vs the fake server
+      (auth header present + correct, `Link` pagination, 401/403/404/5xx
+      mapping, PAT redaction in messages);
+    - `tests/unit/test_github_golden.py` — loader validation (duplicate
+      ids, unknown fields, bad shapes fail loud) + canonical set 100%
+      green via the runner;
+    - `tests/unit/test_github_cli.py` — CLI contract: stdout is valid JSON,
+      stderr human summary, exit codes, PAT asserted absent from both
+      streams;
+    - `tests/unit/test_integrations_api.py` — scratch-Postgres
+      (`qa_copilot_integrations_test` on :5433, real Alembic) +
+      `create_app`: RBAC matrix (owner/member/viewer/non-member), CRUD,
+      idempotent PUT, 422 provider slug, 404 DELETE, token-safety
+      (smuggled token value never echoed);
+    - `tests/unit/test_s71_no_llm.py` — static pin:
+      `qa_copilot_integrations` imports no AI/LLM packages;
+    - `tests/unit/test_repository.py` — added `integration_configs` to
+      `EXPECTED_TABLES` (its **exact** table-set assertion failed the
+      797-run until the entry was added);
+- **Did (lint/type remediation this session):**
+  - `github/runner.py` — `_host_port()` typed guard for
+    `ThreadingHTTPServer.server_address` (mypy `str-unpack` /
+    `str-bytes-safe`: typeshed types it `tuple | str | Buffer`); explicit
+    `next_url` narrowing for `Link` header parsing;
+  - `github/client.py` + `github/golden.py` + `github/cli.py` — explicit
+    type annotations mypy strict required, line wrapping (E501 ≤100);
+  - `qa_copilot_repository/models.py` — tightened result validation so
+    dataclass **classes** are rejected (not just instances) —
+    `is_dataclass()` is true for the class itself; guard with
+    `isinstance(x, type)` before `asdict()`;
+  - `tests/unit/test_regression_analysis.py` — `Any`-return annotation +
+    `dict` invariance fix for mypy strict;
+  - **pre-existing lint debt on the gate path fixed** (full `ruff check`
+    had to be green): `scripts/_s65_live.py` (E501 ×12, UP017
+    `datetime.now(UTC)`, F841 unused `report`) · `scripts/_s65_seed.py`
+    (E501 ×4) · `tests/unit/test_integrations_api.py` (E501) ·
+    `ruff check --fix` for I001/W292; both S6.5 scripts re-verified to
+    parse (`ast.parse`) — their evidence text values are unchanged
+    (string splits concatenate identically);
+- **Verified (gates, all green):**
+  - `uv run ruff check` → **All checks passed**;
+  - `uv run mypy --strict` → **Success: no issues found in 142 source
+    files**;
+  - targeted S7.1: `uv run pytest tests/unit/test_github_client.py
+    tests/unit/test_github_golden.py tests/unit/test_github_cli.py
+    tests/unit/test_s71_no_llm.py tests/unit/test_integrations_api.py -q`
+    → **55 passed**;
+  - **full suite: `uv run pytest -q` → 797 passed** (first run:
+    1 failed / 796 passed — `test_repository.py::
+    test_all_core_tables_registered`; fixed by adding
+    `integration_configs` to `EXPECTED_TABLES`; re-run 797/797);
+  - `uv run python -m qa_copilot_integrations.github golden` → **10/10
+    fixtures passed, exit 0**;
+  - Alembic scratch-DB check on `qa_copilot_s71_migration_check`
+    (created, dropped after): upgrade chain ran through `9f3c5d7a1b2e` →
+    `integration_configs` present with
+    `base_url, created_at, enabled, id, project_id, provider, token_ref,
+    updated_at` + `uq_integration_configs_project_provider` · downgrade to
+    base → table removed ✓;
+- **Decisions:** PAT stays out of storage/audit by design — the API only
+  ever sees a `token_ref` (secret name); the client is the only component
+  that holds a token value, in memory, bearer-only · provider column is an
+  open slug (validated shape) rather than a DB enum — adding `gitlab` /
+  `bitbucket` later is a code change, not a migration · golden fixtures
+  pin PAT-shaped sentinels (contract, not one literal) · the fake server
+  rewrites `Link` to its live 127.0.0.1 port so pagination is exercised
+  over real HTTP, not a mocked transport.
+- **Commit:** `step S7.1: GitHub core (LLM-free) — typed client, golden
+  github_v1.json (10/10), CLI, integration_configs API` (this commit).
+- **Next session start:** **S7.2 — PR → regression (API + web)** (bible
+  §19 S7.2). See `STATE.md` §3.
+

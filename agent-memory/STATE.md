@@ -10,14 +10,86 @@
   Phase 4 — Failure Intelligence **complete** (S4.1 ✓, S4.2 ✓, S4.3 ✓) ·
   Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
   Phase 6 — Regression Intelligence **complete** (S6.1 ✓, S6.2 ✓, S6.3 ✓, S6.4 ✓, S6.5 ✓) ·
-  **Phase 7 — Integrations: in progress** (S7.0 ✓ step table defined + approved)
+  **Phase 7 — Integrations: in progress** (S7.0 ✓ step table defined + approved ·
+  S7.1 ✓ GitHub core (LLM-free))
 - **Step:** S0.1–S6.5 ✓ (S6.4 regression API + web, commit `b3fc68c` · S6.5 live E2E 38/38 +
   committed `reports/regression_v1.json` baseline, 2026-09-02) · S7.0 ✓ Phase 7 step
-  table drafted + approved (bible §19, 2026-09-02) ·
-  **next:** **S7.1 — GitHub core (LLM-free)** — see §3
+  table drafted + approved (bible §19, 2026-09-02) · S7.1 ✓ GitHub core (LLM-free) —
+  typed client + golden 10/10 + PAT-safe `integration_configs` API (2026-09-02) ·
+  **next:** **S7.2 — PR → regression** — see §3
 
 ## 2. Just completed
 
+- 2026-09-02 · **S7.1 (GitHub core — LLM-free) — all gates green** (bible
+  §19 S7.1; exit: typed GitHub client + golden `github_v1.json` 100% match +
+  PAT never in logs/output (red-team) + `integration_configs` API + CLI):
+  - `qa_copilot_integrations.github` (new subpackage; **LLM-free** —
+    `test_s71_no_llm.py` statically pins that it never imports AI/LLM
+    packages):
+    `client.py` typed async httpx client (PAT travels only as
+    `Authorization: Bearer`; `resolve_repository` → §10 `repositories`
+    fields · `fetch_pull_request` head/base SHAs · `fetch_pull_request_files`
+    with `Link: rel="next"` pagination, files de-duped + sorted into the
+    exact S6.1 `files[]` shape; typed errors
+    `GitHubAuthError`/`GitHubNotFoundError`/`GitHubHTTPError`, PAT redacted
+    out of every message) · `golden.py` strict fail-loud golden-set loader ·
+    `runner.py` deterministic replay — in-process fake GitHub server on
+    127.0.0.1 (scripted responses, `Link` header rewritten to the live
+    127.0.0.1 port), auth-expectation + redaction expectations,
+    `run_github_eval` + `GitHubReport` · `cli.py`
+    (`python -m qa_copilot_integrations.github repo|pr-files|golden` → JSON
+    on stdout, human summary on stderr, stable exit 0/1/2);
+  - **`packages/integrations/golden/github_v1.json` — 10 canonical
+    fixtures**: `resolve_repo_ok` · `resolve_repo_missing_clone_url` ·
+    `pr_fetch_ok` · `pr_pagination_link` (2 pages merged) ·
+    `pr_dedupe_and_sort` · `pr_empty_files` · `auth_401` ·
+    `auth_403_rate_limit` · `not_found_404` · `http_500_redaction` (PAT
+    echoed in the 5xx body comes back `***REDACTED***`) — `golden` run
+    **10/10, exit 0**;
+  - **PAT redaction gap found + fixed (real bug):** old regex
+    `\b([?&]token=)` missed `?token=` at line start or after a space —
+    dropped the `\b` anchor (golden `http_500_redaction` + the
+    PAT-in-URL fixtures pin the contract);
+  - `qa_copilot_repository` — `IntegrationConfig` model
+    (`integration_configs`: id, project_id FK, provider, token_ref,
+    base_url nullable (GHES/self-hosted), enabled, timestamps; unique on
+    (project_id, provider)) + repository helpers (get/upsert/delete by
+    project+provider) + migration `9f3c5d7a1b2e`;
+  - API (`apps/api`) — `GET /api/v1/projects/{id}/integrations`
+    (member-or-above) · `PUT …/integrations/{provider}` (owner-or-above;
+    idempotent per project+provider) · `DELETE …/integrations/{provider}`
+    (owner-or-above; 404 when absent) · provider slug
+    `^[a-z0-9][a-z0-9_-]{0,31}$` (invalid → 422; open to `gitlab` /
+    `bitbucket` later without schema changes) · **token-safe contract**:
+    requests/responses carry only `token_ref` + `token_configured` — a raw
+    token value smuggled into the body is neither stored nor echoed
+    (asserted in `test_integrations_api.py`);
+  - tests (**55 targeted, all green**): `test_github_client.py` (typed
+    client vs fake server: auth header, pagination, error mapping,
+    redaction) · `test_github_golden.py` (loader validation + canonical set
+    100%) · `test_github_cli.py` (stdout JSON / stderr summary / exit codes
+    / PAT asserted absent from both streams) · `test_integrations_api.py`
+    (scratch-Postgres + real Alembic: RBAC matrix, CRUD, 422/404,
+    token-safety) · `test_s71_no_llm.py` (import pin) · `test_repository.py`
+    (`integration_configs` added to the exact-table set — the full-suite
+    failure that caught the missing entry);
+  - **gates**: `uv sync` ✓ · ruff check ✓ (14 pre-existing issues fixed on
+    the way: `scripts/_s65_live.py` E501×12+UP017+F841,
+    `scripts/_s65_seed.py` E501×4, source E501/W292/I001) · mypy
+    `--strict` ✓ (142 files; fixed `str-unpack`/`str-bytes-safe` on
+    `ThreadingHTTPServer.server_address` via a `_host_port()` guard,
+    `asdict()` dataclass-class narrowing, `Any`-return + `dict` invariance
+    in `test_regression_analysis.py`) · pytest full **797 passed** ·
+    `uv run python -m qa_copilot_integrations.github golden` **10/10,
+    exit 0** · Alembic upgrade→verify(table+unique constraint)→
+    downgrade→verify on scratch DB `qa_copilot_s71_migration_check` ✓
+    (dropped after);
+  - **gotchas (see also §7):** mypy `str-unpack` on
+    `ThreadingHTTPServer.server_address` (typeshed types it
+    `tuple|str|Buffer`) · `is_dataclass()` is true for the class too —
+    guard `isinstance(result, type)` before `asdict()` ·
+    `test_repository.py` asserts an **exact** table set — every new table
+    must be added to `EXPECTED_TABLES`.
 - 2026-09-02 · **S7.0 (Phase 7 definition — Integrations) — step table drafted +
   approved** (bible §19; exit: table defined against §20–§22 + sign-off):
   `### Phases 7–8` → `### Phase 7 — Integrations` (S7.1 GitHub core (typed httpx,
@@ -599,18 +671,18 @@
 
 ## 3. NEXT STEP (start here)
 
-**S7.1 — GitHub core (LLM-free)** (bible §19 Phase 7; exit: PR → changed-files
-contract matches golden 100% · PAT never appears in logs/audit (red-team check) ·
-no LLM in the path):
-- `qa_copilot_integrations.github` — typed httpx client (PAT via env, never
-  logged/audited; redacted §17): `resolve_repository(owner, repo)` →
-  `repositories` fields (url, default_branch) · `fetch_pull_request(owner, repo,
-  number)` → head/base sha + changed files in exactly the S6.1 `files[]` shape;
-- `integration_configs` table (project_id, provider, base_url, token_ref,
-  enabled; unique on project+provider) + migration; RBAC: owner-or-above
-  config, member-or-above read;
-- golden `github_v1.json` (§22) + fake-server tests (success, 401/404 mapping,
-  token redaction) + CLI `python -m qa_copilot_integrations.github pr-files …` → JSON.
+**S7.2 — PR → regression (API + web)** (bible §19 Phase 7; exit: a PR
+reference feeds the S6.1 impact core via the S7.1 client · `regression.set`
+contract unchanged · PR comment idempotent · RBAC §31.3):
+- `pull_request: {owner, repo, number}` as the **third exclusive source** of
+  `POST /projects/{id}/regression/analyze` (422 unless exactly one of
+  files / base+head / pull_request) — resolve the PR via
+  `qa_copilot_integrations.github` (PAT from `integration_configs`,
+  redacted §17) → changed files in the S6.1 `files[]` shape →
+  `regression.set` (unchanged contract);
+- `POST /projects/{id}/regression/pr-comment` (owner-or-above) — idempotent
+  PR comment (marker; re-post updates the existing one);
+- Regression tab: PR input (owner/repo/number) + "Post to PR".
 - **Phase 6 closeout (2026-09-02):** S6.5 live E2E 38/38 passed (analyze →
   202 → `regression.set` SSE → run the set → S3 Playwright 1/1 passed) ·
   baseline `reports/regression_v1.json` committed for drift tracking
@@ -904,3 +976,17 @@ no LLM in the path):
   snapshot of `STATE.md` (pre-S6.3-session wording) — `editor` matches on
   disk content; when an edit fails with "text not found", re-fetch the exact
   line via terminal (`Get-Content`) before retrying.
+- **PAT redaction regex (S7.1):** `\b([?&]token=)` missed `?token=` at line
+  start / after a space (`\b` is not a boundary there) — the fix is to drop
+  the `\b`; the golden fixtures pin PAT-shaped secrets echoed in bodies, not
+  one fixed token literal.
+- **mypy + `http.server` (S7.1):** `ThreadingHTTPServer.server_address` is
+  typed `tuple | str | Buffer` → `host, port = addr[:2]` is `str-unpack` and
+  `f"{host}"` on `Buffer` is `str-bytes-safe` — guard with an
+  `isinstance(addr, tuple)` helper that returns `(str, int)`.
+- **`is_dataclass()` narrows to class OR instance (S7.1):** after
+  `is_dataclass(x)`, mypy still allows `type[DataclassInstance]` — guard
+  `isinstance(x, type)` before `asdict(x)`.
+- **exact table set (S7.1):** `test_repository.py::test_all_core_tables_registered`
+  asserts `== EXPECTED_TABLES` — adding a model without the table entry
+  fails the full suite (caught in S7.1's 797-run).

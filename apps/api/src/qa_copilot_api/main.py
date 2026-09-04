@@ -244,6 +244,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes.generated_tests_router)
     # S3.2: run history, results, artifacts (§10, §15).
     app.include_router(routes.runs_router)
+    # S7.1: external integrations config (§19 S7.1; member+ read, owner+ write).
+    app.include_router(routes.integrations_router)
 
     return app
 

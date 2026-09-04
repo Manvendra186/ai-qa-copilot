@@ -113,7 +113,9 @@ def main() -> int:
                     status=GeneratedTestStatus.APPLIED,
                     reviewed_by=DEV_USER,
                     reviewed_at=now - timedelta(days=7),
-                    review_note="Approved: covers the login happy path with the current test-id contract.",
+                    review_note=(
+                        "Approved: covers the login happy path with the current test-id contract."
+                    ),
                 )
             )
             print("created applied generated_tests row for e2e/demo.spec.js")
@@ -162,8 +164,14 @@ def main() -> int:
                         ),
                         confidence=0.86,
                         evidence=[
-                            "console.jsonl: locator '[data-testid=login-submit]' resolved to 0 elements",
-                            "screenshot: login form rendered; submit button present under the new test id",
+                            (
+                                "console.jsonl: locator '[data-testid=login-submit]' "
+                                "resolved to 0 elements"
+                            ),
+                            (
+                                "screenshot: login form rendered; submit button present "
+                                "under the new test id"
+                            ),
                         ],
                         suggested_fix=(
                             "Point the login submit locator at the current data-testid "
@@ -174,7 +182,9 @@ def main() -> int:
                     )
                     db.add(failure)
                     result.failure_id = failure.id
-                print(f"seeded run: {status.value:8s} started={started.isoformat()} dur={duration}s")
+                print(
+                    f"seeded run: {status.value:8s} started={started.isoformat()} dur={duration}s"
+                )
 
         db.commit()
         linked_after = db.scalar(

@@ -1,0 +1,258 @@
+{
+  "schema_version": "github-golden/1",
+  "name": "github_client",
+  "version": "v1",
+  "description": "S7.1 GitHub core (LLM-free) golden: fake-server fixtures pinning the exact typed result or typed error the GitHub REST client must produce — resolve_repository (§10 repositories fields), fetch_pull_request (S6.1 files[] shape, deduped + sorted), Link pagination, 401/403/404/5xx error mapping, and PAT redaction (§17).",
+  "source": {
+    "spec": "build bible §19 S7.1, §22 (golden sets), §31.7 (100% contract gate)",
+    "api": "GitHub REST v3 — /repos/{owner}/{repo}, /repos/{owner}/{repo}/pulls/{n}(+/files)",
+    "replay": "qa_copilot_integrations.github.runner (ThreadingHTTPServer on 127.0.0.1)"
+  },
+  "targets": { "pass_min": 1.0 },
+  "fixtures": [
+    {
+      "id": "resolve_repo_ok",
+      "title": "resolve_repository maps a repo onto the §10 repositories fields",
+      "call": { "kind": "resolve_repository", "owner": "acme", "repo": "web" },
+      "responses": [
+        {
+          "path": "/repos/acme/web",
+          "status": 200,
+          "body": {
+            "id": 4242,
+            "full_name": "acme/web",
+            "html_url": "https://github.com/acme/web",
+            "clone_url": "https://github.com/acme/web.git",
+            "default_branch": "main",
+            "private": false
+          }
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "url": "https://github.com/acme/web.git",
+        "default_branch": "main",
+        "full_name": "acme/web",
+        "html_url": "https://github.com/acme/web"
+      },
+      "expect_auth": "Bearer ghp_S71GoldenToken0123456789"
+    },
+    {
+      "id": "resolve_repo_missing_clone_url",
+      "title": "resolve_repository derives url from html_url when clone_url is absent",
+      "call": { "kind": "resolve_repository", "owner": "acme", "repo": "api" },
+      "responses": [
+        {
+          "path": "/repos/acme/api",
+          "status": 200,
+          "body": {
+            "full_name": "acme/api",
+            "html_url": "https://github.com/acme/api",
+            "default_branch": "trunk"
+          }
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "url": "https://github.com/acme/api.git",
+        "default_branch": "trunk",
+        "full_name": "acme/api"
+      }
+    },
+    {
+      "id": "pr_fetch_ok",
+      "title": "fetch_pull_request returns head/base SHAs + S6.1 files[]",
+      "call": { "kind": "fetch_pull_request", "owner": "acme", "repo": "web", "number": 42 },
+      "responses": [
+        {
+          "path": "/repos/acme/web/pulls/42",
+          "status": 200,
+          "body": {
+            "number": 42,
+            "title": "Add retry budget to fetcher",
+            "state": "open",
+            "html_url": "https://github.com/acme/web/pull/42",
+            "head": { "ref": "feature/retry", "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+            "base": { "ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567" }
+          }
+        },
+        {
+          "path": "/repos/acme/web/pulls/42/files",
+          "status": 200,
+          "body": [
+            { "filename": "src/web/fetcher.py", "status": "modified" },
+            { "filename": "tests/test_fetcher.py", "status": "added" }
+          ]
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "number": 42,
+        "state": "open",
+        "head_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+        "head_ref": "feature/retry",
+        "base_sha": "0123456789abcdef0123456789abcdef01234567",
+        "base_ref": "main",
+        "files": ["src/web/fetcher.py", "tests/test_fetcher.py"]
+      },
+      "expect_auth": "Bearer ghp_S71GoldenToken0123456789"
+    },
+    {
+      "id": "pr_pagination_link",
+      "title": "fetch_pull_request follows Link rel=\"next\" pages and merges files",
+      "call": { "kind": "fetch_pull_request", "owner": "acme", "repo": "web", "number": 7 },
+      "responses": [
+        {
+          "path": "/repos/acme/web/pulls/7",
+          "status": 200,
+          "body": {
+            "number": 7,
+            "title": "Big refactor",
+            "state": "open",
+            "html_url": "https://github.com/acme/web/pull/7",
+            "head": { "ref": "refactor", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            "base": { "ref": "main", "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+          }
+        },
+        {
+          "path": "/repos/acme/web/pulls/7/files",
+          "status": 200,
+          "body": [
+            { "filename": "a/one.py", "status": "modified" },
+            { "filename": "b/two.py", "status": "modified" }
+          ],
+          "link": "<{{base}}/repos/acme/web/pulls/7/files?page=2>; rel=\"next\", <{{base}}/repos/acme/web/pulls/7/files?page=2>; rel=\"last\""
+        },
+        {
+          "path": "/repos/acme/web/pulls/7/files",
+          "status": 200,
+          "body": [{ "filename": "c/three.py", "status": "added" }]
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "files": ["a/one.py", "b/two.py", "c/three.py"]
+      }
+    },
+    {
+      "id": "pr_dedupe_and_sort",
+      "title": "changed files are de-duplicated and sorted (S6.1 files[] shape)",
+      "call": { "kind": "fetch_pull_request", "owner": "acme", "repo": "web", "number": 9 },
+      "responses": [
+        {
+          "path": "/repos/acme/web/pulls/9",
+          "status": 200,
+          "body": {
+            "number": 9,
+            "title": "Cleanup",
+            "state": "merged",
+            "html_url": "https://github.com/acme/web/pull/9",
+            "head": { "ref": "cleanup", "sha": "cccccccccccccccccccccccccccccccccccccccc" },
+            "base": { "ref": "main", "sha": "dddddddddddddddddddddddddddddddddddddddd" }
+          }
+        },
+        {
+          "path": "/repos/acme/web/pulls/9/files",
+          "status": 200,
+          "body": [
+            { "filename": "z/last.py", "status": "modified" },
+            { "filename": "a/first.py", "status": "modified" },
+            { "filename": "z/last.py", "status": "modified" },
+            { "filename": "m/mid.py", "status": "modified" }
+          ]
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "files": ["a/first.py", "m/mid.py", "z/last.py"]
+      }
+    },
+    {
+      "id": "pr_empty_files",
+      "title": "a PR with no changed files yields files = [] (not an error)",
+      "call": { "kind": "fetch_pull_request", "owner": "acme", "repo": "web", "number": 11 },
+      "responses": [
+        {
+          "path": "/repos/acme/web/pulls/11",
+          "status": 200,
+          "body": {
+            "number": 11,
+            "title": "Docs only",
+            "state": "open",
+            "html_url": "https://github.com/acme/web/pull/11",
+            "head": { "ref": "docs", "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+            "base": { "ref": "main", "sha": "ffffffffffffffffffffffffffffffffffffffff" }
+          }
+        },
+        {
+          "path": "/repos/acme/web/pulls/11/files",
+          "status": 200,
+          "body": []
+        }
+      ],
+      "expect": { "kind": "ok", "files": [] }
+    },
+    {
+      "id": "auth_401",
+      "title": "401 maps to GitHubAuthError with the redacted body detail",
+      "call": { "kind": "resolve_repository", "owner": "acme", "repo": "web" },
+      "responses": [
+        {
+          "path": "/repos/acme/web",
+          "status": 401,
+          "body": { "message": "Bad credentials", "documentation_url": "https://docs.github.com/rest" }
+        }
+      ],
+      "expect": { "kind": "error", "error": "auth", "status": 401, "message_contains": "Bad credentials" },
+      "expect_auth": "Bearer ghp_S71GoldenToken0123456789"
+    },
+    {
+      "id": "auth_403_rate_limit",
+      "title": "403 (rate limit) maps to GitHubAuthError with status 403",
+      "call": { "kind": "fetch_pull_request", "owner": "acme", "repo": "web", "number": 3 },
+      "responses": [
+        {
+          "path": "/repos/acme/web/pulls/3",
+          "status": 403,
+          "body": {
+            "message": "You have exceeded a secondary rate limit.",
+            "documentation_url": "https://docs.github.com/rest"
+          }
+        }
+      ],
+      "expect": { "kind": "error", "error": "auth", "status": 403, "message_contains": "rate limit" }
+    },
+    {
+      "id": "not_found_404",
+      "title": "404 maps to GitHubNotFoundError (repo/PR missing or PAT lacks access)",
+      "call": { "kind": "resolve_repository", "owner": "acme", "repo": "missing" },
+      "responses": [
+        {
+          "path": "/repos/acme/missing",
+          "status": 404,
+          "body": { "message": "Not Found" }
+        }
+      ],
+      "expect": { "kind": "error", "error": "not_found", "status": 404, "message_contains": "Not Found" }
+    },
+    {
+      "id": "http_500_redaction",
+      "title": "5xx maps to GitHubHTTPError and the PAT is redacted out of the message (§17)",
+      "call": { "kind": "fetch_pull_request", "owner": "acme", "repo": "web", "number": 5 },
+      "responses": [
+        {
+          "path": "/repos/acme/web/pulls/5",
+          "status": 500,
+          "body": { "message": "internal error while loading pull request 5 (secret: ghp_abcdefghijklmnopqrstuvwx)" }
+        }
+      ],
+      "expect": {
+        "kind": "error",
+        "error": "http",
+        "status": 500,
+        "message_contains": "internal error",
+        "message_not_contains": ["ghp_abcdefghijklmnopqrstuvwx"]
+      }
+    }
+  ]
+}

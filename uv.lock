@@ -1100,6 +1100,16 @@ requires-dist = [
 name = "qa-copilot-integrations"
 version = "0.1.0"
 source = { editable = "packages/integrations" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
 
 [[package]]
 name = "qa-copilot-knowledge"

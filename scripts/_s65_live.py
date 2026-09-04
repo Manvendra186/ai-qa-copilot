@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -87,10 +87,8 @@ def run_analyze(
     checks.add("analyze.regression_set_events", 1, len(set_events), len(set_events) == 1)
     reg = set_events[0] if set_events else {}
     recommendation = reg.get("recommendation") or {}
-    impacted = next(
-        (imp for imp in (reg.get("impact") or {}).get("impacted") or [] if imp.get("path") == TEST_FILE),
-        {},
-    )
+    impacted_raw = (reg.get("impact") or {}).get("impacted") or []
+    impacted = next((imp for imp in impacted_raw if imp.get("path") == TEST_FILE), {})
     recs = recommendation.get("recommendations") or []
     top = recs[0] if recs else {}
     stats = top.get("stats") or {}
@@ -134,7 +132,10 @@ def run_analyze(
     checks.add(
         "policy.echo",
         {"min_sample": 3, "recent_window": 5, "flaky_threshold": 0.25, "failing_threshold": 0.5},
-        {k: recommendation.get(k) for k in ("min_sample", "recent_window", "flaky_threshold", "failing_threshold")},
+        {
+            k: recommendation.get(k)
+            for k in ("min_sample", "recent_window", "flaky_threshold", "failing_threshold")
+        },
         recommendation.get("min_sample") == 3 and recommendation.get("recent_window") == 5
         and recommendation.get("flaky_threshold") == 0.25
         and recommendation.get("failing_threshold") == 0.5,
@@ -154,13 +155,19 @@ def run_analyze(
     res = client.get(f"/jobs/{job_id}", headers=headers)
     res.raise_for_status()
     job_row = res.json()
-    checks.add("job_row.status", "completed", job_row.get("status"), job_row.get("status") == "completed")
+    checks.add(
+        "job_row.status", "completed", job_row.get("status"), job_row.get("status") == "completed"
+    )
     expected_ref = f"regression://{project_id}"
     checks.add("job_row.output_ref", expected_ref, job_row.get("output_ref"),
                job_row.get("output_ref") == expected_ref)
 
     return {
-        "request": {"method": "POST", "path": f"/projects/{project_id}/regression/analyze", "body": body},
+        "request": {
+            "method": "POST",
+            "path": f"/projects/{project_id}/regression/analyze",
+            "body": body,
+        },
         "http": {"status": 202, "headers": {"location": location}},
         "job_id": job_id,
         "job_row": job_row,
@@ -230,7 +237,9 @@ def run_regression(
     checks.add("run.run_result_events", 1, len(result_events), len(result_events) == 1)
     result = result_events[0] if result_events else {}
     totals = result.get("totals") or {}
-    checks.add("run.result.status", "completed", result.get("status"), result.get("status") == "completed")
+    checks.add(
+        "run.result.status", "completed", result.get("status"), result.get("status") == "completed"
+    )
     checks.add("totals.total", 1, totals.get("total"), totals.get("total") == 1)
     checks.add("totals.passed", 1, totals.get("passed"), totals.get("passed") == 1)
     checks.add("totals.failed", 0, totals.get("failed"), totals.get("failed") == 0)
@@ -242,14 +251,21 @@ def run_regression(
     res = client.get(f"/jobs/{job_id}", headers=headers)
     res.raise_for_status()
     job_row = res.json()
-    checks.add("run.job_row.status", "completed", job_row.get("status"), job_row.get("status") == "completed")
+    checks.add(
+        "run.job_row.status",
+        "completed",
+        job_row.get("status"),
+        job_row.get("status") == "completed",
+    )
     checks.add("run.job_row.output_ref", run_id, job_row.get("output_ref"),
                job_row.get("output_ref") == run_id)
 
     res = client.get(f"/runs/{run_id}", headers=headers)
     res.raise_for_status()
     detail = res.json()
-    checks.add("run_detail.status", "completed", detail.get("status"), detail.get("status") == "completed")
+    checks.add(
+        "run_detail.status", "completed", detail.get("status"), detail.get("status") == "completed"
+    )
     checks.add("run_detail.totals", {"total": 1, "passed": 1, "failed": 0}, detail.get("totals"),
                (detail.get("totals") or {}).get("total") == 1
                and (detail.get("totals") or {}).get("passed") == 1
@@ -318,7 +334,10 @@ def db_history_snapshot(checks: Check, run_id: str) -> dict[str, object]:
         live_status = live.status if live is None else live.status
         checks.add(
             "db.live_run.status", "completed",
-            live_status.value if live is not None and hasattr(live_status, "value") else live_status,
+            (
+                live_status.value if live is not None and hasattr(live_status, "value")
+                else live_status
+            ),
             live is not None and str(live_status) == "completed",
         )
     return {
@@ -374,7 +393,7 @@ def write_report(
     passed = not checks.failed
     report = {
         "schema_version": "s6.5-live-evidence/v1",
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "project_id": project_id,
         "environment": {
             "api": "http://127.0.0.1:8000/api/v1",
@@ -405,7 +424,9 @@ def write_report(
         },
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    REPORT_PATH.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     print(f"\nreport written: {REPORT_PATH}")
     return report
 
@@ -462,7 +483,7 @@ def main() -> int:
     print("\n--- S6.5 fail→pass DB evidence ---")
     db_evidence = db_history_snapshot(checks, str(run["run_result"].get("run_id") or ""))
 
-    report = write_report(project_id, checks, analyze, run, precondition, db_evidence)
+    write_report(project_id, checks, analyze, run, precondition, db_evidence)
 
     print(f"\nassertions: {len(checks.items)} total, {len(checks.failed)} failed")
     if checks.failed:

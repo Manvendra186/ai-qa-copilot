@@ -34,12 +34,22 @@ S3.2: run history, results, artifacts (§10, §15):
 - ``GET /api/v1/runs/{id}/results``  — the run's test outcomes (``viewer``+)
 - ``GET /api/v1/runs/{id}/artifacts`` — the run's artifact rows (``viewer``+)
 - ``GET /api/v1/runs/{id}/artifacts/{artifact_id}/content`` — file bytes (``viewer``+)
+
+S7.1: external integrations config (§19 S7.1, §17):
+
+- ``GET    /api/v1/projects/{id}/integrations``           — configs (``member``+)
+- ``PUT    /api/v1/projects/{id}/integrations/{provider}`` — upsert (``owner``+)
+- ``DELETE /api/v1/projects/{id}/integrations/{provider}`` — remove (``owner``+)
+
+Token values never appear in these payloads (§17): the PUT body takes
+``token_ref`` (the secret's name) and reads return ``token_configured``.
 """
 
 from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import uuid
 from pathlib import Path
 
@@ -55,6 +65,7 @@ from qa_copilot_execution import ArtifactStore, ArtifactStoreError
 from qa_copilot_knowledge import SearchHit
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import generated_tests as repo_generated_tests
+from qa_copilot_repository import integrations as repo_integrations
 from qa_copilot_repository import membership, models
 from qa_copilot_repository import requirements as repo_requirements
 from qa_copilot_repository import runs as repo_runs
@@ -73,6 +84,7 @@ events_router = APIRouter(prefix="/api/v1/events", tags=["events"])
 automation_router = APIRouter(prefix="/api/v1/automation", tags=["automation"])
 generated_tests_router = APIRouter(prefix="/api/v1/generated-tests", tags=["generated-tests"])
 runs_router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
+integrations_router = APIRouter(prefix="/api/v1/projects", tags=["integrations"])
 
 
 def _user_out(user: models.User) -> schemas.UserOut:
@@ -1262,3 +1274,91 @@ def get_artifact_content(
         raise HTTPException(status_code=404, detail="artifact not found in store")
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+# --- integrations (S7.1, §19 S7.1) ----------------------------------------------
+
+#: Provider slug: lowercase alphanumerics + ``_``/``-``. Kept open (V1:
+#: ``github``; S7.4 adds ``jira``) so the table needs no per-provider migration.
+_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def _validate_provider(provider: str) -> str:
+    if not _PROVIDER_RE.fullmatch(provider):
+        raise HTTPException(
+            status_code=422,
+            detail="provider must be 1-32 chars of [a-z0-9_-] starting with an alphanumeric",
+        )
+    return provider
+
+
+def _integration_out(config: models.IntegrationConfig) -> schemas.IntegrationConfigOut:
+    # §17: the token value is never in the payload — only whether a ref is set.
+    return schemas.IntegrationConfigOut(
+        project_id=config.project_id,
+        provider=config.provider,
+        base_url=config.base_url,
+        token_ref=config.token_ref,
+        token_configured=bool(config.token_ref),
+        enabled=config.enabled,
+        created_at=config.created_at,
+        updated_at=config.updated_at,
+    )
+
+
+@integrations_router.get(
+    "/{project_id}/integrations", response_model=list[schemas.IntegrationConfigOut]
+)
+def list_integrations(
+    ctx: tuple[models.User, str] = Depends(auth.require_role(ProjectRole.MEMBER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.IntegrationConfigOut]:
+    """S7.1: the project's integration configs — ``member`` or above (§19 S7.1).
+
+    401 unauthenticated, 403 for non-members / viewers (no existence leak).
+    """
+    _, project_id = ctx
+    return [_integration_out(c) for c in repo_integrations.list_integrations(db, project_id)]
+
+
+@integrations_router.put(
+    "/{project_id}/integrations/{provider}", response_model=schemas.IntegrationConfigOut
+)
+def upsert_integration(
+    provider: str,
+    body: schemas.IntegrationConfigIn,
+    ctx: tuple[models.User, str] = Depends(auth.require_role(ProjectRole.OWNER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.IntegrationConfigOut:
+    """S7.1: create-or-update the project's config for *provider* — ``owner``+.
+
+    Idempotent PUT: one row per (project, provider) (unique constraint).
+    Stores ``token_ref`` (the secret's name) — never a token value (§17).
+    """
+    provider = _validate_provider(provider)
+    _, project_id = ctx
+    config = repo_integrations.upsert_integration(
+        db,
+        project_id,
+        provider,
+        base_url=body.base_url,
+        token_ref=body.token_ref,
+        enabled=body.enabled,
+    )
+    db.commit()
+    db.refresh(config)
+    return _integration_out(config)
+
+
+@integrations_router.delete("/{project_id}/integrations/{provider}", status_code=204)
+def delete_integration(
+    provider: str,
+    ctx: tuple[models.User, str] = Depends(auth.require_role(ProjectRole.OWNER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> None:
+    """S7.1: remove the project's config for *provider* — ``owner`` or above."""
+    provider = _validate_provider(provider)
+    _, project_id = ctx
+    if not repo_integrations.delete_integration(db, project_id, provider):
+        raise HTTPException(status_code=404, detail="no integration config for this project")
+    db.commit()
