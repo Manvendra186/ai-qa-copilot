@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useJobEvents } from '../hooks/useJobEvents';
 import {
+  postRegressionPrComment,
   runRegressionAnalysis,
   runRegressionSet,
+  type PullRequestRef,
   type RegressionAnalysisRequest,
+  type RegressionPrCommentResult,
   type RegressionSet,
   type RunResult,
 } from '../lib/api';
@@ -38,6 +41,8 @@ interface Props {
   projectId: string;
 }
 
+type SourceKind = 'files' | 'refs' | 'pr';
+
 /**
  * "Regression analysis" — the S6.4 regression engine (build bible §7, §19 Phase 6).
  *
@@ -60,11 +65,17 @@ export function RegressionAnalysis({ projectId }: Props) {
   // event channel, so the regression set must survive starting that run.
   const [regression, setRegression] = useState<RegressionSet | null>(null);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [commentResult, setCommentResult] = useState<RegressionPrCommentResult | null>(null);
+  const [pendingAction, setPendingAction] = useState<'analyze' | 'run' | 'comment' | null>(null);
 
+  const [source, setSource] = useState<SourceKind>('files');
   const [repositoryPath, setRepositoryPath] = useState('');
   const [filesText, setFilesText] = useState('');
   const [baseRef, setBaseRef] = useState('');
   const [headRef, setHeadRef] = useState('');
+  const [prOwner, setPrOwner] = useState('');
+  const [prRepo, setPrRepo] = useState('');
+  const [prNumber, setPrNumber] = useState('');
   const [topN, setTopN] = useState(10);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -76,10 +87,33 @@ export function RegressionAnalysis({ projectId }: Props) {
     if (job.lastRunResult) setRunResult(job.lastRunResult as unknown as RunResult);
   }, [job.lastRunResult]);
 
+  useEffect(() => {
+    if (job.lastRegressionComment) {
+      setCommentResult(job.lastRegressionComment as unknown as RegressionPrCommentResult);
+    }
+  }, [job.lastRegressionComment]);
+
+  useEffect(() => {
+    if (job.jobId !== null && job.outcome !== 'running') setPendingAction(null);
+  }, [job.jobId, job.outcome]);
+
   const files = parseList(filesText);
   const hasRefs = baseRef.trim() !== '' && headRef.trim() !== '';
-  const hasChangeSource = hasRefs || files.length > 0;
+  const prNumberValue = Number(prNumber);
+  const prRefValid =
+    prOwner.trim() !== '' &&
+    prRepo.trim() !== '' &&
+    Number.isInteger(prNumberValue) &&
+    prNumberValue > 0;
+  const prRef: PullRequestRef | null = prRefValid
+    ? { owner: prOwner.trim(), repo: prRepo.trim(), number: prNumberValue }
+    : null;
+  const hasChangeSource =
+    (source === 'files' && files.length > 0) ||
+    (source === 'refs' && hasRefs) ||
+    (source === 'pr' && prRef !== null);
   const canAnalyze = repositoryPath.trim() !== '' && hasChangeSource && !running;
+  const canPostToPr = repositoryPath.trim() !== '' && prRef !== null && !running;
 
   const recommendedTests =
     regression?.recommendation.recommendations.map((r) => r.test_key) ?? [];
@@ -90,15 +124,18 @@ export function RegressionAnalysis({ projectId }: Props) {
       repository_path: repositoryPath.trim(),
       top_n: topN,
     };
-    if (hasRefs) {
+    if (source === 'refs') {
       body.base_ref = baseRef.trim();
       body.head_ref = headRef.trim();
+    } else if (source === 'pr' && prRef !== null) {
+      body.pull_request = prRef;
     } else {
       body.files = files;
     }
     try {
       const { job_id } = await runRegressionAnalysis(projectId, body);
       setRunResult(null);
+      setPendingAction('analyze');
       job.start(job_id);
     } catch (err) {
       setSubmitError(messageOf(err));
@@ -117,6 +154,28 @@ export function RegressionAnalysis({ projectId }: Props) {
         tests: recommendedTests,
       });
       setRunResult(null);
+      setPendingAction('run');
+      job.start(job_id);
+    } catch (err) {
+      setSubmitError(messageOf(err));
+    }
+  };
+
+  /** S7.2 — post the ranked set to the PR (idempotent marker comment, §19 S7.2). */
+  const onPostToPr = async () => {
+    setSubmitError(null);
+    if (prRef === null) {
+      setSubmitError('Provide a pull request (owner / repo / number) to post to.');
+      return;
+    }
+    try {
+      const { job_id } = await postRegressionPrComment(projectId, {
+        pull_request: prRef,
+        repository_path: repositoryPath.trim(),
+        top_n: topN,
+      });
+      setCommentResult(null);
+      setPendingAction('comment');
       job.start(job_id);
     } catch (err) {
       setSubmitError(messageOf(err));
@@ -144,22 +203,50 @@ export function RegressionAnalysis({ projectId }: Props) {
               className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-sm text-slate-200"
             />
           </label>
+          <div>
+            <span className="text-xs text-slate-400">Change source</span>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {(
+                [
+                  ['files', 'Changed files'],
+                  ['refs', 'Base/head refs'],
+                  ['pr', 'Pull request'],
+                ] as const
+              ).map(([kind, label]) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setSource(kind)}
+                  disabled={running}
+                  className={
+                    source === kind
+                      ? 'rounded-lg border border-indigo-600 bg-indigo-500/15 px-3 py-1 text-xs font-medium text-indigo-200'
+                      : 'rounded-lg border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-400 transition hover:border-slate-500 hover:text-slate-200'
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs text-slate-400">
-              Changed files (repo-relative, one per line or comma-separated)
-              <textarea
-                rows={3}
-                placeholder={'src/app/login.ts\nsrc/app/session.ts'}
-                value={filesText}
-                disabled={running}
-                onChange={(e) => setFilesText(e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-200"
-              />
-            </label>
-            <div className="flex flex-col gap-3">
+            {source === 'files' && (
+              <label className="flex flex-col gap-1 text-xs text-slate-400">
+                Changed files (repo-relative, one per line or comma-separated)
+                <textarea
+                  rows={3}
+                  placeholder={'src/app/login.ts\nsrc/app/session.ts'}
+                  value={filesText}
+                  disabled={running}
+                  onChange={(e) => setFilesText(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-200"
+                />
+              </label>
+            )}
+            {source === 'refs' && (
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1 text-xs text-slate-400">
-                  Base ref (optional)
+                  Base ref
                   <input
                     type="text"
                     placeholder="main"
@@ -170,7 +257,7 @@ export function RegressionAnalysis({ projectId }: Props) {
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-slate-400">
-                  Head ref (optional)
+                  Head ref
                   <input
                     type="text"
                     placeholder="feature/login"
@@ -181,25 +268,65 @@ export function RegressionAnalysis({ projectId }: Props) {
                   />
                 </label>
               </div>
-              <label className="flex flex-col gap-1 text-xs text-slate-400">
-                Top-N recommendations
-                <input
-                  type="number"
-                  min={1}
-                  max={500}
-                  value={topN}
-                  disabled={running}
-                  onChange={(e) =>
-                    setTopN(Math.max(1, Math.min(500, Number(e.target.value) || 1)))
-                  }
-                  className="w-28 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-200"
-                />
-              </label>
-            </div>
+            )}
+            {source === 'pr' && (
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1 text-xs text-slate-400">
+                  PR owner
+                  <input
+                    type="text"
+                    placeholder="manve"
+                    value={prOwner}
+                    disabled={running}
+                    onChange={(e) => setPrOwner(e.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-sm text-slate-200"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-400">
+                  PR repo
+                  <input
+                    type="text"
+                    placeholder="ai-qa-copilot"
+                    value={prRepo}
+                    disabled={running}
+                    onChange={(e) => setPrRepo(e.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-sm text-slate-200"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-400">
+                  PR number
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="142"
+                    value={prNumber}
+                    disabled={running}
+                    onChange={(e) => setPrNumber(e.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-sm text-slate-200"
+                  />
+                </label>
+              </div>
+            )}
+            <label className="flex flex-col gap-1 text-xs text-slate-400">
+              Top-N recommendations
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={topN}
+                disabled={running}
+                onChange={(e) => setTopN(Math.max(1, Math.min(500, Number(e.target.value) || 1)))}
+                className="w-28 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-200"
+              />
+            </label>
           </div>
           {!hasChangeSource && (
             <p className="text-xs text-amber-400/80">
-              Provide changed files or a base/head ref pair to analyze.
+              {source === 'pr'
+                ? 'Provide the pull request owner, repo and number to analyze.'
+                : source === 'refs'
+                  ? 'Provide both a base ref and a head ref to analyze.'
+                  : 'List at least one changed file to analyze.'}
             </p>
           )}
           <div className="flex flex-wrap gap-3 pt-1">
@@ -219,6 +346,14 @@ export function RegressionAnalysis({ projectId }: Props) {
             >
               Run this set{recommendedTests.length > 0 ? ` (${recommendedTests.length})` : ''}
             </button>
+            <button
+              type="button"
+              onClick={onPostToPr}
+              disabled={!canPostToPr}
+              className="rounded-lg border border-sky-700 bg-sky-500/10 px-4 py-1.5 text-sm font-medium text-sky-300 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Post to PR
+            </button>
           </div>
         </div>
       </section>
@@ -233,7 +368,11 @@ export function RegressionAnalysis({ projectId }: Props) {
       {running && (
         <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
           <p className="text-sm text-slate-300">
-            {regression === null ? 'Analyzing change impact…' : 'Running the selected tests…'}
+            {pendingAction === 'comment'
+              ? 'Posting the regression comment to the PR…'
+              : pendingAction === 'run'
+                ? 'Running the selected tests…'
+                : 'Analyzing change impact…'}
           </p>
         </section>
       )}
@@ -247,6 +386,9 @@ export function RegressionAnalysis({ projectId }: Props) {
 
       {/* "Run this set" result (S3 execution path) */}
       {runResult && <RunResultView result={runResult} />}
+
+      {/* S7.2 — PR comment upsert result (`regression.comment` payload) */}
+      {commentResult && <PrCommentResultView result={commentResult} />}
 
       {/* Regression set */}
       {regression && <RegressionResultView result={regression} />}
@@ -292,6 +434,46 @@ function RunResultView({ result }: { result: RunResult }) {
 
 
 /** The `regression.set` payload (S6.1 impact · S6.2 ranking · S6.3 set · S6.5 advice). */
+/** S7.2 — the `regression.comment` payload (idempotent PR comment upsert). */
+function PrCommentResultView({ result }: { result: RegressionPrCommentResult }) {
+  const badge =
+    result.action === 'unchanged'
+      ? 'border-slate-700 bg-slate-500/15 text-slate-300'
+      : 'border-sky-700 bg-sky-500/15 text-sky-300';
+  return (
+    <section className="rounded-xl border border-sky-800/60 bg-sky-950/20 p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold text-sky-200">PR regression comment</h3>
+        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge}`}>
+          {result.action}
+        </span>
+        <span className="ml-auto font-mono text-[11px] text-slate-500">
+          {result.owner}/{result.repo} · PR #{result.number}
+        </span>
+      </div>
+      {result.html_url ? (
+        <p className="mt-2 text-xs text-slate-400">
+          Comment{' '}
+          <a
+            href={result.html_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-sky-300 underline decoration-sky-500/50 underline-offset-2 hover:text-sky-200"
+          >
+            {result.html_url}
+          </a>
+          {result.comment_id !== null ? ` (id ${result.comment_id})` : ''} — idempotent:
+          re-posting updates the same marker comment, never duplicates it.
+        </p>
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">
+          Idempotent upsert complete — the marker comment was already current.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function RegressionResultView({ result }: { result: RegressionSet }) {
   const { recommendation, impact, ranking, advice } = result;
   const recs = recommendation.recommendations;

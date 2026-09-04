@@ -13,6 +13,7 @@ from .client import (
     GitHubError,
     GitHubHTTPError,
     GitHubNotFoundError,
+    IssueComment,
     PullRequestInfo,
     RepositoryInfo,
     redact_secrets,
@@ -24,9 +25,17 @@ from .golden import (
     default_golden_path,
     load_github_golden_set,
 )
+from .pr_comment import (
+    MARKER,
+    CommentUpsert,
+    build_comment_body,
+    has_marker,
+    upsert_regression_comment,
+)
 from .runner import GitHubCaseResult, GitHubReport, run_github_eval
 
 __all__ = [
+    "CommentUpsert",
     "GitHubAuthError",
     "GitHubCaseResult",
     "GitHubClient",
@@ -37,10 +46,15 @@ __all__ = [
     "GitHubHTTPError",
     "GitHubNotFoundError",
     "GitHubReport",
+    "IssueComment",
+    "MARKER",
     "PullRequestInfo",
     "RepositoryInfo",
+    "build_comment_body",
     "default_golden_path",
+    "has_marker",
     "load_github_golden_set",
     "redact_secrets",
     "run_github_eval",
+    "upsert_regression_comment",
 ]

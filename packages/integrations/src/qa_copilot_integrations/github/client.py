@@ -157,6 +157,44 @@ class PullRequestInfo:
     changed_files: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class IssueComment:
+    """A GitHub issue/PR comment (comments on a PR use the issues API).
+
+    ``id`` is the comment id used to update an existing comment; ``body``
+    is the raw Markdown — S7.2's idempotency marker (``pr_comment.MARKER``)
+    lives in the first line of the bodies this client creates.
+    """
+
+    id: int
+    user: str
+    body: str
+    html_url: str
+    created_at: str | None
+    updated_at: str | None
+
+
+def _comment_from_item(item: object) -> IssueComment:
+    """Map one ``/issues/{n}/comments`` entry onto :class:`IssueComment`."""
+    if not isinstance(item, dict):
+        raise GitHubError("GitHub API comments response contained a non-object entry")
+    raw_id = item.get("id")
+    if isinstance(raw_id, bool) or not isinstance(raw_id, int):
+        raise GitHubError("GitHub API comment response is missing a valid id")
+    user = item.get("user")
+    body = item.get("body")
+    created_at = item.get("created_at")
+    updated_at = item.get("updated_at")
+    return IssueComment(
+        id=raw_id,
+        user=user.get("login", "") if isinstance(user, dict) else "",
+        body=body if isinstance(body, str) else "",
+        html_url=_require_str(item, "html_url"),
+        created_at=created_at if isinstance(created_at, str) else None,
+        updated_at=updated_at if isinstance(updated_at, str) else None,
+    )
+
+
 class GitHubClient:
     """Thin async client for the GitHub REST v3 API (V1: PAT auth only).
 
@@ -258,6 +296,20 @@ class GitHubClient:
             raise GitHubError(f"GitHub API list {url} exceeded {MAX_PAGES} pages (1000 items)")
         return items
 
+    async def _send_json(
+        self, method: str, url: str, *, payload: dict[str, Any]
+    ) -> object:
+        """POST/PATCH a JSON body; non-2xx raises a redacted error (§17)."""
+        try:
+            response = await self._client.request(method, url, json=payload)
+        except httpx.HTTPError as exc:
+            raise GitHubError(f"GitHub API unreachable: {type(exc).__name__}") from exc
+        self._raise_for_status(response)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise GitHubError(f"GitHub API returned a non-JSON body for {url}") from exc
+
     # -- S7.1 API -------------------------------------------------------------------
 
     async def resolve_repository(self, owner: str, repo: str) -> RepositoryInfo:
@@ -323,6 +375,63 @@ class GitHubClient:
             changed_files=tuple(sorted(changed)),
         )
 
+    # -- S7.2: PR comments (idempotent regression comment) ----------------------
+
+    async def fetch_issue_comments(
+        self, owner: str, repo: str, number: int
+    ) -> tuple[IssueComment, ...]:
+        """``GET /repos/{owner}/{repo}/issues/{number}/comments`` (paged).
+
+        PR numbers work through the issues API. Comments come back in
+        oldest-first order (GitHub's default), so the *first* one carrying
+        the S7.2 marker is the one :mod:`pr_comment` updates on re-post.
+        """
+        _validate_ref(owner, "owner")
+        _validate_ref(repo, "repo")
+        if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+            raise ValueError("issue/PR number must be a positive integer")
+        items = await self._get_paged(
+            f"/repos/{owner}/{repo}/issues/{number}/comments",
+            params={"per_page": _PAGE_SIZE},
+        )
+        return tuple(_comment_from_item(item) for item in items)
+
+    async def create_issue_comment(
+        self, owner: str, repo: str, number: int, body: str
+    ) -> IssueComment:
+        """``POST /repos/{owner}/{repo}/issues/{number}/comments`` (S7.2)."""
+        _validate_ref(owner, "owner")
+        _validate_ref(repo, "repo")
+        if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+            raise ValueError("issue/PR number must be a positive integer")
+        if not isinstance(body, str) or not body.strip():
+            raise ValueError("comment body must be a non-empty string")
+        payload = await self._send_json(
+            "POST",
+            f"/repos/{owner}/{repo}/issues/{number}/comments",
+            payload={"body": body},
+        )
+        return _comment_from_item(payload)
+
+    async def update_issue_comment(
+        self, owner: str, repo: str, number: int, comment_id: int, body: str
+    ) -> IssueComment:
+        """``PATCH /repos/{owner}/{repo}/issues/{number}/comments/{id}`` (S7.2)."""
+        _validate_ref(owner, "owner")
+        _validate_ref(repo, "repo")
+        if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+            raise ValueError("issue/PR number must be a positive integer")
+        if isinstance(comment_id, bool) or not isinstance(comment_id, int) or comment_id < 1:
+            raise ValueError("comment_id must be a positive integer")
+        if not isinstance(body, str) or not body.strip():
+            raise ValueError("comment body must be a non-empty string")
+        payload = await self._send_json(
+            "PATCH",
+            f"/repos/{owner}/{repo}/issues/{number}/comments/{comment_id}",
+            payload={"body": body},
+        )
+        return _comment_from_item(payload)
+
 
 __all__ = [
     "API_VERSION",
@@ -332,6 +441,7 @@ __all__ = [
     "GitHubError",
     "GitHubHTTPError",
     "GitHubNotFoundError",
+    "IssueComment",
     "MAX_PAGES",
     "PullRequestInfo",
     "REDACTED",

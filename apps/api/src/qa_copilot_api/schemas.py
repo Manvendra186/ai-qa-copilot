@@ -387,14 +387,34 @@ class KnowledgeAskRequest(BaseModel):
 # --- S6.4: regression / impact / history / advice (§19 S6.4) -----------------
 
 
+class PullRequestRef(BaseModel):
+    """S7.2: a GitHub pull request by owner/repo/number (§19 S7.2).
+
+    The PR is resolved through the project's S7.1 GitHub integration
+    (``fetch_pull_request``): its changed files become the S6.1 ``files[]``
+    input. GitHub name rules: ``[A-Za-z0-9_.-]+``.
+    """
+
+    owner: str = Field(
+        min_length=1, max_length=391, pattern=r"^[A-Za-z0-9_.-]+$", description="GitHub owner."
+    )
+    repo: str = Field(
+        min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_.-]+$", description="Repository name."
+    )
+    number: int = Field(ge=1, description="Pull request number.")
+
+
 class RegressionAnalysisRequest(BaseModel):
     """S6.4: body for ``POST /projects/{id}/regression/analyze`` (§19 S6.4).
 
-    The change to analyze is given one of two ways (exactly one):
+    The change to analyze is given one of three ways (exactly one):
 
     * ``files`` — repo-relative changed paths (the diff); or
     * ``base_ref`` + ``head_ref`` — a git range resolved server-side
-      (:func:`qa_copilot_repository.changed_files_from_range`).
+      (:func:`qa_copilot_repository.changed_files_from_range`); or
+    * ``pull_request`` (S7.2) — ``{owner, repo, number}``, resolved through
+      the project's S7.1 GitHub integration; the PR's changed files become
+      the S6.1 input.
 
     The deterministic S6.1 change-impact set (computed from ``repository_path``)
     is joined with the project's S6.2 test history and ranked (S6.3); the
@@ -407,9 +427,9 @@ class RegressionAnalysisRequest(BaseModel):
         min_length=1,
         description="Server-local path to the repository checkout (for S6.1 impact).",
     )
-    files: list[str] = Field(
-        default_factory=list,
-        description="Repo-relative changed files; mutually exclusive with base_ref/head_ref.",
+    files: list[str] | None = Field(
+        default=None,
+        description="Repo-relative changed files; mutually exclusive with the other sources.",
     )
     base_ref: str | None = Field(
         default=None, description="Git base ref (with head_ref); mutually exclusive with files."
@@ -417,18 +437,62 @@ class RegressionAnalysisRequest(BaseModel):
     head_ref: str | None = Field(
         default=None, description="Git head ref (with base_ref); mutually exclusive with files."
     )
+    pull_request: PullRequestRef | None = Field(
+        default=None,
+        description="S7.2: GitHub PR {owner, repo, number} to analyze; mutually exclusive.",
+    )
     top_n: int = Field(default=10, ge=1, le=500, description="Top-N recommendation size.")
 
     @model_validator(mode="after")
     def _check_change_source(self) -> "RegressionAnalysisRequest":
-        """Exactly one change source: ``files`` *or* the ``base_ref``/``head_ref`` pair."""
-        has_files = bool(self.files)
-        has_range = self.base_ref is not None and self.head_ref is not None
-        if has_files and has_range:
-            raise ValueError("provide either `files` or a `base_ref`/`head_ref` pair, not both")
-        if not has_files and not has_range:
-            raise ValueError("provide either `files` or both `base_ref` and `head_ref`")
+        """Exactly one change source: ``files`` / ``base_ref``+``head_ref`` / ``pull_request``."""
+        has_files = self.files is not None
+        has_range = self.base_ref is not None or self.head_ref is not None
+        has_pr = self.pull_request is not None
+        if sum((has_files, has_range, has_pr)) != 1:
+            raise ValueError(
+                "provide exactly one of `files`, a `base_ref`/`head_ref` pair, or `pull_request`"
+            )
+        if self.base_ref is not None and self.head_ref is None:
+            raise ValueError("`base_ref` and `head_ref` must be provided together")
+        if self.head_ref is not None and self.base_ref is None:
+            raise ValueError("`base_ref` and `head_ref` must be provided together")
+        if self.files is not None and len(self.files) == 0:
+            raise ValueError("`files` must be a non-empty list of repo-relative paths")
         return self
+
+
+class RegressionPrCommentRequest(BaseModel):
+    """S7.2: body for ``POST /projects/{id}/regression/pr-comment`` (§19 S7.2).
+
+    Resolves ``pull_request`` through the project's S7.1 GitHub integration,
+    computes the deterministic S6.1/S6.2/S6.3 regression set from
+    ``repository_path`` (owner+ only — it writes to the PR), and posts it as
+    an idempotent comment on the PR: first post creates, re-posts update the
+    existing marker comment instead of duplicating. Delivered asynchronously
+    (202 + ``job_id``, §11); the ``regression.comment`` SSE event carries
+    ``action`` / ``comment_id`` / ``html_url``.
+    """
+
+    repository_path: str = Field(
+        min_length=1,
+        description="Server-local path to the repository checkout (for S6.1 impact).",
+    )
+    pull_request: PullRequestRef = Field(
+        description="The GitHub PR {owner, repo, number} to comment on."
+    )
+    top_n: int = Field(default=10, ge=1, le=500, description="Top-N recommendation size.")
+
+
+class RegressionPrCommentResult(BaseModel):
+    """S7.2: the ``regression.comment`` SSE payload (idempotent upsert result)."""
+
+    action: str = Field(description="`created`, `updated`, or `unchanged`.")
+    comment_id: int = Field(description="GitHub comment id.")
+    html_url: str = Field(description="Web URL of the comment on GitHub.")
+    owner: str
+    repo: str
+    number: int
 
 
 class RunRequest(BaseModel):

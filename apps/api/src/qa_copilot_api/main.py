@@ -221,6 +221,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs_regression_agent = _build_regression_jobs_agent(settings, app.state.engine)
     # S6.4: "Run this set" (run_execution) — reuses the S3 execution path.
     app.state.jobs_run_execution_agent = jobs.RunExecutionJobAgent(app.state.engine)
+    # S7.2: PR → regression set posted to the PR (regression_pr_comment) —
+    # owner-or-above; deterministic, LLM-free end to end.
+    app.state.jobs_regression_pr_comment_agent = jobs.RegressionPrCommentJobAgent(app.state.engine)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

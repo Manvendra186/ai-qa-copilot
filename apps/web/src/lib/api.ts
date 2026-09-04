@@ -505,14 +505,41 @@ export function askKnowledge(projectId: string, question: string): Promise<JobCr
 export interface RegressionAnalysisRequest {
   /** Server-local path to the repository checkout (for S6.1 impact). */
   repository_path: string;
-  /** Repo-relative changed files (the diff) — or a `base_ref`/`head_ref` pair. */
+  /** Exactly one source: changed files (the diff)… */
   files?: string[];
-  /** Git base ref (with `head_ref`); mutually exclusive with `files`. */
+  /** …or a git `base_ref`/`head_ref` pair (diff computed server-side)… */
   base_ref?: string;
-  /** Git head ref (with `base_ref`); mutually exclusive with `files`. */
   head_ref?: string;
+  /** …or a GitHub pull request (S7.2, resolved via the project's
+   * GitHub integration; requires `repository_path` for S6.1 impact). */
+  pull_request?: PullRequestRef;
   /** Top-N recommendation size (1..500, default 10). */
   top_n?: number;
+}
+
+/** A GitHub pull request reference (S7.2). */
+export interface PullRequestRef {
+  owner: string;
+  repo: string;
+  number: number;
+}
+
+/** S7.2 — request body for `POST /projects/{id}/regression/pr-comment`. */
+export interface RegressionPrCommentRequest {
+  pull_request: PullRequestRef;
+  /** Server-local repo checkout path (S6.1 impact). */
+  repository_path: string;
+  top_n?: number;
+}
+
+/** S7.2 — the `regression.comment` SSE payload (idempotent upsert outcome). */
+export interface RegressionPrCommentResult {
+  action: 'created' | 'updated' | 'unchanged';
+  comment_id: number | null;
+  html_url: string | null;
+  owner: string;
+  repo: string;
+  number: number;
 }
 
 export interface RunRequest {
@@ -660,6 +687,27 @@ export function runRegressionSet(
 ): Promise<JobCreated> {
   return request<JobCreated>(
     `/projects/${encodeURIComponent(projectId)}/runs`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}
+
+/**
+ * S7.2 — `POST /projects/{id}/regression/pr-comment` → 202 + `{job_id}`.
+ *
+ * The job resolves the PR through the project's S7.1 GitHub integration,
+ * computes the deterministic S6.1/S6.2/S6.3 set from `repository_path`, and
+ * upserts the idempotent marker comment (first post creates, re-posts update,
+ * identical re-posts are a no-op). The `regression.comment` SSE event carries
+ * the upsert outcome (`action` / `comment_id` / `html_url`). Requires an
+ * `owner`-role token (403 otherwise); 409 when the GitHub integration is
+ * missing.
+ */
+export function postRegressionPrComment(
+  projectId: string,
+  body: RegressionPrCommentRequest,
+): Promise<JobCreated> {
+  return request<JobCreated>(
+    `/projects/${encodeURIComponent(projectId)}/regression/pr-comment`,
     { method: 'POST', body: JSON.stringify(body) },
   );
 }

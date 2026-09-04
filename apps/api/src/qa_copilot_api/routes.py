@@ -41,6 +41,15 @@ S7.1: external integrations config (§19 S7.1, §17):
 - ``PUT    /api/v1/projects/{id}/integrations/{provider}`` — upsert (``owner``+)
 - ``DELETE /api/v1/projects/{id}/integrations/{provider}`` — remove (``owner``+)
 
+S7.2: PR → regression (§19 S7.2):
+
+- ``POST /api/v1/projects/{id}/regression/analyze`` now also accepts
+  ``pull_request: {owner, repo, number}`` (exactly one of
+  ``files`` / ``base_ref``+``head_ref`` / ``pull_request``; 409 when the
+  S7.1 GitHub integration is missing for a PR source)
+- ``POST /api/v1/projects/{id}/regression/pr-comment`` — idempotent PR
+  comment (``owner``+; 202 + job; ``regression.comment`` SSE event)
+
 Token values never appear in these payloads (§17): the PUT body takes
 ``token_ref`` (the secret's name) and reads return ``token_configured``.
 """
@@ -1053,6 +1062,16 @@ def analyze_project_regression(
         raise HTTPException(status_code=403, detail="no role for this project")
     _require_project_role(db, user, project.id, ProjectRole.MEMBER)
 
+    # S7.2: the ``pull_request`` source needs the S7.1 GitHub integration —
+    # fail fast (409) instead of queueing a job that would fail at runtime.
+    # The PAT is never part of the error (§17: "PAT never appears in logs or
+    # audit").
+    if body.pull_request is not None:
+        try:
+            jobs.github_integration_config(db, project.id)
+        except jobs.GitHubIntegrationNotConfiguredError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     job_input = body.model_dump()
     job = models.Job(
         project_id=project.id,
@@ -1065,6 +1084,58 @@ def analyze_project_regression(
     state = request.app.state
     if not state.jobs_runner.start(
         job.id, agent=state.jobs_regression_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@projects_router.post(
+    "/{project_id}/regression/pr-comment",
+    status_code=202,
+    response_model=schemas.JobCreated,
+)
+def post_regression_pr_comment(
+    body: schemas.RegressionPrCommentRequest,
+    request: Request,
+    response: Response,
+    ctx: tuple[models.User, str] = Depends(auth.require_role(ProjectRole.OWNER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """S7.2: post the ranked regression set to a GitHub PR — **202 + job_id**.
+
+    ``owner`` or above (it *writes* to the PR, §19 S7.2). The
+    ``regression_pr_comment`` job resolves ``pull_request`` through the
+    project's S7.1 GitHub integration, computes the deterministic S6.1/S6.2/
+    S6.3 set from ``repository_path``, and upserts the idempotent marker
+    comment (first post creates, re-posts update, identical re-posts are a
+    no-op). The ``regression.comment`` SSE event carries
+    ``action`` / ``comment_id`` / ``html_url``. 409 when the S7.1 GitHub
+    integration (or its secret) is missing — the PAT is never part of the
+    error (§17); unknown projects 403 (no existence leak, §31.3).
+    """
+    user, project_id = ctx
+    # Fail fast (409) when the S7.1 integration or its secret is missing,
+    # before a job could fail at runtime (§19 S7.2, §17).
+    try:
+        jobs.github_integration_config(db, project_id)
+    except jobs.GitHubIntegrationNotConfiguredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    job_input = body.model_dump()
+    job = models.Job(
+        project_id=project_id,
+        type=JobType.REGRESSION_PR_COMMENT,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_regression_pr_comment_agent, user_id=user.id, job_input=job_input
     ):
         # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
         raise HTTPException(status_code=409, detail="job is already running")

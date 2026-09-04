@@ -24,6 +24,8 @@ export interface JobState {
   lastAnswer: Record<string, unknown> | null;
   /** The `regression.set` payload (recommendation/impact/ranking/advice, S6.4). */
   lastRegressionSet: Record<string, unknown> | null;
+  /** The `regression.comment` payload (PR comment upsert outcome, S7.2). */
+  lastRegressionComment: Record<string, unknown> | null;
   /** The `run.result` payload (run_id/status/totals, S6.4 "Run this set"). */
   lastRunResult: Record<string, unknown> | null;
   stages: StageState[];
@@ -47,6 +49,7 @@ type Action =
   | { type: 'stage.completed'; stage: StageId }
   | { type: 'knowledge.answer'; payload: Record<string, unknown> }
   | { type: 'regression.set'; payload: Record<string, unknown> }
+  | { type: 'regression.comment'; payload: Record<string, unknown> }
   | { type: 'run.result'; payload: Record<string, unknown> }
   | { type: 'job.completed'; outputRef: string | null }
   | { type: 'job.failed'; error: string }
@@ -65,6 +68,7 @@ function initialState(): JobState {
     error: null,
     lastAnswer: null,
     lastRegressionSet: null,
+    lastRegressionComment: null,
     lastRunResult: null,
     stages: PIPELINE_STAGES.map((id) => ({ id, status: 'pending', progress: 0 })),
     log: [],
@@ -149,6 +153,12 @@ function reducer(state: JobState, action: Action): JobState {
         ...state,
         lastRegressionSet: action.payload,
         log: withLog(state, 'regression.set', 'regression set received'),
+      };
+    case 'regression.comment':
+      return {
+        ...state,
+        lastRegressionComment: action.payload,
+        log: withLog(state, 'regression.comment', 'PR comment posted'),
       };
     case 'run.result':
       return {
@@ -249,6 +259,9 @@ export function useJobEvents(): JobEvents {
               break;
             case 'regression.set':
               dispatch({ type: 'regression.set', payload: data });
+              break;
+            case 'regression.comment':
+              dispatch({ type: 'regression.comment', payload: data });
               break;
             case 'run.result':
               dispatch({ type: 'run.result', payload: data });

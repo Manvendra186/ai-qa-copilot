@@ -38,6 +38,7 @@ import concurrent.futures
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -76,6 +77,11 @@ from qa_copilot_domain import ImpactSet, Priority, RecommendationSet, RiskLevel,
 from qa_copilot_domain import TestCase as DomainTestCase
 from qa_copilot_domain.enums import JobStatus, JobType
 from qa_copilot_execution import PlaywrightConfig, run_playwright
+from qa_copilot_integrations.github import (
+    GitHubClient,
+    build_comment_body,
+    upsert_regression_comment,
+)
 from qa_copilot_repository import (
     TestRiskInput,
     build_risk_ranking,
@@ -92,6 +98,7 @@ from qa_copilot_repository import (
     db as repo_db,
 )
 from qa_copilot_repository import generated_tests as repo_generated_tests
+from qa_copilot_repository import integrations as repo_integrations
 from qa_copilot_repository import requirements as repo_requirements
 from qa_copilot_repository import runs as repo_runs
 from sqlalchemy import Engine, select, update
@@ -110,6 +117,7 @@ __all__ = [
     "AutomationStub",
     "Event",
     "EventBus",
+    "GitHubIntegrationNotConfiguredError",
     "JobAgent",
     "JobContext",
     "JobRunner",
@@ -119,6 +127,7 @@ __all__ = [
     "KnowledgeQARunner",
     "KnowledgeQARefusalStub",
     "RegressionJobAgent",
+    "RegressionPrCommentJobAgent",
     "RequirementJobAgent",
     "RunExecutionJobAgent",
     "StubAgent",
@@ -853,14 +862,19 @@ class RegressionJobAgent:
         changed_files = [str(p) for p in (ctx.input.get("files") or [])]
         base_ref = ctx.input.get("base_ref")
         head_ref = ctx.input.get("head_ref")
+        pull_request = ctx.input.get("pull_request")
         top_n = int(ctx.input.get("top_n") or 10)
 
         await ctx.emit("stage.started", {"stage": "regression"})
         await ctx.emit("progress", {"stage": "regression", "value": 0.1})
 
-        # Resolve the changed-file set: an explicit diff, or a BASE..HEAD range.
+        # Resolve the changed-file set: an explicit diff, a BASE..HEAD range, or
+        # (S7.2) a GitHub PR — its changed files via the project's S7.1 GitHub
+        # integration (``fetch_pull_request``).
         if not changed_files and base_ref and head_ref:
             changed_files = changed_files_from_range(repository_path, base_ref, head_ref)
+        if not changed_files and isinstance(pull_request, dict):
+            changed_files = await self._resolve_pull_request_files(project_id, pull_request)
 
         with repo_db.session_scope(self._engine) as session:
             # S6.1: deterministic change-impact set.
@@ -954,6 +968,25 @@ class RegressionJobAgent:
             )
         with repo_db.session_scope(self._engine) as session:
             session.add(action)
+
+    async def _resolve_pull_request_files(
+        self, project_id: str, pull_request: dict[str, Any]
+    ) -> list[str]:
+        """S7.2: the PR's changed files via the project's S7.1 GitHub integration.
+
+        ``fetch_pull_request`` returns a de-duplicated, sorted list of
+        repo-relative paths — exactly the S6.1 ``files[]`` input.
+        """
+        client = build_github_client(self._engine, project_id)
+        try:
+            info = await client.fetch_pull_request(
+                str(pull_request.get("owner") or ""),
+                str(pull_request.get("repo") or ""),
+                int(pull_request.get("number") or 0),
+            )
+            return list(info.changed_files)
+        finally:
+            await client.aclose()
 
     @staticmethod
     def _ranking_for_impact(session: Session, project_id: str, impact: ImpactSet) -> RiskRanking:
@@ -1085,6 +1118,146 @@ class RunExecutionJobAgent:
         if len(tests) == 1:
             return tests[0]
         return "|".join(tests)
+
+
+class GitHubIntegrationNotConfiguredError(Exception):
+    """S7.2: the project has no usable S7.1 GitHub integration config (§19 S7.2).
+
+    The message is safe to surface (409 detail), log, and audit — it names
+    the *reference* at most, never the PAT (§17: "PAT never appears in logs
+    or audit").
+    """
+
+
+def github_integration_config(session: Session, project_id: str) -> tuple[str | None, str]:
+    """``(base_url, token)`` from the project's S7.1 ``integration_configs`` row.
+
+    The S7.1 row stores ``base_url`` + ``token_ref`` (the secret's *name* —
+    never the value, §17). The PAT is resolved from the process environment
+    (``token_ref`` is an env-var name); a missing row, disabled row, missing
+    ``token_ref`` or unset secret all raise
+    :class:`GitHubIntegrationNotConfiguredError` (→ 409 at the route).
+    """
+    config = repo_integrations.get_integration(session, project_id, "github")
+    if config is None or not config.enabled:
+        raise GitHubIntegrationNotConfiguredError(
+            "project has no GitHub integration configured"
+        )
+    base_url = (config.base_url or "").strip()
+    token_ref = (config.token_ref or "").strip()
+    if not token_ref:
+        raise GitHubIntegrationNotConfiguredError(
+            "project's GitHub integration has no token_ref configured"
+        )
+    token = os.environ.get(token_ref, "").strip()
+    if not token:
+        raise GitHubIntegrationNotConfiguredError(
+            f"secret '{token_ref}' is not set in the environment"
+        )
+    return (base_url or None), token
+
+
+def build_github_client(engine: Engine, project_id: str) -> GitHubClient:
+    """A :class:`GitHubClient` for *project_id* (S7.1 config + env-resolved PAT).
+
+    The caller owns the client's lifetime (``await client.aclose()``).
+    """
+    with repo_db.session_scope(engine) as session:
+        base_url, token = github_integration_config(session, project_id)
+    if base_url:
+        return GitHubClient(base_url=base_url, token=token)
+    return GitHubClient(token=token)
+
+
+class RegressionPrCommentJobAgent:
+    """S7.2: regression analysis from a GitHub PR + idempotent PR comment (§19 S7.2).
+
+    Deterministic, LLM-free end to end:
+
+    1. resolve ``pull_request`` via the project's S7.1 GitHub integration —
+       its changed files become the S6.1 ``files[]`` input;
+    2. compute the S6.1 impact set, S6.2 ranking and S6.3 top-N recommendation
+       (the same deterministic cores as :class:`RegressionJobAgent`);
+    3. render the deterministic comment body (:func:`build_comment_body` —
+       no timestamps, no environment-dependent text);
+    4. upsert it on the PR with :func:`upsert_regression_comment` — the first
+       post **creates** the marker comment, re-posts **update** it in place,
+       and an identical re-post is a **no-op** (``unchanged``).
+
+    Emits ``regression.comment`` with ``action`` / ``comment_id`` /
+    ``html_url`` (§19 S7.2) and returns a stable
+    ``regression-comment://<owner>/<repo>/pull/<n>`` output ref.
+    """
+
+    stages: tuple[str, ...] = ("regression",)
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        project_id = ctx.project_id or ""
+        repository_path = str(ctx.input.get("repository_path") or "")
+        pr = ctx.input.get("pull_request")
+        pr = pr if isinstance(pr, dict) else {}
+        owner = str(pr.get("owner") or "")
+        repo = str(pr.get("repo") or "")
+        number = int(pr.get("number") or 0)
+        top_n = int(ctx.input.get("top_n") or 10)
+
+        await ctx.emit("stage.started", {"stage": "regression"})
+        await ctx.emit("progress", {"stage": "regression", "value": 0.1})
+
+        client = build_github_client(self._engine, project_id)
+        try:
+            # Step 1: resolve the PR → its changed files are the S6.1 input.
+            info = await client.fetch_pull_request(owner, repo, number)
+            await ctx.emit("progress", {"stage": "regression", "value": 0.4})
+
+            # Step 2: the deterministic S6.1 → S6.2 → S6.3 pipeline.
+            with repo_db.session_scope(self._engine) as session:
+                impact = impact_from_session(
+                    session, project_id, repository_path, list(info.changed_files)
+                )
+                ranking = RegressionJobAgent._ranking_for_impact(session, project_id, impact)
+                recommendation = recommend(impact, ranking, top_n=top_n)
+
+            # Step 3: the deterministic comment body (LLM-free, idempotent text).
+            # The integrations package stays independent of the AI package, so
+            # the body is built from the domain models' JSON payloads.
+            pr_url = f"https://github.com/{owner}/{repo}/pull/{number}"
+            body = build_comment_body(
+                owner=owner,
+                repo=repo,
+                number=number,
+                title=info.title,
+                url=pr_url,
+                recommendation=recommendation.model_dump(mode="json"),
+                impact=impact.model_dump(mode="json"),
+            )
+            await ctx.emit("progress", {"stage": "regression", "value": 0.8})
+
+            # Step 4: idempotent upsert — create once, then update in place.
+            upsert = await upsert_regression_comment(client, owner, repo, number, body)
+        finally:
+            await client.aclose()
+
+        await ctx.emit(
+            "regression.comment",
+            {
+                "action": upsert.action,
+                "comment_id": upsert.comment_id,
+                "html_url": upsert.html_url,
+                "owner": owner,
+                "repo": repo,
+                "number": number,
+            },
+        )
+        await ctx.emit("progress", {"stage": "regression", "value": 1.0})
+        await ctx.emit(
+            "stage.completed",
+            {"stage": "regression", "action": upsert.action, "comment_id": upsert.comment_id},
+        )
+        return f"regression-comment://{owner}/{repo}/pull/{number}"
 
 
 def _payload(job_id: str, project_id: str | None, **fields: Any) -> dict[str, Any]:
