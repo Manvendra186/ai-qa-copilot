@@ -2217,7 +2217,7 @@
   (`POST /api/v1/webhooks/github`, `X-Hub-Signature-256` HMAC as auth,
   `webhook_events` dedupe, `qa-copilot.yml` template) — see `STATE.md` §3.
 
-## 2026-09-05 — S7.3 CI/CD webhook — verified, gates green, committed `3583ef5`
+## 2026-09-05 — S7.3 CI/CD webhook — verified, gates green, committed `ab5f87a`
 
 - **Goal:** close **S7.3 — CI/CD webhook** (bible §19; exit: signed webhook →
   202 → job → `regression.set` SSE green · unsigned → 401 · duplicate delivery
@@ -2262,7 +2262,7 @@
   - **Gotcha hit + fixed:** PowerShell 5.1 `Set-Content -Encoding utf8`
     prepended a BOM to the commit message → first commit `c6413e0` had
     `﻿step S7.3…`; amended via a Python-written message file (clean
-    subject, then re-amended to fold in the memory files → `3583ef5`).
+    subject, then re-amended to fold in the memory files → `ab5f87a`).
 - **Verified (gates, all green):**
   - `uv run ruff check .` ✓ · `uv run ruff format --check .` ✓;
   - `uv run mypy apps packages` ✓ (strict, 110 source files);
@@ -2286,9 +2286,9 @@
   delivery, but retryable once the config is fixed) — the exit criterion
   only pins "duplicate → 200, no second job" · `qa-copilot.yml` is a
   template (not wired into this repo's CI).
-- **Commit:** `3583ef5 step S7.3: CI/CD webhook (deterministic, LLM-free) — …`
-  (this commit; 13 files = 11 S7.3 + 2 memory, local-only, origin still
-  at `7fa14fe`).
+- **Commit:** `ab5f87a step S7.3: CI/CD webhook (deterministic, LLM-free) — …`
+  (step commit; 13 files = 11 S7.3 + 2 memory, local-only, origin still
+  at `7fa14fe`; memory hash refs finalized in this follow-up commit).
 - **Next session start:** **S7.4 — Jira linking** (bible §19 S7.4:
   `qa_copilot_integrations.jira` typed client, `POST
   /projects/{id}/failures/{failure_id}/jira` 202+job owner-or-above,

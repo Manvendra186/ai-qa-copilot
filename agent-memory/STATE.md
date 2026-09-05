@@ -19,13 +19,13 @@
   typed client + golden 10/10 + PAT-safe `integration_configs` API (2026-09-02) ·
   S7.2 ✓ PR → regression (commit `a9fd1`, 2026-09-02; PR-input exit tests +
   pending ruff-format fixes committed 2026-09-05, 821 tests green) ·
-  S7.3 ✓ CI/CD webhook (commit `3583ef5`, 2026-09-05; 14 tests, 835 green) ·
+  S7.3 ✓ CI/CD webhook (commit `ab5f87a`, 2026-09-05; 14 tests, 835 green) ·
   **next:** **S7.4 — Jira linking** — see §3
 
 ## 2. Just completed
 
 - 2026-09-05 · **S7.3 (CI/CD webhook) — verified, all gates green, committed
-  `3583ef5`** (bible §19 S7.3; exit: signed webhook → 202 → job →
+  `ab5f87a`** (bible §19 S7.3; exit: signed webhook → 202 → job →
   `regression.set` SSE green · unsigned → 401 · duplicate delivery id → 200
   with no second job · workflow YAML parses). The implementation had been
   staged by an earlier interrupted session (never gated/committed) — this
@@ -68,10 +68,11 @@
     back at head (dev DB `qa_copilot`, table was empty) · dev DB stamped
     at `b3d7e2a91c4f` · one-off migration-check script removed after use;
   - **Gotcha:** PowerShell 5.1 `Set-Content -Encoding utf8` writes a BOM
-    → the first commit (`c6413e0`) had a BOM in its subject line;
-    amended to a BOM-free message (write commit-message files via
-    Python / `utf-8-sig` read instead); final commit `3583ef5` folds in
-    the memory files (local-only amend — origin still at `7fa14fe`).
+    (and truncates when combined with a same-file read) → the first commit
+    (`c6413e0`) had a BOM in its subject line; amended to a BOM-free
+    message; final step commit `ab5f87a` folds in the memory files
+    (local-only amend — origin still at `7fa14fe`). Write
+    commit-message files via Python / `utf-8-sig` read instead.
 
 - 2026-09-05 · **S7.2 (PR → regression) — exit-criterion test coverage added;
   all gates green** (bible §19 S7.2; S7.2 shipped in commit `a9fd1` on 2026-09-02
