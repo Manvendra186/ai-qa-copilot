@@ -249,6 +249,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes.runs_router)
     # S7.1: external integrations config (§19 S7.1; member+ read, owner+ write).
     app.include_router(routes.integrations_router)
+    # S7.3: CI/CD webhook (§19 S7.3) — the HMAC signature is the auth;
+    # pull_request opened/synchronize reuses the S6.4 regression_analysis
+    # job (no new agent, no new JobType).
+    app.include_router(routes.webhooks_router)
 
     return app
 

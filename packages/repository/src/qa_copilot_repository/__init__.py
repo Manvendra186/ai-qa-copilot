@@ -41,6 +41,11 @@ LLM-free (:mod:`qa_copilot_repository.regression`, build bible §19 S6.3).
 S7.1: external-integration config — the ``integration_configs`` row
 helpers (project + provider, ``token_ref`` only, never the secret, §17)
 (:mod:`qa_copilot_repository.integrations`, build bible §19 S7.1).
+
+S7.3: inbound CI/CD webhook delivery — repository → project resolution
+from the payload's ``owner/repo`` + the ``webhook_events`` dedupe helpers
+(unique ``delivery_id``, a re-sent delivery never spawns a second job)
+(:mod:`qa_copilot_repository.webhooks`, build bible §19 S7.3).
 """
 
 from . import (
@@ -58,6 +63,7 @@ from . import (
     requirements,
     runs,
     scanner,
+    webhooks,
 )
 from .conventions import extract_conventions
 from .history import (
@@ -119,4 +125,5 @@ __all__ = [
     "scan_repository",
     "scanner",
     "strongest_impact_kind",
+    "webhooks",
 ]

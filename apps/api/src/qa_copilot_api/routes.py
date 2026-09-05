@@ -50,6 +50,19 @@ S7.2: PR → regression (§19 S7.2):
 - ``POST /api/v1/projects/{id}/regression/pr-comment`` — idempotent PR
   comment (``owner``+; 202 + job; ``regression.comment`` SSE event)
 
+S7.3: CI/CD webhook (§19 S7.3):
+
+- ``POST /api/v1/webhooks/github`` — the HMAC ``X-Hub-Signature-256``
+  **is the auth** (invalid/missing → 401; no token, no RBAC on this
+  endpoint). ``pull_request`` ``opened``/``synchronize`` resolves
+  ``repository.full_name`` → project → ``regression_analysis`` job
+  (**202 + Location**, ``regression.set`` SSE). Other events are recorded
+  + acknowledged **200** (``ignored``). ``X-GitHub-Delivery`` is unique in
+  ``webhook_events`` — a re-sent delivery answers **200** (``duplicate``)
+  and never spawns a second job. 401 when no webhook secret is configured;
+  409 when no project matches the repository or the project has no
+  ``repository_path``.
+
 Token values never appear in these payloads (§17): the PUT body takes
 ``token_ref`` (the secret's name) and reads return ``token_configured``.
 """
@@ -71,6 +84,7 @@ from qa_copilot_domain.enums import (
     role_at_least,
 )
 from qa_copilot_execution import ArtifactStore, ArtifactStoreError
+from qa_copilot_integrations import webhook as webhook_core
 from qa_copilot_knowledge import SearchHit
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import generated_tests as repo_generated_tests
@@ -78,9 +92,10 @@ from qa_copilot_repository import integrations as repo_integrations
 from qa_copilot_repository import membership, models
 from qa_copilot_repository import requirements as repo_requirements
 from qa_copilot_repository import runs as repo_runs
+from qa_copilot_repository import webhooks as repo_webhooks
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
-from starlette.responses import FileResponse, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import auth, jobs, knowledge_store, schemas
 from .db import get_db
@@ -94,6 +109,12 @@ automation_router = APIRouter(prefix="/api/v1/automation", tags=["automation"])
 generated_tests_router = APIRouter(prefix="/api/v1/generated-tests", tags=["generated-tests"])
 runs_router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 integrations_router = APIRouter(prefix="/api/v1/projects", tags=["integrations"])
+webhooks_router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
+
+#: S7.3: the only webhook deliveries that spawn a job (§19: "``pull_request``
+#: opened/synchronize → ``regression_analysis`` job"); every other event is
+#: recorded + acknowledged 200 (``ignored``).
+_WEBHOOK_TRIGGER_ACTIONS = frozenset({"opened", "synchronize"})
 
 
 def _user_out(user: models.User) -> schemas.UserOut:
@@ -1142,6 +1163,143 @@ def post_regression_pr_comment(
 
     response.headers["Location"] = f"/api/v1/jobs/{job.id}"
     return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@webhooks_router.post("/github")
+async def github_webhook(
+    request: Request,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> JSONResponse:
+    """Inbound GitHub webhook (S7.3, §19) — the signature **is** the auth.
+
+    ``X-Hub-Signature-256`` is verified (HMAC-SHA256, constant-time)
+    against the project's webhook secret *before* anything else; an
+    invalid or missing signature answers **401** (no bearer token, no RBAC
+    on this endpoint — §19 S7.3 "the signature IS the auth"). A
+    ``pull_request`` ``opened``/``synchronize`` delivery resolves
+    ``repository.full_name`` → project and spawns a
+    ``regression_analysis`` job (**202 + Location**; the ranked set rides
+    the ``regression.set`` SSE event, S6.4). Other events are recorded and
+    acknowledged **200** (``status: ignored``).
+
+    The ``X-GitHub-Delivery`` id is unique in ``webhook_events`` — a
+    re-sent delivery answers **200** (``status: duplicate``) and never
+    spawns a second job (S7.3 exit criterion). 401 when the project has
+    no webhook secret configured (the secret's value never appears in any
+    response, §17); 409 when no project matches the payload repository,
+    or the project has no ``repository_path`` to analyze (fixable — the
+    delivery was not recorded, so a corrected re-send is accepted).
+    """
+    raw = await request.body()
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="invalid JSON payload") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be a JSON object")
+
+    event = request.headers.get("x-github-event") or ""
+    action = payload.get("action")
+    action_str = str(action) if action is not None else None
+
+    repository = payload.get("repository")
+    full_name = str(repository.get("full_name") or "") if isinstance(repository, dict) else ""
+    owner, sep, name = full_name.partition("/")
+    if not sep or not owner.strip() or not name.strip():
+        # No repository in the payload: cannot be bound to a project, so
+        # the signature cannot be verified — same 401 as a bad signature
+        # (no existence leak for unauthenticated callers, §31.3).
+        raise HTTPException(status_code=401, detail="invalid signature")
+
+    project = repo_webhooks.find_project_by_repository(db, owner, name)
+    if project is None:
+        # 409 (fixable) — no project is configured for this owner/repo;
+        # the delivery was not recorded, so a re-send is accepted once a
+        # project is set up for this repository.
+        raise HTTPException(
+            status_code=409,
+            detail=f"no project matches GitHub repository {full_name}",
+        )
+
+    try:
+        secret = jobs.webhook_secret(db, project.id)
+    except jobs.WebhookSecretNotConfiguredError:
+        # 401 — the signature is the auth; a missing secret is an auth
+        # failure, and the detail never carries the secret itself (§17).
+        raise HTTPException(status_code=401, detail="invalid signature") from None
+
+    signature_header = request.headers.get("x-hub-signature-256")
+    if not webhook_core.verify_github_signature(secret, raw, signature_header):
+        raise HTTPException(status_code=401, detail="invalid signature")
+
+    delivery_id = request.headers.get("x-github-delivery") or str(uuid.uuid4())
+    row, created = repo_webhooks.record_delivery(
+        db,
+        project_id=project.id,
+        delivery_id=delivery_id,
+        event=event,
+        action=action_str,
+    )
+    if not created:
+        db.commit()
+        return JSONResponse(
+            status_code=200,
+            content={"status": "duplicate", "delivery_id": delivery_id},
+        )
+
+    if event == "pull_request" and action_str in _WEBHOOK_TRIGGER_ACTIONS:
+        repository_path = (project.settings or {}).get("repository_path")
+        if not isinstance(repository_path, str) or not repository_path.strip():
+            # Roll back the uncommitted delivery row so a corrected
+            # re-send (same delivery id) is accepted once configured.
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="project has no repository_path configured (settings.repository_path)",
+            )
+        pull_request = payload.get("pull_request")
+        number = pull_request.get("number") if isinstance(pull_request, dict) else None
+        if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="payload is missing pull_request.number")
+
+        job_input = {
+            "repository_path": repository_path,
+            "pull_request": {"owner": owner, "repo": name, "number": number},
+            "top_n": 10,
+        }
+        job = models.Job(
+            project_id=project.id,
+            type=JobType.REGRESSION_ANALYSIS,
+            input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+        )
+        db.add(job)
+        db.flush()
+        row.job_id = job.id
+        db.commit()
+
+        state = request.app.state
+        if not state.jobs_runner.start(
+            job.id, agent=state.jobs_regression_agent, user_id=None, job_input=job_input
+        ):
+            # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+            raise HTTPException(status_code=409, detail="job is already running")
+        return JSONResponse(
+            status_code=202,
+            content={"job_id": job.id, "status": job.status.value},
+            headers={"Location": f"/api/v1/jobs/{job.id}"},
+        )
+
+    db.commit()
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ignored",
+            "event": event,
+            "action": action_str,
+            "delivery_id": delivery_id,
+        },
+    )
 
 
 @projects_router.post("/{project_id}/runs", status_code=202, response_model=schemas.JobCreated)

@@ -640,6 +640,42 @@ class PromptVersion(Base):
     )
 
 
+class WebhookEvent(Base):
+    """One inbound webhook delivery (build bible §19 S7.3).
+
+    ``delivery_id`` is the sender's delivery identifier (``X-GitHub-
+    Delivery``) and is **unique** — the S7.3 dedupe gate: a re-sent
+    delivery returns the existing row and must not spawn a second job.
+    ``job_id`` links the job the delivery spawned when the event matched
+    the ``pull_request`` opened/synchronize contract (NULL for ignored
+    events and for deliveries that were never acted on).
+    """
+
+    __tablename__ = "webhook_events"
+    __table_args__ = (sa.UniqueConstraint("delivery_id", name="uq_webhook_events_delivery_id"),)
+
+    id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(sa.String(32), default="github")
+    delivery_id: Mapped[str] = mapped_column(sa.String(255))
+    event: Mapped[str] = mapped_column(sa.String(128))
+    action: Mapped[str | None] = mapped_column(sa.String(128))
+    job_id: Mapped[str | None] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("jobs.id", ondelete="SET NULL"),
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+    project: Mapped[Project] = relationship()
+    job: Mapped[Job | None] = relationship()
+
+
 __all__ = [
     "AIAction",
     "AISession",
@@ -664,4 +700,5 @@ __all__ = [
     "TestCase",
     "User",
     "VECTOR_DIM",
+    "WebhookEvent",
 ]

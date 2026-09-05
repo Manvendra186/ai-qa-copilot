@@ -1167,6 +1167,41 @@ def build_github_client(engine: Engine, project_id: str) -> GitHubClient:
     return GitHubClient(token=token)
 
 
+class WebhookSecretNotConfiguredError(Exception):
+    """S7.3: the project has no usable inbound-webhook secret (§19 S7.3).
+
+    Safe to surface as the 401 detail — it names the *reference* at most,
+    never the secret (§17). The webhook signature IS the auth on that
+    endpoint, so an unconfigured secret is an authentication failure.
+    """
+
+
+def webhook_secret(session: Session, project_id: str) -> str:
+    """The project's inbound-webhook HMAC secret (S7.3, §19).
+
+    Stored exactly like every S7.1 integration: an ``integration_configs``
+    row — provider ``github_webhook`` — whose ``token_ref`` names *where*
+    the secret lives (an env-var name); the secret itself is never stored
+    (build bible §17) and is resolved from the process environment. A
+    missing/disabled row or an unset secret raises
+    :class:`WebhookSecretNotConfiguredError` (→ 401 at the route).
+    """
+    config = repo_integrations.get_integration(session, project_id, "github_webhook")
+    if config is None or not config.enabled:
+        raise WebhookSecretNotConfiguredError(
+            "project has no webhook secret configured (provider 'github_webhook')"
+        )
+    token_ref = (config.token_ref or "").strip()
+    if not token_ref:
+        raise WebhookSecretNotConfiguredError(
+            "project's webhook config has no token_ref (secret env-var name)"
+        )
+    secret = os.environ.get(token_ref, "").strip()
+    if not secret:
+        raise WebhookSecretNotConfiguredError(f"secret '{token_ref}' is not set in the environment")
+    return secret
+
+
 class RegressionPrCommentJobAgent:
     """S7.2: regression analysis from a GitHub PR + idempotent PR comment (§19 S7.2).
 

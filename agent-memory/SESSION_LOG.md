@@ -2217,4 +2217,82 @@
   (`POST /api/v1/webhooks/github`, `X-Hub-Signature-256` HMAC as auth,
   `webhook_events` dedupe, `qa-copilot.yml` template) — see `STATE.md` §3.
 
+## 2026-09-05 — S7.3 CI/CD webhook — verified, gates green, committed `3583ef5`
+
+- **Goal:** close **S7.3 — CI/CD webhook** (bible §19; exit: signed webhook →
+  202 → job → `regression.set` SSE green · unsigned → 401 · duplicate delivery
+  id → 200 with no second job · workflow YAML parses); keep all gates green;
+  commit; update agent memory.
+- **Found:** the S7.3 implementation (route, integration module, repository
+  module, model + `webhook_events` migration `b3d7e2a91c4f`,
+  `qa-copilot.yml`, 14 tests) was **already staged** by an earlier
+  interrupted session — never gated, never committed, and not lint-clean.
+- **Did:**
+  - **Reviewed every S7.3 file** against the bible contract (§19 S7.3, §17
+    redaction, §30 async 202+SSE): `routes.py` (`github_webhook` handler +
+    `resolve_webhook_secret`), `qa_copilot_integrations/webhook.py`
+    (`sign_body`, `verify_signature` — constant-time `hmac.compare_digest`),
+    `qa_copilot_repository/webhooks.py` (`record_webhook_event` —
+    `delivery_id` unique; duplicate raises `WebhookDuplicate`; 409 → rollback
+    so a corrected re-send is accepted), `models.py` (WebhookEvent,
+    `repository_path` on ProjectSettings), migration
+    `b3d7e2a91c4f` (head; parent = S7.1 `9f3c5d7a1b2e`),
+    `infra/github/workflows/qa-copilot.yml` (openssl-signed post),
+    `tests/unit/test_s73_webhook.py` (14 tests);
+  - **Fixed the lint debt in the staged work:** E501 ×2 (routes.py, test) ·
+    F841 unused `repo` · W292 missing EOF newline · then `ruff format`
+    cleaned 4 S7.3 files (formatting only — re-ran the 14 tests after, green);
+  - **Verified migration on the dev DB:** `alembic downgrade -1` →
+    `webhook_events` dropped → `alembic upgrade head` → back at
+    `b3d7e2a91c4f`, table empty (no data destroyed); dev DB now stamped at
+    the new head;
+  - **Removed** the one-off `scripts/_s73_migration_check.py` after use
+    (S6.5 precedent: one-off probes don't ship);
+  - **Committed** 11 files / 1216 insertions:
+    `step S7.3: CI/CD webhook (deterministic, LLM-free) — POST
+    /api/v1/webhooks/github: HMAC X-Hub-Signature-256 IS the auth
+    (invalid/missing/secret-not-configured -> 401); pull_request
+    opened/synchronize -> repository.full_name -> project ->
+    regression_analysis job (202 + Location, regression.set SSE; reuses
+    S6.4, no new JobType); webhook_events migration b3d7e2a91c4f (unique
+    delivery_id; duplicate -> 200, no second job); 409 no-project /
+    no-repository_path; other events 200 ignored; qa-copilot.yml workflow
+    template (yaml.safe_load verified); 14 unit tests; gates green (ruff
+    check+format, mypy strict 110 files, 835 passed, pnpm lint+build)`;
+  - **Gotcha hit + fixed:** PowerShell 5.1 `Set-Content -Encoding utf8`
+    prepended a BOM to the commit message → first commit `c6413e0` had
+    `﻿step S7.3…`; amended via a Python-written message file (clean
+    subject, then re-amended to fold in the memory files → `3583ef5`).
+- **Verified (gates, all green):**
+  - `uv run ruff check .` ✓ · `uv run ruff format --check .` ✓;
+  - `uv run mypy apps packages` ✓ (strict, 110 source files);
+  - targeted: `uv run pytest tests/unit/test_s73_webhook.py -q` →
+    **14 passed** (signed opened/synchronize → 202 + `regression.set` SSE +
+    job row + `webhook_events.job_id`; invalid/missing signature → 401;
+    secret row absent / env unset → 401; duplicate delivery → 200, no
+    second job; unsupported event → 200 ignored; 409 ×2; 400; no real
+    GitHub call);
+  - **full suite: `uv run pytest -q` → 835 passed** (821 + 14) in 213s;
+  - frontend gates (unchanged, re-verified): `pnpm lint` ✓ · `pnpm build`
+    ✓;
+  - `qa-copilot.yml` parses (`yaml.safe_load`) ✓;
+  - `git status` clean after commit.
+- **Decisions:** the webhook signature IS the auth — no bearer token, no
+  RBAC (bible §19 S7.3) · the secret is resolved from the env var named by
+  the project's `integration_configs` row (provider `github_webhook`,
+  `token_ref` only) so the raw value is never stored/echoed (§17) ·
+  reuses `regression_analysis` — the webhook is a *trigger*, not a new
+  JobType · delivery rows for 409/400 are rolled back (at-most-once per
+  delivery, but retryable once the config is fixed) — the exit criterion
+  only pins "duplicate → 200, no second job" · `qa-copilot.yml` is a
+  template (not wired into this repo's CI).
+- **Commit:** `3583ef5 step S7.3: CI/CD webhook (deterministic, LLM-free) — …`
+  (this commit; 13 files = 11 S7.3 + 2 memory, local-only, origin still
+  at `7fa14fe`).
+- **Next session start:** **S7.4 — Jira linking** (bible §19 S7.4:
+  `qa_copilot_integrations.jira` typed client, `POST
+  /projects/{id}/failures/{failure_id}/jira` 202+job owner-or-above,
+  `failures.jira_issue_key` nullable column + migration, golden
+  `jira_v1.json`, fake-server tests). See `STATE.md` §3.
+
 

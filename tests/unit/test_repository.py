@@ -61,6 +61,7 @@ EXPECTED_TABLES = {
     "prompt_versions",
     "generated_tests",
     "integration_configs",
+    "webhook_events",
 }
 
 

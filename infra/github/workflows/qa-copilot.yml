@@ -1,0 +1,53 @@
+# AI QA Copilot — S7.3 CI/CD webhook (Build Bible §19 S7.3).
+#
+# TEMPLATE: copy this file into the project under test's `.github/workflows/`
+# (e.g. `qa-copilot.yml`) and set two repository secrets:
+#
+#   QA_COPILOT_URL             — base URL of the AI QA Copilot API
+#                                (e.g. http://127.0.0.1:8000)
+#   QA_COPILOT_WEBHOOK_SECRET  — the project's webhook HMAC secret
+#
+# The same secret value must be configured on the AI QA Copilot side: an
+# `integration_configs` row for the project (provider `github_webhook`) whose
+# `token_ref` names an environment variable holding the secret, e.g.
+#   PUT /api/v1/projects/{id}/integrations/github_webhook
+#     {"token_ref": "GITHUB_WEBHOOK_SECRET", "enabled": true}
+# with `GITHUB_WEBHOOK_SECRET=<the same secret>` in the API's environment.
+#
+# On `pull_request` opened/synchronize this workflow posts the PR event to
+# `POST /api/v1/webhooks/github` signed with `X-Hub-Signature-256`
+# (HMAC-SHA256 over the exact payload bytes — `GITHUB_EVENT_PATH`, the same
+# JSON GitHub would send). The AI QA Copilot verifies the signature (the
+# signature IS the auth — no token on that endpoint), resolves
+# `repository.full_name` → project, and starts a `regression_analysis` job
+# over the PR's changed files (`regression.set` SSE; S6.4).
+
+name: AI QA Copilot
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  notify-qa-copilot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sign and post the PR event to the AI QA Copilot webhook
+        env:
+          QA_COPILOT_URL: ${{ secrets.QA_COPILOT_URL }}
+          QA_COPILOT_WEBHOOK_SECRET: ${{ secrets.QA_COPILOT_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          [ -n "$QA_COPILOT_URL" ] || { echo "QA_COPILOT_URL secret is not set"; exit 1; }
+          [ -n "$QA_COPILOT_WEBHOOK_SECRET" ] || { echo "QA_COPILOT_WEBHOOK_SECRET secret is not set"; exit 1; }
+          # GITHUB_EVENT_PATH holds the exact payload GitHub would send for
+          # this event — sign and send the very same bytes.
+          signature="sha256=$(openssl dgst -sha256 -hmac "$QA_COPILOT_WEBHOOK_SECRET" -binary "$GITHUB_EVENT_PATH" | od -An -v -tx1 | tr -d ' \n')"
+          delivery="$(uuidgen)"
+          curl --fail --silent --show-error \
+            -X POST "$QA_COPILOT_URL/api/v1/webhooks/github" \
+            -H 'Content-Type: application/json' \
+            -H "X-GitHub-Event: pull_request" \
+            -H "X-GitHub-Delivery: $delivery" \
+            -H "X-Hub-Signature-256: $signature" \
+            --data-binary @"$GITHUB_EVENT_PATH"

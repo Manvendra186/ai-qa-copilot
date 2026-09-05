@@ -12,16 +12,66 @@
   Phase 6 — Regression Intelligence **complete** (S6.1 ✓, S6.2 ✓, S6.3 ✓, S6.4 ✓, S6.5 ✓) ·
   **Phase 7 — Integrations: in progress** (S7.0 ✓ step table defined + approved ·
   S7.1 ✓ GitHub core (LLM-free) · S7.2 ✓ PR → regression (API + web) ·
-  S7.2 exit-criterion tests added 2026-09-05)
+  S7.2 exit-criterion tests added 2026-09-05 · S7.3 ✓ CI/CD webhook 2026-09-05)
 - **Step:** S0.1–S6.5 ✓ (S6.4 regression API + web, commit `b3fc68c` · S6.5 live E2E 38/38 +
   committed `reports/regression_v1.json` baseline, 2026-09-02) · S7.0 ✓ Phase 7 step
   table drafted + approved (bible §19, 2026-09-02) · S7.1 ✓ GitHub core (LLM-free) —
   typed client + golden 10/10 + PAT-safe `integration_configs` API (2026-09-02) ·
   S7.2 ✓ PR → regression (commit `a9fd1`, 2026-09-02; PR-input exit tests +
   pending ruff-format fixes committed 2026-09-05, 821 tests green) ·
-  **next:** **S7.3 — CI/CD webhook** — see §3
+  S7.3 ✓ CI/CD webhook (commit `3583ef5`, 2026-09-05; 14 tests, 835 green) ·
+  **next:** **S7.4 — Jira linking** — see §3
 
 ## 2. Just completed
+
+- 2026-09-05 · **S7.3 (CI/CD webhook) — verified, all gates green, committed
+  `3583ef5`** (bible §19 S7.3; exit: signed webhook → 202 → job →
+  `regression.set` SSE green · unsigned → 401 · duplicate delivery id → 200
+  with no second job · workflow YAML parses). The implementation had been
+  staged by an earlier interrupted session (never gated/committed) — this
+  session reviewed it, fixed the lint, ran every gate, and closed it out:
+  - **Contract:** `POST /api/v1/webhooks/github` — `X-Hub-Signature-256`
+    HMAC-SHA256 (constant-time; `qa_copilot_integrations.webhook`)
+    **is the auth** — no bearer token, no RBAC; invalid/missing → 401;
+    the secret is resolved from the env var named by the project's
+    `integration_configs` row (provider `github_webhook`, `token_ref`
+    only, §17); unconfigured row / unset env → 401 (never the secret);
+  - `pull_request` `opened`/`synchronize` → `repository.full_name` →
+    project (`qa_copilot_repository.webhooks.find_project_by_repository`,
+    URL-form agnostic) → `regression_analysis` job (202 + `Location`;
+    reuses the S6.4 path — no new JobType) → `regression.set` SSE;
+    other events → 200 `ignored`; 409 when no project matches or
+    `settings.repository_path` is missing (delivery row rolled back,
+    so a corrected re-send is accepted); 400 missing
+    `pull_request.number`;
+  - `webhook_events` (migration `b3d7e2a91c4f`; unique `delivery_id`
+    `uq_webhook_events_delivery_id`) — duplicate delivery → 200
+    `duplicate`, never a second job; `job_id` links the spawned job;
+  - `infra/github/workflows/qa-copilot.yml` — copy-into-`.github/workflows`
+    template (signs `GITHUB_EVENT_PATH` with `openssl dgst -sha256 -hmac`,
+    posts with `curl --data-binary`); verified `yaml.safe_load`;
+  - `tests/unit/test_s73_webhook.py` (**14 tests**, scratch Postgres on
+    :5433 + real Alembic + `create_app`): signature-helper roundtrip +
+    bad inputs · opened/synchronize → 202 + `regression.set` SSE +
+    job row + `webhook_events.job_id` · invalid/missing signature → 401 ·
+    secret row absent / env unset → 401 · duplicate delivery → 200 + no
+    second job · unsupported action/event → 200 `ignored` (row kept, no
+    job) · 409 ×2 · 400 · no real GitHub call (`FakePrGitHub`);
+  - **Fixed this session (staged work was not gate-clean):** E501 ×2
+    (routes.py, test) · F841 unused `repo` · W292 missing EOF newline ·
+    4 S7.3 files `ruff format`-cleaned (formatting only, no behavior);
+  - **Gates (all green):** `ruff check .` ✓ · `ruff format --check .` ✓ ·
+    `mypy apps packages` ✓ (110 files) · `uv run pytest
+    tests/unit/test_s73_webhook.py -q` → 14 passed ·
+    **`uv run pytest -q` → 835 passed** (821 + 14) in 213s · `pnpm lint`
+    ✓ · `pnpm build` ✓ · migration downgrade → table dropped → upgrade →
+    back at head (dev DB `qa_copilot`, table was empty) · dev DB stamped
+    at `b3d7e2a91c4f` · one-off migration-check script removed after use;
+  - **Gotcha:** PowerShell 5.1 `Set-Content -Encoding utf8` writes a BOM
+    → the first commit (`c6413e0`) had a BOM in its subject line;
+    amended to a BOM-free message (write commit-message files via
+    Python / `utf-8-sig` read instead); final commit `3583ef5` folds in
+    the memory files (local-only amend — origin still at `7fa14fe`).
 
 - 2026-09-05 · **S7.2 (PR → regression) — exit-criterion test coverage added;
   all gates green** (bible §19 S7.2; S7.2 shipped in commit `a9fd1` on 2026-09-02
@@ -702,19 +752,18 @@
 
 ## 3. NEXT STEP (start here)
 
-**S7.3 — CI/CD webhook** (bible §19 Phase 7; exit: signed webhook → 202 → job →
-`regression.set` SSE green · unsigned → 401 · duplicate delivery id → 200 with
-no second job · workflow YAML parses):
-- `POST /api/v1/webhooks/github` — `X-Hub-Signature-256` HMAC verified against
-  the project's webhook secret — **the signature IS the auth** (no token, no
-  RBAC); invalid/missing signature → 401;
-- `pull_request` `opened`/`synchronize` → owner/repo → project lookup →
-  `JobType.REGRESSION_ANALYSIS` with the PR body (202 + `Location`) →
-  `regression.set` SSE (S7.2 contract, unchanged);
-- `webhook_events` table (delivery id unique → dedupe) + migration; a duplicate
-  delivery id → 200, no second job;
-- ship the `infra/github/workflows/qa-copilot.yml` template (PR event → signed
-  call to the webhook) — must parse (e.g. `yaml.safe_load`).
+**S7.4 — Jira linking** (bible §19 Phase 7; exit: failure → issue mapping
+matches golden 100% · re-link updates, never duplicates · token redacted ·
+RBAC matrix green):
+- `qa_copilot_integrations.jira` — typed client (base_url + PAT, redacted
+  §17; LLM-free — the S2.1/S3.3/S5.1/S6.1/S7.1 pattern);
+- `POST /projects/{id}/failures/{failure_id}/jira` (202 + job;
+  owner-or-above): failure + S4.1 diagnosis (category, root_cause,
+  evidence, confidence) → issue create-or-update;
+- link stored in `failures.jira_issue_key` (nullable column + migration);
+  `GET .../failures/{failure_id}` exposes the link;
+- golden `jira_v1.json` (§22) + fake-server tests (create/update/
+  idempotency, 4xx mapping, token redaction).
 - **Phase 6 closeout (2026-09-02):** S6.5 live E2E 38/38 passed (analyze →
   202 → `regression.set` SSE → run the set → S3 Playwright 1/1 passed) ·
   baseline `reports/regression_v1.json` committed for drift tracking
