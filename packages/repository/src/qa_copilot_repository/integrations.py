@@ -27,13 +27,16 @@ def get_integration(
     session: Session, project_id: str, provider: str
 ) -> models.IntegrationConfig | None:
     """The config row for ``project_id`` + ``provider`` (unique), or ``None``."""
-    return session.scalars(
-        select(models.IntegrationConfig)
-        .where(
-            models.IntegrationConfig.project_id == project_id,
-            models.IntegrationConfig.provider == provider,
+    return (
+        session.scalars(
+            select(models.IntegrationConfig).where(
+                models.IntegrationConfig.project_id == project_id,
+                models.IntegrationConfig.provider == provider,
+            )
         )
-    ).unique().first()
+        .unique()
+        .first()
+    )
 
 
 def list_integrations(session: Session, project_id: str) -> list[models.IntegrationConfig]:

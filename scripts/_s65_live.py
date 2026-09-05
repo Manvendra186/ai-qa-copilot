@@ -71,9 +71,7 @@ def run_analyze(
     """S6.4 analyze endpoint → SSE regression.set, with the S6.5 assertions."""
     body = {"repository_path": REPO, "files": CHANGED_FILES, "top_n": 10}
     res = client.post(f"/projects/{project_id}/regression/analyze", json=body, headers=headers)
-    checks.add(
-        "analyze.http_status", 202, res.status_code, res.status_code == 202
-    )
+    checks.add("analyze.http_status", 202, res.status_code, res.status_code == 202)
     if res.status_code != 202:
         raise RuntimeError(f"analyze rejected: {res.text[:300]}")
     job = res.json()
@@ -106,27 +104,39 @@ def run_analyze(
     )
     # S6.1 provenance: test case + requirement links ride along.
     checks.add(
-        "impact.test_case_ids", LOGIN_TC, impacted.get("test_case_ids"),
+        "impact.test_case_ids",
+        LOGIN_TC,
+        impacted.get("test_case_ids"),
         LOGIN_TC in (impacted.get("test_case_ids") or []),
     )
     checks.add(
-        "impact.requirement_ids", LOGIN_REQ, impacted.get("requirement_ids"),
+        "impact.requirement_ids",
+        LOGIN_REQ,
+        impacted.get("requirement_ids"),
         LOGIN_REQ in (impacted.get("requirement_ids") or []),
     )
     # S6.2: flaky detection on the seeded history.
     checks.add("stats.is_flaky", True, stats.get("is_flaky"), stats.get("is_flaky") is True)
     checks.add(
-        "stats.flakiness_rate>=0.25", ">= 0.25", stats.get("flakiness_rate"),
+        "stats.flakiness_rate>=0.25",
+        ">= 0.25",
+        stats.get("flakiness_rate"),
         float(stats.get("flakiness_rate") or 0) >= 0.25,
     )
     checks.add(
-        "stats.executions>=min_sample(3)", ">= 3", stats.get("executions"),
+        "stats.executions>=min_sample(3)",
+        ">= 3",
+        stats.get("executions"),
         int(stats.get("executions") or 0) >= 3,
     )
     # S6.2: fail→pass — a prior failure, not currently failing (last run passed,
     # verified against the DB in main()).
-    checks.add("stats.failed>=1 (prior failure)", ">= 1", stats.get("failed"),
-               int(stats.get("failed") or 0) >= 1)
+    checks.add(
+        "stats.failed>=1 (prior failure)",
+        ">= 1",
+        stats.get("failed"),
+        int(stats.get("failed") or 0) >= 1,
+    )
     checks.add("stats.is_failing", False, stats.get("is_failing"), stats.get("is_failing") is False)
     # Policy echo (defaults: 3 / 5 / 0.25 / 0.50).
     checks.add(
@@ -136,19 +146,32 @@ def run_analyze(
             k: recommendation.get(k)
             for k in ("min_sample", "recent_window", "flaky_threshold", "failing_threshold")
         },
-        recommendation.get("min_sample") == 3 and recommendation.get("recent_window") == 5
+        recommendation.get("min_sample") == 3
+        and recommendation.get("recent_window") == 5
         and recommendation.get("flaky_threshold") == 0.25
         and recommendation.get("failing_threshold") == 0.5,
     )
     # S6.5 advisor brief: present and sourced (LLM or safe stub).
     advice = reg.get("advice") or {}
-    checks.add("advice.summary", "non-empty", (advice.get("summary") or "")[:80],
-               bool(str(advice.get("summary") or "").strip()))
-    checks.add("advice.source", ("llm", "stub"), advice.get("source"),
-               advice.get("source") in ("llm", "stub"))
+    checks.add(
+        "advice.summary",
+        "non-empty",
+        (advice.get("summary") or "")[:80],
+        bool(str(advice.get("summary") or "").strip()),
+    )
+    checks.add(
+        "advice.source",
+        ("llm", "stub"),
+        advice.get("source"),
+        advice.get("source") in ("llm", "stub"),
+    )
     # Deterministic rationale trail present on the top test.
-    checks.add("rec.rationale", "non-empty list", top.get("rationale"),
-               isinstance(top.get("rationale"), list) and len(top["rationale"]) > 0)
+    checks.add(
+        "rec.rationale",
+        "non-empty list",
+        top.get("rationale"),
+        isinstance(top.get("rationale"), list) and len(top["rationale"]) > 0,
+    )
 
     # Job row: completed + stable regression:// output_ref.
     time.sleep(0.5)
@@ -159,8 +182,12 @@ def run_analyze(
         "job_row.status", "completed", job_row.get("status"), job_row.get("status") == "completed"
     )
     expected_ref = f"regression://{project_id}"
-    checks.add("job_row.output_ref", expected_ref, job_row.get("output_ref"),
-               job_row.get("output_ref") == expected_ref)
+    checks.add(
+        "job_row.output_ref",
+        expected_ref,
+        job_row.get("output_ref"),
+        job_row.get("output_ref") == expected_ref,
+    )
 
     return {
         "request": {
@@ -257,8 +284,12 @@ def run_regression(
         job_row.get("status"),
         job_row.get("status") == "completed",
     )
-    checks.add("run.job_row.output_ref", run_id, job_row.get("output_ref"),
-               job_row.get("output_ref") == run_id)
+    checks.add(
+        "run.job_row.output_ref",
+        run_id,
+        job_row.get("output_ref"),
+        job_row.get("output_ref") == run_id,
+    )
 
     res = client.get(f"/runs/{run_id}", headers=headers)
     res.raise_for_status()
@@ -266,15 +297,23 @@ def run_regression(
     checks.add(
         "run_detail.status", "completed", detail.get("status"), detail.get("status") == "completed"
     )
-    checks.add("run_detail.totals", {"total": 1, "passed": 1, "failed": 0}, detail.get("totals"),
-               (detail.get("totals") or {}).get("total") == 1
-               and (detail.get("totals") or {}).get("passed") == 1
-               and (detail.get("totals") or {}).get("failed") == 0)
+    checks.add(
+        "run_detail.totals",
+        {"total": 1, "passed": 1, "failed": 0},
+        detail.get("totals"),
+        (detail.get("totals") or {}).get("total") == 1
+        and (detail.get("totals") or {}).get("passed") == 1
+        and (detail.get("totals") or {}).get("failed") == 0,
+    )
     results = detail.get("results") or []
     checks.add("run_detail.results", 1, len(results), len(results) == 1)
     if results:
-        checks.add("run_detail.result.status", "passed", results[0].get("status"),
-                   results[0].get("status") == "passed")
+        checks.add(
+            "run_detail.result.status",
+            "passed",
+            results[0].get("status"),
+            results[0].get("status") == "passed",
+        )
     artifacts = detail.get("artifacts") or []
     checks.add("run_detail.artifacts", ">= 1", len(artifacts), len(artifacts) >= 1)
     kinds = sorted({a.get("type") for a in artifacts if a.get("type")})
@@ -323,19 +362,25 @@ def db_history_snapshot(checks: Check, run_id: str) -> dict[str, object]:
             statuses == ["failed", "flaky", "flaky", "passed", "passed", "passed"],
         )
         checks.add(
-            "db.login_tc.last_status", "passed", statuses[-1] if statuses else None,
+            "db.login_tc.last_status",
+            "passed",
+            statuses[-1] if statuses else None,
             bool(statuses) and statuses[-1] == "passed",
         )
         checks.add(
-            "db.login_tc.prior_failed>=1", ">= 1", failed_before_last,
+            "db.login_tc.prior_failed>=1",
+            ">= 1",
+            failed_before_last,
             failed_before_last >= 1,
         )
         live = db.get(models.TestRun, run_id)
         live_status = live.status if live is None else live.status
         checks.add(
-            "db.live_run.status", "completed",
+            "db.live_run.status",
+            "completed",
             (
-                live_status.value if live is not None and hasattr(live_status, "value")
+                live_status.value
+                if live is not None and hasattr(live_status, "value")
                 else live_status
             ),
             live is not None and str(live_status) == "completed",
@@ -496,4 +541,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

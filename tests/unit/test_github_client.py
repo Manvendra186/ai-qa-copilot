@@ -113,11 +113,14 @@ def test_resolve_repository_maps_fields_and_sends_pat() -> None:
 
 def test_resolve_repository_without_token_sends_no_auth_header() -> None:
     client = _client(
-        lambda r: httpx.Response(200, json={
-            "full_name": "acme/web",
-            "html_url": "https://gh.example/acme/web",
-            "default_branch": "trunk",
-        }),
+        lambda r: httpx.Response(
+            200,
+            json={
+                "full_name": "acme/web",
+                "html_url": "https://gh.example/acme/web",
+                "default_branch": "trunk",
+            },
+        ),
         token=None,
     )
     info = _run(client.resolve_repository("acme", "web"))
@@ -146,21 +149,27 @@ def test_fetch_pull_request_maps_head_base_and_files_deduped_sorted() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         path = str(request.url.path)
         if path == "/repos/acme/web/pulls/42":
-            return httpx.Response(200, json={
-                "number": 42,
-                "title": "Add checkout",
-                "state": "open",
-                "html_url": "https://github.com/acme/web/pull/42",
-                "head": {"sha": "h" * 40, "ref": "feat/checkout"},
-                "base": {"sha": "b" * 40, "ref": "main"},
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "number": 42,
+                    "title": "Add checkout",
+                    "state": "open",
+                    "html_url": "https://github.com/acme/web/pull/42",
+                    "head": {"sha": "h" * 40, "ref": "feat/checkout"},
+                    "base": {"sha": "b" * 40, "ref": "main"},
+                },
+            )
         if path == "/repos/acme/web/pulls/42/files":
-            return httpx.Response(200, json=[
-                {"filename": "src/cart.ts"},
-                {"filename": "src/checkout.ts"},
-                {"filename": "src/cart.ts"},  # duplicate entry (cross-page repeat)
-                {"no_filename": True},  # malformed entry — skipped, not a crash
-            ])
+            return httpx.Response(
+                200,
+                json=[
+                    {"filename": "src/cart.ts"},
+                    {"filename": "src/checkout.ts"},
+                    {"filename": "src/cart.ts"},  # duplicate entry (cross-page repeat)
+                    {"no_filename": True},  # malformed entry — skipped, not a crash
+                ],
+            )
         return httpx.Response(404, json={"message": "not scripted"})
 
     client = _client(handler)
@@ -187,14 +196,17 @@ def test_fetch_pull_request_follows_link_next() -> None:
             if calls["files"] == 1:
                 headers["Link"] = f'<{BASE}/repos/acme/web/pulls/7/files?page=2>; rel="next"'
             return httpx.Response(200, json=body, headers=headers)
-        return httpx.Response(200, json={
-            "number": 7,
-            "title": "t",
-            "state": "open",
-            "html_url": "https://github.com/acme/web/pull/7",
-            "head": {"sha": "h" * 40, "ref": "f"},
-            "base": {"sha": "b" * 40, "ref": "main"},
-        })
+        return httpx.Response(
+            200,
+            json={
+                "number": 7,
+                "title": "t",
+                "state": "open",
+                "html_url": "https://github.com/acme/web/pull/7",
+                "head": {"sha": "h" * 40, "ref": "f"},
+                "base": {"sha": "b" * 40, "ref": "main"},
+            },
+        )
 
     client = _client(handler)
     info = _run(client.fetch_pull_request("acme", "web", 7))
@@ -207,14 +219,17 @@ def test_pagination_page_cap_fails_loud() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url.path) == "/repos/acme/web/pulls/1":
-            return httpx.Response(200, json={
-                "number": 1,
-                "title": "t",
-                "state": "open",
-                "html_url": "https://github.com/acme/web/pull/1",
-                "head": {"sha": "h" * 40, "ref": "f"},
-                "base": {"sha": "b" * 40, "ref": "main"},
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "number": 1,
+                    "title": "t",
+                    "state": "open",
+                    "html_url": "https://github.com/acme/web/pull/1",
+                    "head": {"sha": "h" * 40, "ref": "f"},
+                    "base": {"sha": "b" * 40, "ref": "main"},
+                },
+            )
         calls["n"] += 1
         return httpx.Response(
             200,
@@ -280,4 +295,3 @@ def test_non_json_body_is_typed_error() -> None:
     client = _client(lambda r: httpx.Response(200, text="<html>oops</html>"))
     with pytest.raises(GitHubError, match="non-JSON"):
         _run(client.resolve_repository("acme", "web"))
-

@@ -196,4 +196,3 @@ def test_repo_missing_required_arg_exits_2() -> None:
         cli.main(["repo", "acme"], stdout=out, stderr=err)
     assert excinfo.value.code == 2
     assert out.getvalue() == ""
-

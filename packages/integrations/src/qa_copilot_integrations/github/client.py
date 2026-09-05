@@ -118,8 +118,6 @@ class GitHubHTTPError(GitHubError):
     """Any other non-2xx (5xx, 422, 429, ...) — the message is redacted (§17)."""
 
 
-
-
 @dataclass(frozen=True, slots=True)
 class RepositoryInfo:
     """A GitHub repository, mapped onto the §10 ``repositories`` fields.
@@ -296,9 +294,7 @@ class GitHubClient:
             raise GitHubError(f"GitHub API list {url} exceeded {MAX_PAGES} pages (1000 items)")
         return items
 
-    async def _send_json(
-        self, method: str, url: str, *, payload: dict[str, Any]
-    ) -> object:
+    async def _send_json(self, method: str, url: str, *, payload: dict[str, Any]) -> object:
         """POST/PATCH a JSON body; non-2xx raises a redacted error (§17)."""
         try:
             response = await self._client.request(method, url, json=payload)
@@ -334,9 +330,7 @@ class GitHubClient:
             default_branch=_require_str(payload, "default_branch"),  # repositories.default_branch
         )
 
-    async def fetch_pull_request(
-        self, owner: str, repo: str, number: int
-    ) -> PullRequestInfo:
+    async def fetch_pull_request(self, owner: str, repo: str, number: int) -> PullRequestInfo:
         """``GET /repos/{owner}/{repo}/pulls/{number}`` (+ paged ``/files``).
 
         Returns head/base SHAs + the changed files in the exact S6.1

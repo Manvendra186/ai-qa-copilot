@@ -83,11 +83,7 @@ def main() -> int:
             )
         )
         if join is None:
-            db.add(
-                models.RequirementTestCase(
-                    requirement_id=LOGIN_REQ, test_case_id=LOGIN_TC
-                )
-            )
+            db.add(models.RequirementTestCase(requirement_id=LOGIN_REQ, test_case_id=LOGIN_TC))
             print("joined requirement -> login test case")
 
         # 2) applied generated test for e2e/demo.spec.js (S2.4 terminal state).
@@ -123,11 +119,14 @@ def main() -> int:
             print(f"generated test already present: {existing.id}")
 
         # 3) run history for the login test case (idempotent on count).
-        linked = db.scalar(
-            select(func.count(models.TestResult.id)).where(
-                models.TestResult.test_case_id == LOGIN_TC
+        linked = (
+            db.scalar(
+                select(func.count(models.TestResult.id)).where(
+                    models.TestResult.test_case_id == LOGIN_TC
+                )
             )
-        ) or 0
+            or 0
+        )
         if linked >= 6:
             print(f"run history already seeded ({linked} linked results) - skipping")
         else:
@@ -198,4 +197,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

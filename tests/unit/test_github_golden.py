@@ -222,12 +222,9 @@ def test_gate_respects_pass_min_below_one() -> None:
             id="f2",  # passes
             title="t",
             call=FixtureCall(kind="resolve_repository", owner="acme", repo="web"),
-            responses=(
-                FixtureResponse(path="/repos/acme/web", status=200, body=dict(REPO_BODY)),
-            ),
+            responses=(FixtureResponse(path="/repos/acme/web", status=200, body=dict(REPO_BODY)),),
             expect={"kind": "ok", "default_branch": "trunk"},
         ),
     )
     assert run_github_eval(_set(fixtures, pass_min=0.5)).gate_passed is True
     assert run_github_eval(_set(fixtures, pass_min=1.0)).gate_passed is False
-

@@ -13,6 +13,10 @@ Covers the canonical contracts:
       existence leak (§31.3)
     - 422 for a blank / missing ``repository_path``; 422 when the change
       source is missing or doubled (``files`` vs ``base_ref``/``head_ref``)
+    - S7.2: the ``pull_request`` change source — 422 when doubled with the
+      other sources; 409 (token-free detail) when the S7.1 GitHub integration
+      is missing; 202 → ``regression.set`` with the impact derived from the
+      PR's changed files (resolved via the project's S7.1 integration)
   - ``regression.set`` event (delivered over SSE):
     - carries ``recommendation`` / ``impact`` / ``ranking`` / ``advice``; the
       ``advice`` degrades safely to the stub (``source="stub"``) when no LLM
@@ -65,14 +69,15 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from qa_copilot_ai import InMemoryPromptStore, LLMGateway, PromptSpec
-from qa_copilot_api import auth
+from qa_copilot_api import auth, jobs
 from qa_copilot_api.config import Settings
 from qa_copilot_api.jobs import JobContext, RegressionJobAgent, RunExecutionJobAgent
 from qa_copilot_api.main import create_app
 from qa_copilot_domain.enums import JobType, ProjectRole, RunStatus, TestResultStatus
 from qa_copilot_execution.report import RunReport, RunTotals, TestResultReport
+from qa_copilot_integrations.github import PullRequestInfo
 from qa_copilot_repository import db, models
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, func, select, text
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -101,6 +106,16 @@ USER_IDS = {"alice": ALICE_ID, "carol": CAROL_ID, "dave": DAVE_ID}
 TEST_FILE_REL = "tests/test_app.py"
 VALID_BODY = {"repository_path": "/tmp/qa-copilot-repo", "files": [TEST_FILE_REL]}
 VALID_RUN_BODY = {"repository_path": "/tmp/qa-copilot-repo", "tests": [TEST_FILE_REL]}
+
+# S7.2: the ``pull_request`` change source (§19 S7.2 "PR input → 202 →
+# regression.set with PR-derived impact"), resolved via the S7.1 integration.
+TOKEN_REF = "GITHUB_PAT"
+SENTINEL_PAT = "ghp_S72AnalyzeSentinel0123"  # must never leak anywhere
+PR_OWNER = "acme"
+PR_REPO = "web"
+PR_NUMBER = 7
+PR_REF = {"owner": PR_OWNER, "repo": PR_REPO, "number": PR_NUMBER}
+ANALYZE_ROUTE = f"/api/v1/projects/{ACME_ID}/regression/analyze"
 
 
 def _admin(sql: str) -> None:
@@ -148,6 +163,63 @@ def _make_repo(base: Path) -> Path:
 
 def _body(repo: Path) -> dict[str, Any]:
     return {"repository_path": str(repo), "files": [TEST_FILE_REL], "top_n": 10}
+
+
+class FakePrGitHub:
+    """In-process stand-in for the ``GitHubClient`` surface S7.2 analyze uses.
+
+    ``fetch_pull_request`` returns the PR's changed files in exactly the S6.1
+    ``files[]`` shape — the analyze request carries *no* ``files``, so the
+    impact set can only be derived from what this fake "GitHub" returns.
+    """
+
+    def __init__(self) -> None:
+        self.fetch_calls: list[tuple[str, str, int]] = []
+        self.closed = False
+
+    async def fetch_pull_request(self, owner: str, repo: str, number: int) -> PullRequestInfo:
+        self.fetch_calls.append((owner, repo, number))
+        return PullRequestInfo(
+            number=PR_NUMBER,
+            title="Fix checkout total rounding",
+            state="open",
+            html_url=f"https://github.com/{PR_OWNER}/{PR_REPO}/pull/{PR_NUMBER}",
+            head_sha="e" * 40,
+            head_ref="fix/checkout-total",
+            base_sha="b" * 40,
+            base_ref="main",
+            changed_files=(TEST_FILE_REL,),
+        )
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _set_github_config(
+    env: dict[str, Any], *, enabled: bool = True, token_ref: str | None = TOKEN_REF
+) -> None:
+    """(Up)sert the S6.4 ``integrations`` row for Acme (S7.1/S7.2 contract)."""
+    with db.make_session_factory(env["engine"])() as session:
+        config = session.scalar(
+            select(models.IntegrationConfig).where(models.IntegrationConfig.project_id == ACME_ID)
+        )
+        if config is None:
+            config = models.IntegrationConfig(project_id=ACME_ID, provider="github")
+            session.add(config)
+        config.base_url = None
+        config.token_ref = token_ref
+        config.enabled = enabled
+        session.commit()
+
+
+def _patch_build_client(monkeypatch: pytest.MonkeyPatch, fake: FakePrGitHub) -> None:
+    """Point the S7.2 agent at *fake* instead of the real GitHubClient."""
+
+    def factory(engine: Any, project_id: str) -> Any:
+        assert project_id == ACME_ID
+        return fake
+
+    monkeypatch.setattr(jobs, "build_github_client", factory)
 
 
 @pytest.fixture()
@@ -396,6 +468,92 @@ def test_regression_result_event_over_sse(client: TestClient, tmp_path: Path) ->
     assert len(recs) >= 1
     assert [rec["rank"] for rec in recs] == list(range(1, len(recs) + 1))
     # S6.5: the advisor brief is present and sourced from the stub (no LLM).
+    assert result["advice"]["source"] == "stub"
+    assert result["advice"]["summary"]
+
+
+# --- S7.2: the ``pull_request`` change source (§19 S7.2) ----------------------
+
+
+def test_analyze_pull_request_rejects_doubled_sources(client: TestClient) -> None:
+    """Exactly one of ``files`` / ``base_ref``+``head_ref`` / ``pull_request``."""
+    base = {"repository_path": "/tmp/qa-copilot-repo"}
+    doubled = [
+        {**base, "files": [TEST_FILE_REL], "pull_request": PR_REF},
+        {**base, "base_ref": "main", "head_ref": "HEAD", "pull_request": PR_REF},
+    ]
+    for body in doubled:
+        response = client.post(ANALYZE_ROUTE, json=body, headers=_auth("alice"))
+        assert response.status_code == 422, (body, response.text)
+
+
+def test_analyze_pull_request_409_without_integration(
+    client: TestClient, env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The PR source fails fast (409, token-free) before any job is queued."""
+    monkeypatch.delenv(TOKEN_REF, raising=False)
+    response = client.post(
+        ANALYZE_ROUTE,
+        json={"repository_path": "/tmp/qa-copilot-repo", "pull_request": PR_REF},
+        headers=_auth("alice"),
+    )
+    assert response.status_code == 409, response.text
+    # §17: the detail names the missing config, never a secret.
+    assert response.json()["detail"] == "project has no GitHub integration configured"
+    # Fail-fast means no job row may have been created either.
+    with db.make_session_factory(env["engine"])() as session:
+        assert session.scalar(select(func.count()).select_from(models.Job)) == 0
+
+
+def test_analyze_pull_request_202_and_pr_derived_regression_set(
+    client: TestClient, env: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR input → 202 → ``regression.set`` with PR-derived impact (§19 S7.2)."""
+    repo = _make_repo(tmp_path)
+    _set_github_config(env)
+    monkeypatch.setenv(TOKEN_REF, SENTINEL_PAT)
+    fake = FakePrGitHub()
+    _patch_build_client(monkeypatch, fake)
+
+    r = client.post(
+        ANALYZE_ROUTE,
+        json={"repository_path": str(repo), "pull_request": PR_REF, "top_n": 10},
+        headers=_auth("alice"),
+    )
+    assert r.status_code == 202, r.text
+    body = r.json()
+    job_id = body["job_id"]
+    assert body["status"] == "pending"
+    assert r.headers["location"] == f"/api/v1/jobs/{job_id}"
+
+    job = _wait_terminal(client, "alice", job_id)
+    assert job["status"] == "completed", job
+    assert job["type"] == "regression_analysis"
+    assert job["progress"] == 1.0
+    assert job["output_ref"] == f"regression://{ACME_ID}"
+    assert job["error"] is None
+
+    # The PR was resolved through the project's S7.1 GitHub integration...
+    assert fake.fetch_calls == [(PR_OWNER, PR_REPO, PR_NUMBER)]
+    assert fake.closed
+    # ...and never leaked: the sentinel PAT only existed in the environment.
+    assert SENTINEL_PAT not in str(job)
+
+    # The request carried *no* ``files`` — the impact set is derived from the
+    # PR's changed files that the fake "GitHub" returned (S6.1 input).
+    events = _stream_events(client, "alice", f"/api/v1/events?job_id={job_id}")
+    names = [name for name, _ in events]
+    assert "stage.started" in names
+    assert "regression.set" in names
+    assert "stage.completed" in names
+    assert "job.completed" in names
+
+    result = next(d for n, d in events if n == "regression.set")
+    assert {"recommendation", "impact", "ranking", "advice"} <= set(result)
+    assert any(i["path"] == TEST_FILE_REL for i in result["impact"]["impacted"])
+    recs = result["recommendation"]["recommendations"]
+    assert len(recs) >= 1
+    assert [rec["rank"] for rec in recs] == list(range(1, len(recs) + 1))
     assert result["advice"]["source"] == "stub"
     assert result["advice"]["summary"]
 

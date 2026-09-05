@@ -50,7 +50,9 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
-        op.f("ix_integration_configs_project_id"), "integration_configs", ["project_id"],
+        op.f("ix_integration_configs_project_id"),
+        "integration_configs",
+        ["project_id"],
         unique=False,
     )
 

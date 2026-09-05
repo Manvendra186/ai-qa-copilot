@@ -174,9 +174,7 @@ def _check_auth(server: FakeGitHubServer, fixture: GitHubFixture) -> str | None:
     """The PAT wiring contract: every request carries the expected header."""
     if fixture.expect_auth is None:
         return None
-    missing = [
-        i for i, auth in enumerate(server.state.seen_auth) if auth != fixture.expect_auth
-    ]
+    missing = [i for i, auth in enumerate(server.state.seen_auth) if auth != fixture.expect_auth]
     if missing:
         got = server.state.seen_auth[missing[0]]
         return f"Authorization header mismatch on request {missing[0]}: got {got!r}"

@@ -102,8 +102,10 @@ def _resolve_token(cli_value: str | None) -> str | None:
 
 def _error_payload(exc: GitHubError) -> dict[str, object]:
     """Redacted JSON error object (stdout contract on failure)."""
-    kind = "auth" if isinstance(exc, GitHubAuthError) else (
-        "not_found" if isinstance(exc, GitHubNotFoundError) else "http"
+    kind = (
+        "auth"
+        if isinstance(exc, GitHubAuthError)
+        else ("not_found" if isinstance(exc, GitHubNotFoundError) else "http")
     )
     return {"error": kind, "status": exc.status, "message": str(exc)}
 

@@ -185,9 +185,12 @@ def test_list_forbidden_for_viewer_and_non_member(client: TestClient) -> None:
 def test_put_and_delete_require_owner(client: TestClient) -> None:
     for user in ("bob", "carol", "dave"):
         assert _put(client, user).status_code == 403
-        assert client.delete(
-            _integrations_url(ACME_ID, "github"), headers=_auth_header(user)
-        ).status_code == 403
+        assert (
+            client.delete(
+                _integrations_url(ACME_ID, "github"), headers=_auth_header(user)
+            ).status_code
+            == 403
+        )
 
 
 def test_unknown_project_is_403_not_404(client: TestClient) -> None:
@@ -263,7 +266,6 @@ def test_response_contains_only_token_ref_and_token_configured(client: TestClien
     assert SENTINEL_PAT not in listing_text
 
 
-
 def test_put_rejects_invalid_provider_slug(client: TestClient) -> None:
     # URL-safe values that violate the 1-32-char ``[a-z0-9_-]`` slug contract
     for provider in ("GitHub!", "a.b", "UPPER", "a" * 40):
@@ -319,4 +321,3 @@ def test_upsert_is_single_row_per_project_provider(client: TestClient, env: dict
             .where(models.IntegrationConfig.project_id == ACME_ID)
         )
     assert count == 1
-

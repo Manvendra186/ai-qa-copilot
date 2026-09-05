@@ -11,14 +11,45 @@
   Phase 5 — Project Knowledge **complete** (S5.1 ✓, S5.2 ✓, S5.3 ✓, S5.4 ✓, S5.5 ✓) ·
   Phase 6 — Regression Intelligence **complete** (S6.1 ✓, S6.2 ✓, S6.3 ✓, S6.4 ✓, S6.5 ✓) ·
   **Phase 7 — Integrations: in progress** (S7.0 ✓ step table defined + approved ·
-  S7.1 ✓ GitHub core (LLM-free))
+  S7.1 ✓ GitHub core (LLM-free) · S7.2 ✓ PR → regression (API + web) ·
+  S7.2 exit-criterion tests added 2026-09-05)
 - **Step:** S0.1–S6.5 ✓ (S6.4 regression API + web, commit `b3fc68c` · S6.5 live E2E 38/38 +
   committed `reports/regression_v1.json` baseline, 2026-09-02) · S7.0 ✓ Phase 7 step
   table drafted + approved (bible §19, 2026-09-02) · S7.1 ✓ GitHub core (LLM-free) —
   typed client + golden 10/10 + PAT-safe `integration_configs` API (2026-09-02) ·
-  **next:** **S7.2 — PR → regression** — see §3
+  S7.2 ✓ PR → regression (commit `a9fd1`, 2026-09-02; PR-input exit tests +
+  pending ruff-format fixes committed 2026-09-05, 821 tests green) ·
+  **next:** **S7.3 — CI/CD webhook** — see §3
 
 ## 2. Just completed
+
+- 2026-09-05 · **S7.2 (PR → regression) — exit-criterion test coverage added;
+  all gates green** (bible §19 S7.2; S7.2 shipped in commit `a9fd1` on 2026-09-02
+  but its exit criterion "PR input → 202 → `regression.set` with PR-derived
+  impact" had **no direct tests**):
+  - `tests/unit/test_regression_analysis.py` — 3 new tests (file now 18):
+    `test_analyze_pull_request_rejects_doubled_sources` — `pull_request` +
+    `files` or `base_ref`/`head_ref` → **422** (the third exclusive source is
+    enforced, not just documented) ·
+    `test_analyze_pull_request_409_without_integration` — `pull_request` with
+    no GitHub integration → **409**, exact token-free detail
+    `"project has no GitHub integration configured"`, no `Job` row created ·
+    `test_analyze_pull_request_202_and_pr_derived_regression_set` — happy path:
+    **202** + `Location: /api/v1/jobs/{id}` → job reaches `completed` →
+    `output_ref regression://{project_id}` → SSE `stage.started` ·
+    `regression.set` (impact includes the PR's changed-file path — derived from
+    the PR, not the request `files`) · `stage.completed` · `job.completed`;
+  - **No real GitHub call:** monkeypatched `jobs.build_github_client` with a
+    `FakePrGitHub` (sentinel PAT) whose `fetch_pull_request_files` returns
+    `PullRequestInfo.changed_files`; asserted the sentinel PAT appears nowhere
+    in the 202 body, the job row, or the SSE stream (§17 redaction contract on
+    the new path);
+  - Gates (post-edit): `ruff check .` ✓ · `ruff format --check .` ✓ ·
+    `mypy apps packages` ✓ (108 files) · `pnpm lint` ✓ · `pnpm build` ✓ ·
+    `uv run pytest -q` → **821 passed** (818 + 3 new) in 209s;
+  - Committed the tests **plus** the pending `ruff format` fixes across 13
+    files (jobs.py, S7.1 migration, github package, repository, scripts,
+    tests) — formatting only, no behavior change.
 
 - 2026-09-02 · **S7.1 (GitHub core — LLM-free) — all gates green** (bible
   §19 S7.1; exit: typed GitHub client + golden `github_v1.json` 100% match +
@@ -671,18 +702,19 @@
 
 ## 3. NEXT STEP (start here)
 
-**S7.2 — PR → regression (API + web)** (bible §19 Phase 7; exit: a PR
-reference feeds the S6.1 impact core via the S7.1 client · `regression.set`
-contract unchanged · PR comment idempotent · RBAC §31.3):
-- `pull_request: {owner, repo, number}` as the **third exclusive source** of
-  `POST /projects/{id}/regression/analyze` (422 unless exactly one of
-  files / base+head / pull_request) — resolve the PR via
-  `qa_copilot_integrations.github` (PAT from `integration_configs`,
-  redacted §17) → changed files in the S6.1 `files[]` shape →
-  `regression.set` (unchanged contract);
-- `POST /projects/{id}/regression/pr-comment` (owner-or-above) — idempotent
-  PR comment (marker; re-post updates the existing one);
-- Regression tab: PR input (owner/repo/number) + "Post to PR".
+**S7.3 — CI/CD webhook** (bible §19 Phase 7; exit: signed webhook → 202 → job →
+`regression.set` SSE green · unsigned → 401 · duplicate delivery id → 200 with
+no second job · workflow YAML parses):
+- `POST /api/v1/webhooks/github` — `X-Hub-Signature-256` HMAC verified against
+  the project's webhook secret — **the signature IS the auth** (no token, no
+  RBAC); invalid/missing signature → 401;
+- `pull_request` `opened`/`synchronize` → owner/repo → project lookup →
+  `JobType.REGRESSION_ANALYSIS` with the PR body (202 + `Location`) →
+  `regression.set` SSE (S7.2 contract, unchanged);
+- `webhook_events` table (delivery id unique → dedupe) + migration; a duplicate
+  delivery id → 200, no second job;
+- ship the `infra/github/workflows/qa-copilot.yml` template (PR event → signed
+  call to the webhook) — must parse (e.g. `yaml.safe_load`).
 - **Phase 6 closeout (2026-09-02):** S6.5 live E2E 38/38 passed (analyze →
   202 → `regression.set` SSE → run the set → S3 Playwright 1/1 passed) ·
   baseline `reports/regression_v1.json` committed for drift tracking

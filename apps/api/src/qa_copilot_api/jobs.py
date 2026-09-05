@@ -1140,9 +1140,7 @@ def github_integration_config(session: Session, project_id: str) -> tuple[str | 
     """
     config = repo_integrations.get_integration(session, project_id, "github")
     if config is None or not config.enabled:
-        raise GitHubIntegrationNotConfiguredError(
-            "project has no GitHub integration configured"
-        )
+        raise GitHubIntegrationNotConfiguredError("project has no GitHub integration configured")
     base_url = (config.base_url or "").strip()
     token_ref = (config.token_ref or "").strip()
     if not token_ref:

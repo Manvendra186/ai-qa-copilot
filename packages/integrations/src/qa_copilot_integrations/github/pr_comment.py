@@ -113,9 +113,11 @@ def build_comment_body(
             impact_md += f" (of {scanned} scanned)"
         top_score = None
         for entry in recs:
-            if isinstance(entry, dict) and isinstance(
-                entry.get("risk_score"), (int, float)
-            ) and not isinstance(entry.get("risk_score"), bool):
+            if (
+                isinstance(entry, dict)
+                and isinstance(entry.get("risk_score"), (int, float))
+                and not isinstance(entry.get("risk_score"), bool)
+            ):
                 top_score = entry["risk_score"]
                 break
         if top_score is not None:

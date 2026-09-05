@@ -2178,3 +2178,43 @@
 - **Next session start:** **S7.2 — PR → regression (API + web)** (bible
   §19 S7.2). See `STATE.md` §3.
 
+## 2026-09-05 — S7.2 test coverage: PR-input exit criterion now directly tested — all gates green
+
+- **Goal:** close the S7.2 coverage gap — S7.2 shipped in `a9fd1`
+  (2026-09-02) but its exit criterion (bible §19 S7.2: "PR input → 202 →
+  `regression.set` with PR-derived impact") had **no direct tests**; keep all
+  gates green; commit; update agent memory.
+- **Did:**
+  - `tests/unit/test_regression_analysis.py` — 3 new tests (file now 18):
+    1. `test_analyze_pull_request_rejects_doubled_sources` — `pull_request` +
+       `files` or `base_ref`/`head_ref` → **422**; the third-source
+       exclusivity is enforced, not just documented;
+    2. `test_analyze_pull_request_409_without_integration` — `pull_request`
+       with no GitHub integration → **409**, exact detail `"project has no
+       GitHub integration configured"` — token-free, no secret in the error,
+       **no `Job` row created** (fails safe before a client is even built);
+    3. `test_analyze_pull_request_202_and_pr_derived_regression_set` — happy
+       path: **202** + `Location: /api/v1/jobs/{id}` → job reaches
+       `completed` → `output_ref regression://{project_id}` → SSE
+       `stage.started` · `regression.set` · `stage.completed` ·
+       `job.completed`; `regression.set.impact.impacted` includes the PR's
+       changed-file path — the impact set is **PR-derived, not
+       request-`files`-derived**;
+  - **No real GitHub call:** monkeypatched `jobs.build_github_client` with a
+    `FakePrGitHub` (sentinel PAT) whose `fetch_pull_request_files` returns
+    `PullRequestInfo.changed_files`; asserted the sentinel PAT appears
+    nowhere in the 202 body, the job row, or the SSE stream — the §17
+    redaction contract holds on the new path;
+  - **Gates (post-edit, all green):** `ruff check .` ✓ ·
+    `ruff format --check .` ✓ · `mypy apps packages` ✓ (108 files) ·
+    `pnpm lint` ✓ · `pnpm build` ✓ · `uv run pytest -q` → **821 passed**
+    (818 + 3 new) in 209s;
+  - **Commit:** new S7.2 tests **plus** the pending `ruff format` fixes
+    across 13 files (`jobs.py`, S7.1 migration, `github/` package,
+    repository, scripts, tests) — formatting-only, no behavior change;
+- **State:** S7.2 fully closed (implementation + exit-criterion tests +
+  memory) · next milestone **S7.3 — CI/CD webhook**
+  (`POST /api/v1/webhooks/github`, `X-Hub-Signature-256` HMAC as auth,
+  `webhook_events` dedupe, `qa-copilot.yml` template) — see `STATE.md` §3.
+
+
