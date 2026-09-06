@@ -2295,4 +2295,59 @@
   `failures.jira_issue_key` nullable column + migration, golden
   `jira_v1.json`, fake-server tests). See `STATE.md` §3.
 
+## 2026-09-06 — S7.4 Jira linking — integration core complete + gated (API part deferred by user)
+
+- **Goal:** close the **core** of S7.4 — Jira linking (bible §19 S7.4):
+  `qa_copilot_integrations.jira` typed LLM-free client + deterministic
+  failure → issue mapping + golden `jira_v1.json` + fake-server gate + CLI;
+  all gates green; update agent memory.
+- **Scope decision (user, 2026-09-06):** "you can leave the JIRA api part if
+  its not working" → the S7.4 API/persistence half (route + job +
+  `failures.jira_issue_key` + migration) is **deliberately not built**.
+  Verified the tree is not half-wired: nothing in `qa_copilot_api` /
+  `qa_copilot_domain` / `qa_copilot_repository` references the Jira package.
+- **Built (all new):**
+  - `packages/integrations/src/qa_copilot_integrations/jira/` — `client.py`
+    (typed REST v2: `create_issue` POST · `update_issue` PUT · `fetch_issue`
+    GET; `JiraError` base with `.status` · `JiraAuthError` 401/403 ·
+    `JiraNotFoundError` 404 · `JiraHTTPError` other non-2xx; §17 redaction —
+    token never stored, never in any error message; sentinel
+    `***REDACTED***` via `secrets.redact_secrets`), `issue.py`
+    (deterministic mapping: fixed `Bug` type · `[QA]` summary prefix (255
+    chars) · stable labels · ADF description from the S4.1 diagnosis with
+    capped evidence · `JiraMappingError`), `golden.py` (loader,
+    `pass_min: 1.0`), `runner.py` (`FakeJiraServer` ephemeral-loopback
+    `http.server` + `run_jira_eval`), `cli.py` + `__main__.py` (`map` /
+    `golden`; JSON on stdout, summary on stderr; exit 0/1/2);
+  - `packages/integrations/golden/jira_v1.json` — 8 cases: pin
+    `map_checkout_regression` + `create_ok` · `create_auth_401` ·
+    `create_http_400` · `update_ok` · `update_not_found` · `fetch_ok` ·
+    `fetch_not_found`;
+  - `tests/unit/test_jira_{client,issue,golden,cli}.py` — **61 tests**
+    (hermetic; no network, no Postgres needed);
+  - scratch generators `scripts/tmp_s74_{sanity,gen_payload,gen_golden}.py`
+    (left in place; delete on cleanup).
+- **Verified (gates, all green):**
+  - `uv run pytest tests/unit/test_jira_client.py
+    tests/unit/test_jira_issue.py tests/unit/test_jira_golden.py
+    tests/unit/test_jira_cli.py -q` → **61 passed**;
+  - `uv run ruff check .` ✓ · `uv run ruff format --check .` ✓ (repo-wide);
+  - `uv run mypy packages/integrations/src/qa_copilot_integrations` ✓;
+  - `uv run python -m qa_copilot_integrations.jira golden` → **8/8,
+    score 1.0, exit 0**; S7.1 GitHub gate re-verified green; S7.1 no-LLM
+    invariant ✓.
+- **Known issue (pre-existing, not S7.4):**
+  `tests/unit/test_integrations_api.py` hangs without a live Postgres at
+  `localhost:5433` → avoid full `pytest -q` until PG is up (the Jira tests
+  are hermetic and pass without it).
+- **Deferred design question (moot until the API part is built):**
+  persisted `jira_issue_key` + Jira 404 on update → recreate-and-relink vs.
+  fail with a stale-link error.
+- **Next session start:** **S7.5 — live E2E + baseline report** (bible §19
+  S7.5; baseline `reports/integrations_v1.json`) — **but its "Jira issue
+  created/linked" leg needs the deferred S7.4-API part** (route + job +
+  `jira_issue_key` + migration): either resume S7.4-API first (incl. the
+  404-stale-link decision) or re-scope S7.5 around the Jira leg (user call).
+  See `STATE.md` §3.
+
 
