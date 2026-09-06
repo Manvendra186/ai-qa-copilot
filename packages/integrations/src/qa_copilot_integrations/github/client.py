@@ -28,6 +28,8 @@ from typing import Any
 
 import httpx
 
+from qa_copilot_integrations.secrets import REDACTED, redact_secrets
+
 #: GitHub REST v3 base (overridable for GHES / fake servers / tests).
 DEFAULT_BASE_URL = "https://api.github.com"
 #: Pinned GitHub API version header (stable, non-preview endpoint set only).
@@ -37,36 +39,7 @@ API_VERSION = "2022-11-28"
 MAX_PAGES = 10
 _PAGE_SIZE = 100
 
-#: Redaction sentinel — same value as ``qa_copilot_ai.redaction.REDACTED``
-#: (kept local: integrations must stay independent of the AI package).
-REDACTED = "***REDACTED***"
-
-# (pattern, replacement) pairs applied in order. Conservative set: GitHub
-# personal/access tokens, ``Bearer`` credentials, and ``token=`` query
-# material. None of the replacements re-match (redaction is idempotent).
-_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bBearer\s+[A-Za-z0-9\-_\.+/=]+"), f"Bearer {REDACTED}"),
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), REDACTED),
-    (
-        re.compile(r"([?&]token=)([A-Za-z0-9\-_\.+/=]{8,})", re.IGNORECASE),
-        r"\1" + REDACTED,
-    ),
-)
-
 _GITHUB_NAME = re.compile(r"[A-Za-z0-9_.-]+")
-
-
-def redact_secrets(text: str) -> tuple[str, int]:
-    """Replace secret-looking material with ``***REDACTED***``.
-
-    Returns the redacted text plus how many replacements were made.
-    Idempotent: redacting twice changes nothing.
-    """
-    count = 0
-    for pattern, replacement in _SECRET_PATTERNS:
-        text, replaced = pattern.subn(replacement, text)
-        count += replaced
-    return text, count
 
 
 def _validate_ref(value: object, field: str) -> None:

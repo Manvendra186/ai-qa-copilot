@@ -1,0 +1,486 @@
+{
+  "schema_version": "jira-golden/1",
+  "name": "jira_client",
+  "version": "v1",
+  "description": "S7.4 Jira linking (LLM-free) golden: deterministic failure → issue fields mapping pins (100% match, S7.4 exit criterion) + fake-server fixtures pinning the exact typed result or typed error the Jira REST v2 client must produce — create_issue (POST), update_issue (PUT, re-link idempotency), fetch_issue (GET), 401/404/4xx error mapping, and token redaction (§17).",
+  "source": {
+    "spec": "build bible §19 S7.4, §22 (golden sets), §31.7 (100% contract gate)",
+    "api": "Jira REST v2 — POST /rest/api/2/issue, PUT/GET /rest/api/2/issue/{key}",
+    "replay": "qa_copilot_integrations.jira.runner (ThreadingHTTPServer on 127.0.0.1)"
+  },
+  "targets": {
+    "pass_min": 1.0
+  },
+  "mappings": [
+    {
+      "id": "map_checkout_regression",
+      "project_key": "QA",
+      "failure": {
+        "id": "f-9f2c",
+        "test_name": "tests/test_checkout.py::test_apply_coupon",
+        "run_id": "run-2026-09-01-0042",
+        "status": "failed",
+        "error": "AssertionError: expected discount 0.10, got 0.05\n  at checkout/pricing.py:142",
+        "category": "regression",
+        "confidence": 0.86,
+        "root_cause": "Coupon discount applied before tax in pricing pipeline",
+        "evidence": [
+          "checkout/pricing.py:142",
+          "tests/test_checkout.py::test_apply_coupon",
+          "pricing pipeline log: tax first"
+        ],
+        "suggested_fix": "Apply coupon discount after tax in the pricing pipeline."
+      },
+      "expect_payload": {
+        "project": {
+          "key": "QA"
+        },
+        "issuetype": {
+          "name": "Bug"
+        },
+        "summary": "[QA] regression: Coupon discount applied before tax in pricing pipeline",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "heading",
+              "attrs": {
+                "level": 2
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Diagnosis"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Category: regression"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Confidence: 0.86"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Root cause: Coupon discount applied before tax in pricing pipeline"
+                }
+              ]
+            },
+            {
+              "type": "heading",
+              "attrs": {
+                "level": 2
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Failure"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Failure id: f-9f2c"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Test: tests/test_checkout.py::test_apply_coupon"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Run: run-2026-09-01-0042"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Status: failed"
+                }
+              ]
+            },
+            {
+              "type": "heading",
+              "attrs": {
+                "level": 2
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Error"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "AssertionError: expected discount 0.10, got 0.05\n  at checkout/pricing.py:142"
+                }
+              ]
+            },
+            {
+              "type": "heading",
+              "attrs": {
+                "level": 2
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Evidence"
+                }
+              ]
+            },
+            {
+              "type": "list",
+              "attrs": {
+                "ordered": false,
+                "start": 1
+              },
+              "content": [
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "checkout/pricing.py:142"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "tests/test_checkout.py::test_apply_coupon"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "pricing pipeline log: tax first"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "heading",
+              "attrs": {
+                "level": 2
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Suggested fix (needs human approval)"
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Apply coupon discount after tax in the pricing pipeline."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Generated by AI QA Copilot (S7.4 Jira linking, deterministic mapping)."
+                }
+              ]
+            }
+          ]
+        },
+        "labels": [
+          "qa-copilot",
+          "failure-regression"
+        ]
+      }
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "create_ok",
+      "title": "create_issue POSTs the deterministic payload and maps the created issue",
+      "call": {
+        "kind": "create_issue",
+        "mapping": "map_checkout_regression"
+      },
+      "responses": [
+        {
+          "path": "/rest/api/2/issue",
+          "status": 201,
+          "body": {
+            "id": "10000",
+            "key": "QA-1",
+            "self": "https://acme.atlassian.net/rest/api/2/issue/10000",
+            "fields": {
+              "summary": "[QA] regression: Coupon discount applied before tax in pricing pipeline",
+              "status": {
+                "name": "To Do"
+              }
+            }
+          }
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "key": "QA-1",
+        "id": "10000",
+        "summary": "[QA] regression: Coupon discount applied before tax in pricing pipeline",
+        "status": "To Do",
+        "url": "https://acme.atlassian.net/rest/api/2/issue/10000"
+      },
+      "expect_auth": "Bearer ATATT7xS74GoldenToken1234567890"
+    },
+    {
+      "id": "create_auth_401",
+      "title": "401 → JiraAuthError with a redacted message (§17: token never appears)",
+      "call": {
+        "kind": "create_issue",
+        "mapping": "map_checkout_regression"
+      },
+      "responses": [
+        {
+          "path": "/rest/api/2/issue",
+          "status": 401,
+          "body": {
+            "errorMessages": [
+              "API token ATATT7xS74GoldenToken1234567890 not recognised"
+            ],
+            "statusCode": 401
+          }
+        }
+      ],
+      "expect": {
+        "kind": "error",
+        "error": "auth",
+        "status": 401,
+        "message_contains": [
+          "Jira API error 401",
+          "***REDACTED***"
+        ],
+        "message_not_contains": [
+          "ATATT7xS74GoldenToken1234567890"
+        ]
+      },
+      "expect_auth": "Bearer ATATT7xS74GoldenToken1234567890"
+    },
+    {
+      "id": "create_http_400",
+      "title": "400 → JiraHTTPError (status + redacted Jira error detail)",
+      "call": {
+        "kind": "create_issue",
+        "mapping": "map_checkout_regression"
+      },
+      "responses": [
+        {
+          "path": "/rest/api/2/issue",
+          "status": 400,
+          "body": {
+            "errorMessages": [
+              "issuetype is required"
+            ],
+            "message": "issuetype is required",
+            "statusCode": 400
+          }
+        }
+      ],
+      "expect": {
+        "kind": "error",
+        "error": "http",
+        "status": 400,
+        "message_contains": [
+          "Jira API error 400",
+          "issuetype is required"
+        ]
+      },
+      "expect_auth": "Bearer ATATT7xS74GoldenToken1234567890"
+    },
+    {
+      "id": "update_ok",
+      "title": "update_issue PUTs the same deterministic payload (re-link idempotency)",
+      "call": {
+        "kind": "update_issue",
+        "key": "QA-1",
+        "mapping": "map_checkout_regression"
+      },
+      "responses": [
+        {
+          "path": "/rest/api/2/issue/QA-1",
+          "status": 200,
+          "body": {
+            "id": "10000",
+            "key": "QA-1",
+            "self": "https://acme.atlassian.net/rest/api/2/issue/10000",
+            "fields": {
+              "summary": "[QA] regression: Coupon discount applied before tax in pricing pipeline",
+              "status": {
+                "name": "In Progress"
+              }
+            }
+          }
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "key": "QA-1",
+        "id": "10000",
+        "summary": "[QA] regression: Coupon discount applied before tax in pricing pipeline",
+        "status": "In Progress",
+        "url": "https://acme.atlassian.net/rest/api/2/issue/10000"
+      },
+      "expect_auth": "Bearer ATATT7xS74GoldenToken1234567890"
+    },
+    {
+      "id": "update_not_found",
+      "title": "404 on update → JiraNotFoundError (stale persisted key)",
+      "call": {
+        "kind": "update_issue",
+        "key": "QA-999",
+        "mapping": "map_checkout_regression"
+      },
+      "responses": [
+        {
+          "path": "/rest/api/2/issue/QA-999",
+          "status": 404,
+          "body": {
+            "errorMessages": [
+              "Issue QA-999 does not exist"
+            ],
+            "statusCode": 404
+          }
+        }
+      ],
+      "expect": {
+        "kind": "error",
+        "error": "not_found",
+        "status": 404,
+        "message_contains": [
+          "Jira API error 404",
+          "does not exist"
+        ]
+      },
+      "expect_auth": "Bearer ATATT7xS74GoldenToken1234567890"
+    },
+    {
+      "id": "fetch_ok",
+      "title": "fetch_issue GETs by key and maps the issue",
+      "call": {
+        "kind": "fetch_issue",
+        "key": "QA-1"
+      },
+      "responses": [
+        {
+          "path": "/rest/api/2/issue/QA-1",
+          "status": 200,
+          "body": {
+            "id": "10000",
+            "key": "QA-1",
+            "self": "https://acme.atlassian.net/rest/api/2/issue/10000",
+            "fields": {
+              "summary": "[QA] regression: Coupon discount applied before tax in pricing pipeline",
+              "status": {
+                "name": "To Do"
+              }
+            }
+          }
+        }
+      ],
+      "expect": {
+        "kind": "ok",
+        "key": "QA-1",
+        "id": "10000",
+        "summary": "[QA] regression: Coupon discount applied before tax in pricing pipeline",
+        "status": "To Do",
+        "url": "https://acme.atlassian.net/rest/api/2/issue/10000"
+      },
+      "expect_auth": "Bearer ATATT7xS74GoldenToken1234567890"
+    },
+    {
+      "id": "fetch_not_found",
+      "title": "404 on fetch → JiraNotFoundError",
+      "call": {
+        "kind": "fetch_issue",
+        "key": "QA-999"
+      },
+      "responses": [
+        {
+          "path": "/rest/api/2/issue/QA-999",
+          "status": 404,
+          "body": {
+            "errorMessages": [
+              "Issue QA-999 does not exist"
+            ],
+            "statusCode": 404
+          }
+        }
+      ],
+      "expect": {
+        "kind": "error",
+        "error": "not_found",
+        "status": 404,
+        "message_contains": [
+          "Jira API error 404",
+          "does not exist"
+        ]
+      },
+      "expect_auth": "Bearer ATATT7xS74GoldenToken1234567890"
+    }
+  ]
+}
