@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_DNS, uuid4, uuid5
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -143,6 +144,7 @@ def _configure_project(
     """Seed Acme's S7.3 dependencies: repository link + settings + webhook secret."""
     with db.make_session_factory(env["engine"])() as session:
         project = session.get(models.Project, ACME_ID)
+        assert project is not None
         if link_repository:
             session.add(
                 models.Repository(
@@ -197,7 +199,7 @@ def _post(
     event: str,
     delivery_id: str,
     sign_with: str | None,
-):
+) -> httpx.Response:
     """POST the exact payload bytes, signed with ``sign_with`` when given."""
     body = json.dumps(payload).encode("utf-8")
     headers = {
@@ -207,7 +209,7 @@ def _post(
     }
     if sign_with is not None:
         headers["x-hub-signature-256"] = compute_github_signature(sign_with, body)
-    return client.post(WEBHOOK_ROUTE, content=body, headers=headers)
+    return client.post(WEBHOOK_ROUTE, content=body, headers=headers)  # type: ignore[no-any-return]
 
 
 def _count(env: dict[str, Any], model: Any, *filters: Any) -> int:
@@ -235,7 +237,7 @@ def _wait_terminal(
 ) -> dict[str, Any]:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        job = client.get(f"/api/v1/jobs/{job_id}", headers=_auth(user)).json()
+        job: dict[str, Any] = client.get(f"/api/v1/jobs/{job_id}", headers=_auth(user)).json()
         if job["status"] in {"completed", "failed"}:
             return job
         time.sleep(0.1)

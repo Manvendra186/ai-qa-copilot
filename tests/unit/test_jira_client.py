@@ -49,7 +49,7 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-def _client(handler: Handler, *, token: str | None = TOKEN, base: str = BASE) -> JiraClient:
+def _client(handler: Handler, *, token: str = TOKEN, base: str = BASE) -> JiraClient:
     return JiraClient(base_url=base, token=token, transport=httpx.MockTransport(handler))
 
 
@@ -83,7 +83,7 @@ def test_validate_issue_key_accepts_and_rejects() -> None:
     assert validate_issue_key("ABC-1") == "ABC-1"
     for bad in ("", "123", "QA", "QA-abc", "QA-1 2", None, 5):
         with pytest.raises(ValueError, match="issue key"):
-            validate_issue_key(bad)
+            validate_issue_key(bad)  # type: ignore[arg-type]
 
 
 def test_validate_project_key_accepts_and_rejects() -> None:
@@ -91,7 +91,7 @@ def test_validate_project_key_accepts_and_rejects() -> None:
     assert validate_project_key("Acme_Corp") == "Acme_Corp"
     for bad in ("", "a-b", "a b", "1abc", None, 5):
         with pytest.raises(ValueError, match="project key"):
-            validate_project_key(bad)
+            validate_project_key(bad)  # type: ignore[arg-type]
 
 
 def test_client_requires_token() -> None:

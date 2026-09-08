@@ -1,0 +1,291 @@
+{
+  "schema_version": "integrations-v1/1",
+  "step": "S7.5",
+  "title": "Live E2E baseline: signed webhook -> regression -> ranked set -> S3 run",
+  "generated_at": "2026-09-08T08:00:03.202228+00:00",
+  "scope": {
+    "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+    "pull_request": {
+      "owner": "example",
+      "repo": "app-under-test",
+      "number": 1
+    },
+    "test_file": "e2e/demo.spec.js",
+    "fake_github_base": "http://127.0.0.1:8710",
+    "api_base": "http://127.0.0.1:8000/api/v1"
+  },
+  "jira_leg": "DEFERRED (2026-09-06 decision) \u2014 not exercised in this baseline",
+  "checks": [
+    {
+      "name": "login.project",
+      "expected": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "actual": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "passed": true
+    },
+    {
+      "name": "webhook.http_status",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "webhook.http_status",
+      "expected": 401,
+      "actual": 401,
+      "passed": true
+    },
+    {
+      "name": "webhook.http_status",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "regression.set_events",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "regression.top_test_key",
+      "expected": "e2e/demo.spec.js",
+      "actual": "e2e/demo.spec.js",
+      "passed": true
+    },
+    {
+      "name": "regression.top_rank",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "regression.impact_has_demo",
+      "expected": "e2e/demo.spec.js",
+      "actual": "e2e/demo.spec.js",
+      "passed": true
+    },
+    {
+      "name": "regression.impact_kinds",
+      "expected": [
+        "direct",
+        "generated",
+        "referenced"
+      ],
+      "actual": [
+        "direct",
+        "generated",
+        "referenced"
+      ],
+      "passed": true
+    },
+    {
+      "name": "regression.stats_is_flaky",
+      "expected": true,
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "regression.job_row.status",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    },
+    {
+      "name": "regression.job_row.output_ref",
+      "expected": "regression://f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "actual": "regression://f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "passed": true
+    },
+    {
+      "name": "run.http_status",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "run.result_events",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "run.totals.total",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "run.totals.passed",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "run.totals.failed",
+      "expected": 0,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "name": "run.run_id",
+      "expected": "non-empty",
+      "actual": "8c233297-b1c5-4c6a-8135-d244e66fa874",
+      "passed": true
+    }
+  ],
+  "regression_set": {
+    "job_id": "bae6d7b0-9c50-4bc6-b5e2-2ce20aaac60b",
+    "recommendation": {
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "changed": [
+        "e2e/demo.spec.js",
+        "e2e/fixtures.js"
+      ],
+      "recommendations": [
+        {
+          "test_key": "e2e/demo.spec.js",
+          "stats": {
+            "test_key": "e2e/demo.spec.js",
+            "executions": 6,
+            "passed": 3,
+            "failed": 1,
+            "flaky": 2,
+            "skipped": 0,
+            "flakiness_rate": 0.3333333333333333,
+            "failure_rate": 0.16666666666666666,
+            "recent_failure_rate": 0.2,
+            "is_flaky": true,
+            "is_failing": false,
+            "insufficient_samples": false,
+            "last_status": "passed",
+            "last_run_id": "a17dae87-7907-41d5-a050-3e591dc38aeb"
+          },
+          "rank": 1,
+          "risk_score": 71.666667,
+          "impact_kind": "direct",
+          "changed_files": [
+            "e2e/demo.spec.js",
+            "e2e/fixtures.js"
+          ],
+          "requirement_risk": "high",
+          "test_case_priority": "high",
+          "rationale": [
+            "impact:direct",
+            "failure 17%",
+            "flaky 33%",
+            "requirement-risk:high",
+            "priority:high",
+            "changed:2"
+          ]
+        }
+      ],
+      "top_n": 10,
+      "min_sample": 3,
+      "recent_window": 5,
+      "flaky_threshold": 0.25,
+      "failing_threshold": 0.5,
+      "computed_at": "2026-09-08T07:59:48.705257Z"
+    },
+    "impact": {
+      "changed": [
+        "e2e/demo.spec.js",
+        "e2e/fixtures.js"
+      ],
+      "impacted": [
+        {
+          "path": "e2e/demo.spec.js",
+          "kinds": [
+            "direct",
+            "generated",
+            "referenced"
+          ],
+          "changed_files": [
+            "e2e/demo.spec.js",
+            "e2e/fixtures.js"
+          ],
+          "test_case_ids": [
+            "3cfe1127-ccf9-4dce-9fe5-c241193468e2"
+          ],
+          "requirement_ids": [
+            "cf4b4237-bbba-4b93-9cf3-0420b3a3649f"
+          ],
+          "signals": [
+            "changed test file",
+            "generated test applied (test case 3cfe1127-ccf9-4dce-9fe5-c241193468e2)",
+            "imports e2e/fixtures.js"
+          ]
+        }
+      ],
+      "test_files_scanned": 2,
+      "notes": [],
+      "computed_at": "2026-09-08T07:59:48.673974Z"
+    },
+    "ranking": {
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
+      "ranked": [
+        {
+          "test_key": "e2e/demo.spec.js",
+          "risk_score": 71.666667,
+          "signals": [
+            "impact:direct",
+            "flaky 33%",
+            "requirement-risk:high",
+            "priority:high"
+          ],
+          "stats": {
+            "test_key": "e2e/demo.spec.js",
+            "executions": 6,
+            "passed": 3,
+            "failed": 1,
+            "flaky": 2,
+            "skipped": 0,
+            "flakiness_rate": 0.3333333333333333,
+            "failure_rate": 0.16666666666666666,
+            "recent_failure_rate": 0.2,
+            "is_flaky": true,
+            "is_failing": false,
+            "insufficient_samples": false,
+            "last_status": "passed",
+            "last_run_id": "a17dae87-7907-41d5-a050-3e591dc38aeb"
+          },
+          "impact_kind": "direct",
+          "requirement_risk": "high",
+          "test_case_priority": "high"
+        }
+      ],
+      "min_sample": 3,
+      "recent_window": 5,
+      "flaky_threshold": 0.25,
+      "failing_threshold": 0.5,
+      "computed_at": "2026-09-08T07:59:48.701253Z"
+    },
+    "advice": {
+      "summary": "Run e2e/demo.spec.js first due to direct impact from changed files, high requirement risk, and a 33% flakiness rate.",
+      "source": "llm"
+    },
+    "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+  },
+  "run": {
+    "result": {
+      "job_id": "bc827fe8-8d75-4857-b243-d0b566894a2e",
+      "run_id": "8c233297-b1c5-4c6a-8135-d244e66fa874",
+      "status": "completed",
+      "totals": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "flaky": 0,
+        "skipped": 0
+      },
+      "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
+    },
+    "run_id": "8c233297-b1c5-4c6a-8135-d244e66fa874",
+    "job_id": "bc827fe8-8d75-4857-b243-d0b566894a2e"
+  },
+  "summary": {
+    "total": 18,
+    "passed": 18,
+    "failed": 0,
+    "status": "pass"
+  }
+}
