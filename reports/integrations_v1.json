@@ -1,8 +1,8 @@
 {
   "schema_version": "integrations-v1/1",
   "step": "S7.5",
-  "title": "Live E2E baseline: signed webhook -> regression -> ranked set -> S3 run",
-  "generated_at": "2026-09-08T08:00:03.202228+00:00",
+  "title": "Live E2E baseline: webhook -> regression -> ranked set -> S3 run -> Jira link",
+  "generated_at": "2026-09-08T12:53:19.243757+00:00",
   "scope": {
     "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
     "pull_request": {
@@ -12,9 +12,19 @@
     },
     "test_file": "e2e/demo.spec.js",
     "fake_github_base": "http://127.0.0.1:8710",
+    "fake_jira_base": "http://127.0.0.1:8711",
     "api_base": "http://127.0.0.1:8000/api/v1"
   },
-  "jira_leg": "DEFERRED (2026-09-06 decision) \u2014 not exercised in this baseline",
+  "jira_leg": {
+    "failure_id": "47071848-cf5c-4979-9813-d14634dd9b6f",
+    "project_key": "QA",
+    "action": "created",
+    "issue_key": "QA-1",
+    "url": "http://127.0.0.1:8711/rest/api/2/issue/QA-1",
+    "readback_key": "QA-1",
+    "relink_action": "updated",
+    "relink_key": "QA-1"
+  },
   "checks": [
     {
       "name": "login.project",
@@ -129,12 +139,78 @@
     {
       "name": "run.run_id",
       "expected": "non-empty",
-      "actual": "8c233297-b1c5-4c6a-8135-d244e66fa874",
+      "actual": "976e4dca-feb3-4f03-b3c5-75c983be4370",
+      "passed": true
+    },
+    {
+      "name": "jira.http_status",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "jira.location_header",
+      "expected": "/api/v1/jobs/5380bb47-7f93-4800-a0bd-d7899c7dbbf7",
+      "actual": "/api/v1/jobs/5380bb47-7f93-4800-a0bd-d7899c7dbbf7",
+      "passed": true
+    },
+    {
+      "name": "jira.issue_events",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "jira.action",
+      "expected": "created",
+      "actual": "created",
+      "passed": true
+    },
+    {
+      "name": "jira.issue_key",
+      "expected": "QA-1",
+      "actual": "QA-1",
+      "passed": true
+    },
+    {
+      "name": "jira.project_key",
+      "expected": "QA",
+      "actual": "QA",
+      "passed": true
+    },
+    {
+      "name": "jira.url",
+      "expected": "non-empty",
+      "actual": "http://127.0.0.1:8711/rest/api/2/issue/QA-1",
+      "passed": true
+    },
+    {
+      "name": "jira.readback_key",
+      "expected": "QA-1",
+      "actual": "QA-1",
+      "passed": true
+    },
+    {
+      "name": "jira.relink_status",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "jira.relink_action",
+      "expected": "updated",
+      "actual": "updated",
+      "passed": true
+    },
+    {
+      "name": "jira.relink_key_same",
+      "expected": "QA-1",
+      "actual": "QA-1",
       "passed": true
     }
   ],
   "regression_set": {
-    "job_id": "bae6d7b0-9c50-4bc6-b5e2-2ce20aaac60b",
+    "job_id": "856f5848-23cb-4ee3-a687-24413e8f645d",
     "recommendation": {
       "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
       "changed": [
@@ -184,7 +260,7 @@
       "recent_window": 5,
       "flaky_threshold": 0.25,
       "failing_threshold": 0.5,
-      "computed_at": "2026-09-08T07:59:48.705257Z"
+      "computed_at": "2026-09-08T12:52:59.568583Z"
     },
     "impact": {
       "changed": [
@@ -218,7 +294,7 @@
       ],
       "test_files_scanned": 2,
       "notes": [],
-      "computed_at": "2026-09-08T07:59:48.673974Z"
+      "computed_at": "2026-09-08T12:52:59.516946Z"
     },
     "ranking": {
       "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe",
@@ -257,18 +333,18 @@
       "recent_window": 5,
       "flaky_threshold": 0.25,
       "failing_threshold": 0.5,
-      "computed_at": "2026-09-08T07:59:48.701253Z"
+      "computed_at": "2026-09-08T12:52:59.564204Z"
     },
     "advice": {
-      "summary": "Run e2e/demo.spec.js first due to direct impact from changed files, high requirement risk, and a 33% flakiness rate.",
+      "summary": "Run e2e/demo.spec.js first; it is the sole recommendation with a high risk score of 71.67, driven by direct impact from two changed files and high requirement-risk.",
       "source": "llm"
     },
     "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
   },
   "run": {
     "result": {
-      "job_id": "bc827fe8-8d75-4857-b243-d0b566894a2e",
-      "run_id": "8c233297-b1c5-4c6a-8135-d244e66fa874",
+      "job_id": "ca5841dd-7c68-4abb-a6b3-9696fbbfb55f",
+      "run_id": "976e4dca-feb3-4f03-b3c5-75c983be4370",
       "status": "completed",
       "totals": {
         "total": 1,
@@ -279,12 +355,12 @@
       },
       "project_id": "f500a3b2-04a3-4cd2-9eaf-87f7c39c98fe"
     },
-    "run_id": "8c233297-b1c5-4c6a-8135-d244e66fa874",
-    "job_id": "bc827fe8-8d75-4857-b243-d0b566894a2e"
+    "run_id": "976e4dca-feb3-4f03-b3c5-75c983be4370",
+    "job_id": "ca5841dd-7c68-4abb-a6b3-9696fbbfb55f"
   },
   "summary": {
-    "total": 18,
-    "passed": 18,
+    "total": 29,
+    "passed": 29,
     "failed": 0,
     "status": "pass"
   }

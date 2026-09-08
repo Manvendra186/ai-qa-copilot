@@ -1,9 +1,9 @@
 """S7.5 live baseline — idempotent DB seed (mirrors the S6.5 evidence pair).
 
 S7.5 (build bible §19) is the live E2E baseline for the **webhook → regression
-→ run** leg. The **Jira leg is deferred** (2026-09-06 decision), so this seed
-only prepares the demo project's S7.3 / S7.2 / S3 dependencies — it never
-touches a Jira integration:
+→ run → Jira-link** legs. This seed prepares the demo project's S7.3 / S7.2 /
+S3 / S7.4 dependencies (the S7.4 Jira leg was completed 2026-09-08 and is no
+longer deferred):
 
   * ``project.settings.repository_path`` = the demo-app checkout. Both the
     S6.1 impact analysis and the S3 Playwright execution read this path, so it
@@ -14,6 +14,9 @@ touches a Jira integration:
     in-process fake GitHub server.
   * ``integration_configs(provider='github_webhook')`` — the S7.3 webhook
     secret. ``token_ref`` names the env var holding the ``whsec_`` secret.
+  * ``integration_configs(provider='jira')`` — the S7.4 Jira-link integration.
+    ``token_ref`` names the env var holding the Jira API token; ``base_url`` is
+    left for the live driver to point at its in-process fake Jira server.
   * the S6.5 applied generated test + seeded run history (verified present).
 
 DB-only (no GitHub / no LLM), idempotent (safe to re-run), like the S6.5 seed.
@@ -73,6 +76,7 @@ TEST_FILE = "e2e/demo.spec.js"
 # Integration token_refs (env-var NAMES — the secrets live in env, never the DB).
 GH_TOKEN_REF = "S75_FAKE_GH_TOKEN"
 WHSEC_REF = "S75_WEBHOOK_SECRET"
+JIRA_TOKEN_REF = "S75_FAKE_JIRA_TOKEN"
 
 
 def _ensure_requirement(session: Session) -> str:
@@ -227,6 +231,7 @@ def main() -> None:
         _ensure_runs(session, test_case_id)
         _upsert_integration(session, "github", token_ref=GH_TOKEN_REF)
         _upsert_integration(session, "github_webhook", token_ref=WHSEC_REF)
+        _upsert_integration(session, "jira", token_ref=JIRA_TOKEN_REF)
 
         session.commit()
 

@@ -1,10 +1,10 @@
-"""S7.5 live E2E baseline: signed webhook -> regression -> ranked set -> run.
+"""S7.5 live E2E baseline: webhook -> regression -> run -> Jira link.
 
 Build bible §19 S7.5 (the "live E2E + baseline report" step), modelled on the
 S6.5 live-evidence pair (``scripts/_s65_live.py``) but with the S7.3 webhook as
-the entry point instead of a direct ``/regression/analyze`` call. The **Jira leg
-is intentionally deferred** (2026-09-06 decision) — this baseline covers the
-webhook → regression → ranked-set → S3 run leg only.
+the entry point instead of a direct ``/regression/analyze`` call. This covers
+the full webhook → regression → ranked-set → S3 run → **Jira-link** leg (the
+S7.4 Jira leg was completed 2026-09-08 and is now driven live).
 
 What is *live* (real code paths, no fakes of the code under test):
   * the S7.3 inbound webhook route (``POST /api/v1/webhooks/github``) with a
@@ -14,15 +14,22 @@ What is *live* (real code paths, no fakes of the code under test):
     S6.5 "local HTTP fixture" pattern — there is no real GitHub on this box);
   * the deterministic S6.1 impact + S6.2 stats + S6.3 ranking chain;
   * the S3 Playwright "run this set" execution (the demo app under test is
-    auto-started by the demo project's Playwright ``webServer``).
+    auto-started by the demo project's Playwright ``webServer``);
+  * the S7.4 failure -> Jira link (``POST /projects/{id}/failures/{fid}/jira``):
+    the **real** S7.4 ``JiraClient`` create/update/fetch calls (the only fake is
+    a local Jira *server*, the same S6.5 "local HTTP fixture" pattern) driving
+    the real ``jira_link`` job + ``jira.issue`` SSE event, then a read-back that
+    asserts ``failures.jira_issue_key`` and a re-link proving "updated, never
+    duplicated".
 
 Everything else is deterministic and offline. The driver is self-contained:
-it starts its fake-GitHub HTTP server and the API subprocess itself, waits for
-readiness, drives the flow over real HTTP, asserts the live baseline, writes
-``reports/integrations_v1.json``, and tears the subprocesses down. Secrets are
-env-referenced only (S7.1 §17): the API resolves the PAT and the webhook secret
-from the env vars named by the project's ``integration_configs.token_ref`` rows
-(``S75_FAKE_GH_TOKEN`` / ``S75_WEBHOOK_SECRET``); nothing is stored.
+it starts its fake-GitHub and fake-Jira HTTP servers and the API subprocess
+itself, waits for readiness, drives the flow over real HTTP, asserts the live
+baseline, writes ``reports/integrations_v1.json``, and tears the subprocesses
+down. Secrets are env-referenced only (S7.1 §17): the API resolves the PAT, the
+webhook secret, and the Jira API token from the env vars named by the project's
+``integration_configs.token_ref`` rows (``S75_FAKE_GH_TOKEN`` /
+``S75_WEBHOOK_SECRET`` / ``S75_FAKE_JIRA_TOKEN``); nothing is stored.
 
 Exits 0 when every assertion holds, non-zero otherwise.
 """
@@ -62,6 +69,9 @@ REPO_PATH = r"c:\Users\manve\Workspace\ai-qa-copilot-demo-app"
 FAKE_GH_HOST = "127.0.0.1"
 FAKE_GH_PORT = 8710
 FAKE_GH_BASE = f"http://{FAKE_GH_HOST}:{FAKE_GH_PORT}"
+FAKE_JIRA_HOST = "127.0.0.1"
+FAKE_JIRA_PORT = 8711
+FAKE_JIRA_BASE = f"http://{FAKE_JIRA_HOST}:{FAKE_JIRA_PORT}"
 API_HOST = "127.0.0.1"
 API_PORT = 8000
 API_BASE = f"http://{API_HOST}:{API_PORT}/api/v1"
@@ -71,6 +81,13 @@ GH_TOKEN = "ghp_S75FakeToken0123456789"
 WEBHOOK_SECRET = "whsec_S75FakeWebhookSecret0123456789"
 GH_TOKEN_REF = "S75_FAKE_GH_TOKEN"
 WEBHOOK_SECRET_REF = "S75_WEBHOOK_SECRET"
+# S7.4 Jira-link leg: the fake Jira's Bearer token (loopback only, never stored)
+# and the Jira project key the issue is filed under. ``JIRA_FIRST_KEY`` is the
+# deterministic key a fresh fake Jira returns for the first ``create`` (QA-1).
+JIRA_TOKEN = "ATATT7xS75FakeJiraToken1234567890"
+JIRA_TOKEN_REF = "S75_FAKE_JIRA_TOKEN"
+JIRA_PROJECT_KEY = "QA"
+JIRA_FIRST_KEY = "QA-1"
 
 EMAIL = "dev@local.dev"
 PASSWORD = "dev-password"
@@ -152,6 +169,143 @@ class FakeGitHubServer:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        try:
+            self._server.shutdown()
+            self._server.server_close()
+        finally:
+            self._server = None  # type: ignore[assignment]
+
+
+class _FakeJiraState:
+    """In-memory issue store + counter shared by the fake Jira handler."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.issues: dict[str, dict[str, Any]] = {}
+        self.counter: int = 0
+
+    def reset(self) -> None:
+        with self.lock:
+            self.issues.clear()
+            self.counter = 0
+
+
+_fake_jira_state = _FakeJiraState()
+
+
+class _FakeJiraHandler(BaseHTTPRequestHandler):
+    """Serves exactly the S7.4 ``JiraClient`` calls the ``jira_link`` job makes.
+
+    Implements the Jira REST v2 issue surface over an in-memory store:
+    ``POST /rest/api/2/issue`` (create, new key ``QA-<n>``),
+    ``PUT /rest/api/2/issue/{key}`` (update in place, 404 if unknown) and
+    ``GET /rest/api/2/issue/{key}`` (fetch, 404 if unknown). State is reset by
+    :meth:`FakeJiraServer.start`, so a fresh server hands out ``QA-1`` first
+    (the deterministic key the baseline asserts). Bearer auth is checked
+    (``JIRA_TOKEN``) so the §17 auth/redaction path is exercised too.
+    """
+
+    def _send_json(self, status: int, body: object) -> None:
+        payload = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _auth_ok(self) -> bool:
+        return self.headers.get("Authorization", "") == f"Bearer {JIRA_TOKEN}"
+
+    def _read_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _issue_body(key: str, fields: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "key": key,
+            "id": f"10000{key.rsplit('-', 1)[-1]}",
+            "self": f"{FAKE_JIRA_BASE}/rest/api/2/issue/{key}",
+            "fields": {
+                "summary": fields.get("summary"),
+                "status": {"name": "To Do"},
+                "project": {"key": JIRA_PROJECT_KEY},
+                "labels": fields.get("labels"),
+            },
+        }
+
+    @staticmethod
+    def _issue_key(path: str) -> str | None:
+        prefix = "/rest/api/2/issue/"
+        if not path.startswith(prefix):
+            return None
+        key = path[len(prefix):]
+        return key or None
+
+    def do_POST(self) -> None:  # noqa: N802 (http.server contract)
+        if not self._auth_ok():
+            self._send_json(401, {"errorMessages": ["Bad credentials"]})
+            return
+        path = self.path.split("?", 1)[0]
+        if path != "/rest/api/2/issue":
+            self._send_json(404, {"errorMessages": ["Not Found"]})
+            return
+        fields = self._read_body()
+        with _fake_jira_state.lock:
+            _fake_jira_state.counter += 1
+            key = f"QA-{_fake_jira_state.counter}"
+            _fake_jira_state.issues[key] = dict(fields)
+        self._send_json(201, self._issue_body(key, fields))
+
+    def do_PUT(self) -> None:  # noqa: N802 (http.server contract)
+        if not self._auth_ok():
+            self._send_json(401, {"errorMessages": ["Bad credentials"]})
+            return
+        key = self._issue_key(self.path.split("?", 1)[0])
+        if key is None or key not in _fake_jira_state.issues:
+            self._send_json(404, {"errorMessages": ["Issue Does Not Exist"]})
+            return
+        fields = self._read_body()
+        with _fake_jira_state.lock:
+            _fake_jira_state.issues[key] = dict(fields)
+        self._send_json(200, self._issue_body(key, fields))
+
+    def do_GET(self) -> None:  # noqa: N802 (http.server contract)
+        if not self._auth_ok():
+            self._send_json(401, {"errorMessages": ["Bad credentials"]})
+            return
+        key = self._issue_key(self.path.split("?", 1)[0])
+        if key is None or key not in _fake_jira_state.issues:
+            self._send_json(404, {"errorMessages": ["Issue Does Not Exist"]})
+            return
+        with _fake_jira_state.lock:
+            fields = dict(_fake_jira_state.issues[key])
+        self._send_json(200, self._issue_body(key, fields))
+
+    def log_message(self, *args: object) -> None:  # noqa: ARG002 (quiet)
+        pass
+
+
+class FakeJiraServer:
+    """A :class:`ThreadingHTTPServer` on 127.0.0.1 serving the fake Jira."""
+
+    def __init__(self) -> None:
+        self._server = ThreadingHTTPServer((FAKE_JIRA_HOST, FAKE_JIRA_PORT), _FakeJiraHandler)
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        _fake_jira_state.reset()  # first create is deterministically QA-1
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
@@ -376,6 +530,90 @@ def run(client: httpx.Client, headers: dict[str, str], *, checks: Check) -> dict
     return {"result": result, "run_id": run_id, "job_id": job_id}
 
 
+def link_failure_to_jira(
+    client: httpx.Client, headers: dict[str, str], *, checks: Check
+) -> dict[str, object]:
+    """S7.4 leg: link the seeded failure to a Jira issue (create -> read-back -> re-link).
+
+    Drives the real ``POST /projects/{id}/failures/{fid}/jira`` route (202 + job),
+    the real ``jira_link`` job (the real ``JiraClient`` against our fake Jira),
+    and the ``jira.issue`` SSE event. Asserts the issue key is ``QA-1``, that
+    ``failures.jira_issue_key`` is persisted, and that a re-link *updates* the
+    same key (never duplicates) -- the S7.4 "create-or-update, self-healing"
+    contract exercised live.
+    """
+    failure_id = _pick_jira_failure()
+
+    def _link() -> httpx.Response:
+        return client.post(
+            f"/projects/{PROJECT_ID}/failures/{failure_id}/jira",
+            json={"project_key": JIRA_PROJECT_KEY},
+            headers=headers,
+        )
+
+    # -- first link: create (202 + job + Location) ---------------------------
+    first = _link()
+    checks.add("jira.http_status", 202, first.status_code, first.status_code == 202)
+    if first.status_code != 202:
+        raise RuntimeError(f"jira link rejected: {first.text[:300]}")
+    first_job_id = str(first.json().get("job_id"))
+    checks.add(
+        "jira.location_header",
+        f"/api/v1/jobs/{first_job_id}",
+        first.headers.get("location"),
+        first.headers.get("location") == f"/api/v1/jobs/{first_job_id}",
+    )
+
+    # -- drive the job; assert the jira.issue SSE event (action=created) -----
+    events = stream_job(headers, first_job_id, timeout_s=120)
+    issue_events = [d for n, d in events if n == "jira.issue"]
+    checks.add("jira.issue_events", 1, len(issue_events), len(issue_events) == 1)
+    issue: Any = issue_events[0] if issue_events else {}
+    checks.add("jira.action", "created", issue.get("action"), issue.get("action") == "created")
+    checks.add(
+        "jira.issue_key", JIRA_FIRST_KEY, issue.get("key"), issue.get("key") == JIRA_FIRST_KEY
+    )
+    checks.add(
+        "jira.project_key",
+        JIRA_PROJECT_KEY,
+        issue.get("project_key"),
+        issue.get("project_key") == JIRA_PROJECT_KEY,
+    )
+    checks.add("jira.url", "non-empty", issue.get("url"), bool(issue.get("url")))
+
+    # -- read-back: failures.jira_issue_key is persisted (the idempotency anchor)
+    readback = _readback_jira_key(failure_id)
+    checks.add("jira.readback_key", JIRA_FIRST_KEY, readback, readback == JIRA_FIRST_KEY)
+
+    # -- re-link: update in place, never duplicates --------------------------
+    relink_action: str | None = None
+    relink_key: object = None
+    second = _link()
+    checks.add("jira.relink_status", 202, second.status_code, second.status_code == 202)
+    if second.status_code == 202:
+        second_job_id = str(second.json().get("job_id"))
+        events2 = stream_job(headers, second_job_id, timeout_s=120)
+        issue_events2 = [d for n, d in events2 if n == "jira.issue"]
+        issue2: Any = issue_events2[0] if issue_events2 else {}
+        relink_action = issue2.get("action")
+        relink_key = issue2.get("key")
+    checks.add("jira.relink_action", "updated", relink_action, relink_action == "updated")
+    checks.add(
+        "jira.relink_key_same", JIRA_FIRST_KEY, relink_key, relink_key == JIRA_FIRST_KEY
+    )
+
+    return {
+        "failure_id": failure_id,
+        "project_key": JIRA_PROJECT_KEY,
+        "action": issue.get("action"),
+        "issue_key": issue.get("key"),
+        "url": issue.get("url"),
+        "readback_key": readback,
+        "relink_action": relink_action,
+        "relink_key": relink_key,
+    }
+
+
 # --- local-stack plumbing -----------------------------------------------------
 def _repo_src_paths() -> list[str]:
     return [
@@ -415,6 +653,96 @@ def _point_github_at_fake_server() -> None:
                 )
             row.base_url = FAKE_GH_BASE
             session.commit()
+    finally:
+        engine.dispose()
+
+
+def _point_jira_at_fake_server() -> None:
+    """Point the demo project's S7.4 Jira integration at the fake Jira server.
+
+    Mirrors :func:`_point_github_at_fake_server`: the S7.1 ``jira`` row stores
+    ``base_url`` + ``token_ref`` (the token's env-var name); the API's
+    ``build_jira_client`` reads ``base_url`` to route the real ``JiraClient``
+    HTTP calls at our local fixture (S6.5 pattern).
+    """
+    sys.path.insert(0, os.pathsep.join(_repo_src_paths()))
+    from qa_copilot_api.config import get_settings  # noqa: PLC0415
+    from qa_copilot_api.db import make_app_engine  # noqa: PLC0415
+    from qa_copilot_repository import models  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy.orm import Session  # noqa: PLC0415
+
+    engine = make_app_engine(get_settings().database_url)
+    try:
+        with Session(engine) as session:
+            row = session.scalar(
+                select(models.IntegrationConfig).where(
+                    models.IntegrationConfig.project_id == PROJECT_ID,
+                    models.IntegrationConfig.provider == "jira",
+                )
+            )
+            if row is None:
+                raise RuntimeError(
+                    "jira integration config not found for the demo project "
+                    f"(run scripts/_s75_seed.py first) -- project={PROJECT_ID}"
+                )
+            row.base_url = FAKE_JIRA_BASE
+            row.token_ref = JIRA_TOKEN_REF
+            row.enabled = True
+            session.commit()
+    finally:
+        engine.dispose()
+
+
+def _pick_jira_failure() -> str:
+    """A seeded failure id in the demo project; reset for a deterministic create.
+
+    Walks ``failure -> test_result -> run`` (the same scoping the S7.4 job uses)
+    and returns the first failure id, clearing ``jira_issue_key`` so this leg
+    always exercises the *create* path (``QA-1``) regardless of prior runs.
+    """
+    sys.path.insert(0, os.pathsep.join(_repo_src_paths()))
+    from qa_copilot_api.config import get_settings  # noqa: PLC0415
+    from qa_copilot_api.db import make_app_engine  # noqa: PLC0415
+    from qa_copilot_repository import models  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy.orm import Session  # noqa: PLC0415
+
+    engine = make_app_engine(get_settings().database_url)
+    try:
+        with Session(engine) as session:
+            failure = session.scalar(
+                select(models.Failure)
+                .join(models.TestResult, models.Failure.test_result_id == models.TestResult.id)
+                .join(models.TestRun, models.TestResult.run_id == models.TestRun.id)
+                .where(models.TestRun.project_id == PROJECT_ID)
+                .order_by(models.Failure.id)
+            )
+            if failure is None:
+                raise RuntimeError(
+                    f"no seeded failure found for the demo project -- project={PROJECT_ID}"
+                )
+            if failure.jira_issue_key is not None:
+                failure.jira_issue_key = None
+            session.commit()
+            return failure.id
+    finally:
+        engine.dispose()
+
+
+def _readback_jira_key(failure_id: str) -> str | None:
+    """The failure's persisted ``jira_issue_key`` (the S7.4 read-back, off the row)."""
+    sys.path.insert(0, os.pathsep.join(_repo_src_paths()))
+    from qa_copilot_api.config import get_settings  # noqa: PLC0415
+    from qa_copilot_api.db import make_app_engine  # noqa: PLC0415
+    from qa_copilot_repository import models  # noqa: PLC0415
+    from sqlalchemy.orm import Session  # noqa: PLC0415
+
+    engine = make_app_engine(get_settings().database_url)
+    try:
+        with Session(engine) as session:
+            failure = session.get(models.Failure, failure_id)
+            return failure.jira_issue_key if failure is not None else None
     finally:
         engine.dispose()
 
@@ -481,21 +809,27 @@ def _wait_for_api(proc: subprocess.Popen[str], timeout_s: float) -> None:
 
 
 # --- baseline report ----------------------------------------------------------
-def _build_report(checks: Check, reg: Any, run_info: dict[str, object]) -> dict[str, object]:
+def _build_report(
+    checks: Check,
+    reg: Any,
+    run_info: dict[str, object],
+    jira_info: dict[str, object] | None,
+) -> dict[str, object]:
     passed = sum(1 for c in checks.items if c["passed"])
     return {
         "schema_version": "integrations-v1/1",
         "step": "S7.5",
-        "title": "Live E2E baseline: signed webhook -> regression -> ranked set -> S3 run",
+        "title": "Live E2E baseline: webhook -> regression -> ranked set -> S3 run -> Jira link",
         "generated_at": datetime.now(UTC).isoformat(),
         "scope": {
             "project_id": PROJECT_ID,
             "pull_request": {"owner": OWNER, "repo": REPO, "number": PR_NUMBER},
             "test_file": TEST_FILE,
             "fake_github_base": FAKE_GH_BASE,
+            "fake_jira_base": FAKE_JIRA_BASE,
             "api_base": API_BASE,
         },
-        "jira_leg": "DEFERRED (2026-09-06 decision) — not exercised in this baseline",
+        "jira_leg": jira_info if jira_info is not None else "NOT RUN",
         "checks": checks.items,
         "regression_set": reg,
         "run": run_info,
@@ -516,19 +850,26 @@ def _write_report(report: dict[str, object]) -> None:
 def main() -> int:
     checks = Check()
     fake_gh = FakeGitHubServer()
+    fake_jira = FakeJiraServer()
     api_proc: subprocess.Popen[str] | None = None
     api_we_started = False
+    jira_info: dict[str, object] | None = None
 
     env = dict(os.environ)
     env[GH_TOKEN_REF] = GH_TOKEN
     env[WEBHOOK_SECRET_REF] = WEBHOOK_SECRET
+    env[JIRA_TOKEN_REF] = JIRA_TOKEN
 
-    print("== S7.5 live E2E baseline (webhook -> regression -> run) ==")
+    print("== S7.5 live E2E baseline (webhook -> regression -> run -> Jira link) ==")
     try:
         fake_gh.start()
         print(f"fake GitHub up at {FAKE_GH_BASE}")
+        fake_jira.start()
+        print(f"fake Jira up at {FAKE_JIRA_BASE}")
         _point_github_at_fake_server()
         print(f"github integration base_url -> {FAKE_GH_BASE}")
+        _point_jira_at_fake_server()
+        print(f"jira integration base_url -> {FAKE_JIRA_BASE}")
 
         if _api_ready():
             print("reusing already-running API on :8000")
@@ -560,8 +901,9 @@ def main() -> int:
 
             reg = run_regression(client, headers, job_id, checks=checks)
             run_info = run(client, headers, checks=checks)
+            jira_info = link_failure_to_jira(client, headers, checks=checks)
 
-        report = _build_report(checks, reg, run_info)
+        report = _build_report(checks, reg, run_info, jira_info)
         _write_report(report)
         print(f"report written to {REPORT_PATH}")
 
@@ -578,6 +920,7 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 api_proc.kill()
         fake_gh.stop()
+        fake_jira.stop()
 
 
 if __name__ == "__main__":
