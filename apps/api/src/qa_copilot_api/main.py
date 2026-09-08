@@ -224,6 +224,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # S7.2: PR → regression set posted to the PR (regression_pr_comment) —
     # owner-or-above; deterministic, LLM-free end to end.
     app.state.jobs_regression_pr_comment_agent = jobs.RegressionPrCommentJobAgent(app.state.engine)
+    # S7.4: file/link a failure as a Jira issue (jira_link) — owner-or-above;
+    # deterministic, LLM-free (create-or-update idempotent, stale → recreate).
+    app.state.jobs_jira_link_agent = jobs.JiraLinkJobAgent(app.state.engine)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

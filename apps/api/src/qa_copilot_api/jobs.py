@@ -82,6 +82,11 @@ from qa_copilot_integrations.github import (
     build_comment_body,
     upsert_regression_comment,
 )
+from qa_copilot_integrations.jira import (
+    JiraClient,
+    JiraNotFoundError,
+    build_issue_payload,
+)
 from qa_copilot_repository import (
     TestRiskInput,
     build_risk_ranking,
@@ -1291,6 +1296,173 @@ class RegressionPrCommentJobAgent:
             {"stage": "regression", "action": upsert.action, "comment_id": upsert.comment_id},
         )
         return f"regression-comment://{owner}/{repo}/pull/{number}"
+
+
+class JiraIntegrationNotConfiguredError(Exception):
+    """S7.4: the project has no usable S7.1 Jira integration config (§19 S7.4).
+
+    Safe to surface (409 detail), log, and audit — it names the *reference* at
+    most, never the API token (§17: the token never appears in logs or audit).
+    """
+
+
+def jira_integration_config(session: Session, project_id: str) -> tuple[str | None, str]:
+    """``(base_url, token)`` from the project's S7.1 ``integration_configs`` row.
+
+    The S7.1 ``jira`` row stores ``base_url`` + ``token_ref`` (the secret's
+    *name* — never the value, §17). The API token is resolved from the process
+    environment (``token_ref`` is an env-var name); a missing row, disabled row,
+    missing ``token_ref`` or unset secret all raise
+    :class:`JiraIntegrationNotConfiguredError` (→ 409 at the route).
+    """
+    config = repo_integrations.get_integration(session, project_id, "jira")
+    if config is None or not config.enabled:
+        raise JiraIntegrationNotConfiguredError("project has no Jira integration configured")
+    base_url = (config.base_url or "").strip()
+    token_ref = (config.token_ref or "").strip()
+    if not token_ref:
+        raise JiraIntegrationNotConfiguredError(
+            "project's Jira integration has no token_ref configured"
+        )
+    token = os.environ.get(token_ref, "").strip()
+    if not token:
+        raise JiraIntegrationNotConfiguredError(
+            f"secret '{token_ref}' is not set in the environment"
+        )
+    return (base_url or None), token
+
+
+def build_jira_client(engine: Engine, project_id: str) -> JiraClient:
+    """A :class:`JiraClient` for *project_id* (S7.1 config + env-resolved token).
+
+    The caller owns the client's lifetime (``await client.aclose()``).
+    """
+    with repo_db.session_scope(engine) as session:
+        base_url, token = jira_integration_config(session, project_id)
+    if base_url:
+        return JiraClient(base_url=base_url, token=token)
+    return JiraClient(token=token)
+
+
+class JiraLinkJobAgent:
+    """S7.4: file/link a failure as a Jira issue — create-or-update, LLM-free.
+
+    The deterministic "failure + S4.1 diagnosis → issue create-or-update" leg:
+
+    1. load the failure (scoped to the project) + its test result/run context;
+    2. build the deterministic Jira ``fields`` payload
+       (:func:`qa_copilot_integrations.jira.build_issue_payload`);
+    3. create-or-update the issue — first link **creates**, a re-link
+       **updates** in place (never duplicates); if the stored key has gone
+       stale (Jira 404 on update) the issue is **recreated** and the link
+       re-pointed (recreate-and-relink — self-healing: the stored key always
+       resolves to a live issue);
+    4. persist ``failures.jira_issue_key`` (the idempotency anchor).
+
+    Emits ``jira.issue`` with ``action`` / ``key`` / ``url`` / ``project_key``
+    (§19 S7.4) and returns a stable ``jira-issue://<project_key>/<key>`` output
+    ref. The API token is resolved from the environment (§17) and never appears
+    in any payload, event, or the persisted row.
+    """
+
+    stages: tuple[str, ...] = ("jira_link",)
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    async def run(self, ctx: JobContext) -> str:
+        project_id = ctx.project_id or ""
+        failure_id = str(ctx.input.get("failure_id") or "")
+        project_key = str(ctx.input.get("project_key") or "")
+
+        await ctx.emit("stage.started", {"stage": "jira_link"})
+        await ctx.emit("progress", {"stage": "jira_link", "value": 0.1})
+
+        # Step 1: load the failure (scoped to the project) + its context.
+        with repo_db.session_scope(self._engine) as session:
+            failure = repo_runs.get_failure(session, failure_id)
+            if failure is None or self._failure_project(session, failure) != project_id:
+                raise LookupError(f"failure {failure_id} not found in this project")
+            existing_key = failure.jira_issue_key
+            payload_failure = self._failure_payload(session, failure)
+
+        # Step 2: the deterministic failure → Jira ``fields`` mapping.
+        await ctx.emit("progress", {"stage": "jira_link", "value": 0.3})
+        payload = build_issue_payload(payload_failure, project_key)
+
+        # Step 3: create-or-update the issue (idempotent; stale → recreate).
+        client = build_jira_client(self._engine, project_id)
+        try:
+            if existing_key:
+                try:
+                    issue = await client.update_issue(existing_key, payload)
+                    action = "updated"
+                except JiraNotFoundError:
+                    # Stale-link policy: the stored key no longer resolves
+                    # (issue deleted in Jira) — recreate and re-point the link.
+                    issue = await client.create_issue(payload)
+                    action = "recreated"
+            else:
+                issue = await client.create_issue(payload)
+                action = "created"
+        finally:
+            await client.aclose()
+
+        # Step 4: persist the linked key (idempotency anchor for the next run).
+        with repo_db.session_scope(self._engine) as session:
+            row = repo_runs.get_failure(session, failure_id)
+            if row is not None:
+                row.jira_issue_key = issue.key
+            session.commit()
+
+        await ctx.emit("progress", {"stage": "jira_link", "value": 1.0})
+        await ctx.emit(
+            "jira.issue",
+            {"action": action, "key": issue.key, "url": issue.url, "project_key": project_key},
+        )
+        await ctx.emit(
+            "stage.completed", {"stage": "jira_link", "action": action, "key": issue.key}
+        )
+        return f"jira-issue://{project_key}/{issue.key}"
+
+    @staticmethod
+    def _failure_project(session: Session, failure: models.Failure) -> str | None:
+        """The project a failure belongs to (``failure → test_result → run``)."""
+        test_result = failure.test_result
+        if test_result is None:
+            return None
+        run = session.get(models.TestRun, test_result.run_id)
+        return run.project_id if run is not None else None
+
+    @staticmethod
+    def _failure_payload(session: Session, failure: models.Failure) -> dict[str, Any]:
+        """The failure + its diagnosis as the ``build_issue_payload`` input.
+
+        ``test_name`` / ``run_id`` / ``status`` come from the failure's test
+        result (+ its test case); the diagnosis fields come from the row.
+        """
+        test_result = failure.test_result
+        test_name: str | None = None
+        run_id: str | None = None
+        status: str | None = None
+        if test_result is not None:
+            run_id = test_result.run_id
+            status = test_result.status.value
+            if test_result.test_case_id is not None:
+                test_case = session.get(models.TestCase, test_result.test_case_id)
+                if test_case is not None:
+                    test_name = test_case.title
+        return {
+            "id": failure.id,
+            "test_name": test_name,
+            "run_id": run_id,
+            "status": status,
+            "category": failure.category.value,
+            "confidence": failure.confidence,
+            "root_cause": failure.root_cause,
+            "evidence": list(failure.evidence),
+            "suggested_fix": failure.suggested_fix,
+        }
 
 
 def _payload(job_id: str, project_id: str | None, **fields: Any) -> dict[str, Any]:

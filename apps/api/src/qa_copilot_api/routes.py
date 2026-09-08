@@ -820,6 +820,7 @@ def _failure_out(failure: models.Failure) -> schemas.FailureOut:
         evidence=list(failure.evidence),
         suggested_fix=failure.suggested_fix,
         needs_human_approval=failure.needs_human_approval,
+        jira_issue_key=failure.jira_issue_key,
     )
 
 
@@ -1157,6 +1158,66 @@ def post_regression_pr_comment(
     state = request.app.state
     if not state.jobs_runner.start(
         job.id, agent=state.jobs_regression_pr_comment_agent, user_id=user.id, job_input=job_input
+    ):
+        # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
+        raise HTTPException(status_code=409, detail="job is already running")
+
+    response.headers["Location"] = f"/api/v1/jobs/{job.id}"
+    return schemas.JobCreated(job_id=job.id, status=job.status.value)
+
+
+@projects_router.post(
+    "/{project_id}/failures/{failure_id}/jira",
+    status_code=202,
+    response_model=schemas.JobCreated,
+)
+def post_failure_jira_link(
+    failure_id: str,
+    body: schemas.JiraLinkRequest,
+    request: Request,
+    response: Response,
+    ctx: tuple[models.User, str] = Depends(auth.require_role(ProjectRole.OWNER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.JobCreated:
+    """S7.4: file/link a failure as a Jira issue — **202 + job_id** (owner or above).
+
+    ``owner`` or above (it *writes* to Jira, §19 S7.4). The ``jira_link`` job
+    builds the deterministic issue payload from the failure + its S4.1 diagnosis
+    and create-or-updates it in Jira: first link **creates**, a re-link
+    **updates** the stored key in place (never duplicates), and a stale key
+    (issue deleted in Jira, 404 on update) is **recreated** and the link
+    re-pointed (self-healing). The ``jira.issue`` SSE event carries
+    ``action`` / ``key`` / ``url`` / ``project_key``; on success
+    ``failures.jira_issue_key`` is persisted (the idempotency anchor).
+
+    409 when the S7.1 Jira integration (or its secret) is missing — the API
+    token is never part of the error (§17); 404 when the failure is not part
+    of the project; unknown projects 403 (no existence leak, §31.3).
+    """
+    user, project_id = ctx
+    # Fail fast (409) when the S7.1 Jira integration or its secret is missing,
+    # before a job could fail at runtime (§19 S7.4, §17).
+    try:
+        jobs.jira_integration_config(db, project_id)
+    except jobs.JiraIntegrationNotConfiguredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    # Fail fast (404) when the failure is not part of this project.
+    if repo_runs.get_failure_in_project(db, project_id, failure_id) is None:
+        raise HTTPException(status_code=404, detail=f"failure {failure_id} not found")
+
+    job_input = {"failure_id": failure_id, "project_key": body.project_key}
+    job = models.Job(
+        project_id=project_id,
+        type=JobType.JIRA_LINK,
+        input_ref=json.dumps(job_input, separators=(",", ":"))[:1000],
+    )
+    db.add(job)
+    db.commit()
+
+    state = request.app.state
+    if not state.jobs_runner.start(
+        job.id, agent=state.jobs_jira_link_agent, user_id=user.id, job_input=job_input
     ):
         # Unreachable for a fresh UUID — defensive, keeps start() idempotent.
         raise HTTPException(status_code=409, detail="job is already running")

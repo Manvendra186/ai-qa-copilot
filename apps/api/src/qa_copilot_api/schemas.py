@@ -236,6 +236,9 @@ class FailureOut(BaseModel):
     evidence: list[str]
     suggested_fix: str | None
     needs_human_approval: bool
+    # S7.4: the linked Jira issue key (``PROJECT-123``); ``None`` until the
+    # ``jira_link`` job has filed/updated the issue for this failure.
+    jira_issue_key: str | None = None
 
 
 class ArtifactOut(BaseModel):
@@ -493,6 +496,34 @@ class RegressionPrCommentResult(BaseModel):
     owner: str
     repo: str
     number: int
+
+
+class JiraLinkRequest(BaseModel):
+    """S7.4: body for ``POST /projects/{id}/failures/{failure_id}/jira`` (§19 S7.4).
+
+    The ``failure_id`` is the path parameter; this carries the Jira target —
+    the Jira ``project_key`` (e.g. ``QA``) the issue is filed under. The
+    ``jira_link`` job builds the deterministic issue payload from the failure +
+    its S4.1 diagnosis and create-or-updates it (first link creates, re-links
+    update in place; a stale key is recreated — self-healing). Delivered
+    asynchronously (202 + ``job_id``, §11); the ``jira.issue`` SSE event
+    carries ``action`` / ``key`` / ``url`` / ``project_key``.
+    """
+
+    project_key: str = Field(
+        min_length=1,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="Jira project key (e.g. 'QA') the issue is filed under.",
+    )
+
+
+class JiraLinkResult(BaseModel):
+    """S7.4: the ``jira.issue`` SSE payload (create-or-update result)."""
+
+    action: str = Field(description="`created`, `updated`, or `recreated`.")
+    key: str = Field(description="The Jira issue key (e.g. 'QA-123').")
+    url: str | None = Field(description="Web URL of the issue (when Jira returns one).")
+    project_key: str
 
 
 class RunRequest(BaseModel):

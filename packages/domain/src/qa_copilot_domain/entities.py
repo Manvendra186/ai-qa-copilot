@@ -197,6 +197,11 @@ class Failure(DomainModel):
     evidence: list[str] = Field(default_factory=list)
     suggested_fix: str | None = None
     needs_human_approval: bool = True
+    # S7.4: the linked Jira issue key (``PROJECT-123``), set when the failure is
+    # filed/updated in Jira by the ``jira_link`` job (create-or-update
+    # idempotency — re-link updates in place, never duplicates). ``None`` until
+    # the failure has been linked (the §10 ``failures.jira_issue_key`` column).
+    jira_issue_key: str | None = None
 
 
 class NormalizedFailure(DomainModel):

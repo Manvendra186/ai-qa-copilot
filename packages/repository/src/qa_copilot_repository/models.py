@@ -459,6 +459,11 @@ class Failure(Base):
     evidence: Mapped[list[str]] = mapped_column(JSONB, default=list)
     suggested_fix: Mapped[str | None] = mapped_column(sa.Text)
     needs_human_approval: Mapped[bool] = mapped_column(sa.Boolean, default=True)
+    # S7.4: the linked Jira issue key (``PROJECT-123``) — the stable identity the
+    # ``jira_link`` job persists for create-or-update idempotency (re-link
+    # updates the issue in place, never duplicates). Nullable: a failure is only
+    # linked when the job runs against it (the §10 ``failures.jira_issue_key``).
+    jira_issue_key: Mapped[str | None] = mapped_column(sa.String(128), index=True)
 
     test_result: Mapped[TestResult | None] = relationship(back_populates="failure")
 

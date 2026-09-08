@@ -28,6 +28,8 @@ from sqlalchemy.orm import Session
 from . import models
 
 __all__ = [
+    "get_failure",
+    "get_failure_in_project",
     "get_run",
     "list_artifacts",
     "list_results",
@@ -91,6 +93,32 @@ def persist_run(
 def get_run(session: Session, run_id: str) -> models.TestRun | None:
     """One run row (the S3.2 ``GET /runs/{id}`` read path)."""
     return session.get(models.TestRun, run_id)
+
+
+def get_failure(session: Session, failure_id: str) -> models.Failure | None:
+    """One failure row (the S7.4 ``jira_link`` job read path)."""
+    return session.get(models.Failure, failure_id)
+
+
+def get_failure_in_project(
+    session: Session, project_id: str, failure_id: str
+) -> models.Failure | None:
+    """A failure row *if it belongs to* ``project_id`` (``failure → test_result → run``).
+
+    The S7.4 ``POST /projects/{id}/failures/{failure_id}/jira`` route uses this
+    to fail fast (404) when the failure is not part of the project — a failure
+    is scoped to its project through its test result's run.
+    """
+    failure = session.get(models.Failure, failure_id)
+    if failure is None:
+        return None
+    test_result = failure.test_result
+    if test_result is None:
+        return None
+    run = session.get(models.TestRun, test_result.run_id)
+    if run is None or run.project_id != project_id:
+        return None
+    return failure
 
 
 def list_runs(session: Session, project_id: str) -> Sequence[models.TestRun]:

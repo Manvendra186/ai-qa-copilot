@@ -51,6 +51,7 @@ class JobType(StrEnum):
     KNOWLEDGE_ASK = "knowledge_ask"
     REGRESSION_ANALYSIS = "regression_analysis"
     REGRESSION_PR_COMMENT = "regression_pr_comment"
+    JIRA_LINK = "jira_link"
 
 
 class JobStatus(StrEnum):
