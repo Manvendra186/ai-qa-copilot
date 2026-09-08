@@ -2509,5 +2509,65 @@
   lands in S8.1 (S8.2 then builds invites + membership management + the access
   model on top of it).
 
+## 2026-09-08 — S8.1 — auth hardening (user self-service) — complete + gated
+
+- **Goal:** bible §19 S8.1 — user self-service: register (account + workspace),
+  rotating refresh tokens, change-password, `/auth/me` with organization data,
+  Redis-backed login brute-force throttle; secrets never logged/audited (§17).
+- **Did:**
+  - `POST /api/v1/auth/register` (201) — email + password policy
+    (`PASSWORD_MIN_LENGTH=10` + ≥1 letter + ≥1 digit; violations → 422 with a
+    human-readable detail that never contains the password; duplicate → 409) —
+    signup creates the user **and** their organization (optional
+    `organization_name`), user inserted as `owner` into the new
+    `organization_members` table (org/user/role `owner`|`member`, PK on the
+    pair).
+  - `POST /api/v1/auth/refresh` — opaque rotating refresh token; only the
+    SHA-256 **hash** is stored (new `user_refresh_tokens` table: unique
+    `token_hash`, `family_id`, `revoked_at`); rotation revokes the
+    predecessor; reusing a revoked token revokes the whole `family_id` chain
+    (reuse detection) → 401 · `POST /auth/login` now also returns the
+    rotating refresh token.
+  - `POST /api/v1/auth/change-password` (204) — current-password re-auth
+    (401) + new-password policy check (422); revokes all refresh tokens for
+    the user.
+  - `GET /api/v1/auth/me` — response now includes `organizations` (the user's
+    orgs + role).
+  - `apps/api/.../throttle.py` — `LoginThrottler`: fixed-window **failure**
+    counters in Redis (per email + per IP, `INCR` + window `EXPIRE`), fail-open
+    on Redis errors (local-first: availability wins), `429` + `Retry-After` at
+    the limit, counters reset on a successful login; wired in `main.py` from
+    `REDIS_URL` (lazy client — the API boots without Redis). `redis>=5.0` added
+    to `apps/api` (+ `uv.lock`).
+  - Migration `c7e2a4f81b63` (`organization_members` + `user_refresh_tokens`,
+    revises `d5a1b9c7e3f2`) — **new head**; local dev DB migrated to head.
+  - `tests/unit/test_auth.py` — **40 tests**: register (policy violations,
+    duplicate, org creation) · refresh rotation + reuse rejection (family
+    revocation) · change-password (re-auth, revocation) · `/me` org data ·
+    throttle 429 paths via **deterministic stub throttlers** (non-blocking
+    stub for the normal HTTP tests, blocking stub for the 429 tests) +
+    **live-Redis tests** (unique emails, TEST-NET IPs, skipped when Redis is
+    absent). Test password fixed to satisfy the policy
+    (`correct-horse-battery-9staple` — the old `...-staple` has no digit →
+    422).
+  - Fixed stale `tests/unit/test_repository.py::test_all_core_tables_registered`
+    — added `organization_members` + `user_refresh_tokens` to `EXPECTED_TABLES`
+    (the §7 gotcha biting again: new model without the table entry fails the
+    full suite).
+- **Verified:** `tests/unit/test_auth.py` **40/40** (incl. live-Redis) ·
+  `tests/unit/test_repository.py` green (16/16) · **full suite 933 passed,
+  0 failed** (365.8 s) · `ruff check` + `ruff format --check` clean · mypy
+  strict clean (161 source files) · red-team: no password / refresh-token
+  plaintext in logs, audit rows, 422/401 details or throttle keys.
+- **Commit:** `fa4e6c0 step S8.1: auth hardening (register + org, rotating
+  hashed refresh tokens, change-password, /auth/me, Redis login throttle)`
+  (13 files: auth/config/main/routes/schemas + `throttle.py` + migration +
+  models/enums + deps + tests).
+- **Next session start:** **S8.2 — teams (organization membership)** — see
+  `STATE.md` §3. The `organization_members` table already exists (S8.1); S8.2
+  adds `organization_invites` (code-based, 7-day expiry), the org/member/
+  invite routes, the org-baseline access model (explicit `project_members`
+  row always wins), and non-owner leave.
+
 
 

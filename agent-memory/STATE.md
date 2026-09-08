@@ -9,13 +9,30 @@
   **Phase 8 — Commercialization: IN PROGRESS** — S8.0 ✓ step table (bible §19;
   user-approved 2026-09-08: **pilot scope §24**, **SSO/OAuth deferred to
   Enterprise §24**, **billing = admin-assigned plans + real quota metering, no
-  payment processor**) · S8.1–S8.6 planned (auth hardening → teams →
-  RBAC+audit → billing → deployment → pilot E2E)
-- **next:** **S8.1 — auth hardening** (register/refresh/change-password/me +
-  login throttle — details in §3)
+  payment processor**) · **S8.1 ✓ auth hardening** · S8.2–S8.6 planned
+  (teams → RBAC+audit → billing → deployment → pilot E2E)
+- **next:** **S8.2 — teams / organization membership** (members + code-based
+  invites — details in §3)
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-08 · S8.1 Auth hardening — complete + gated.**
+  `POST /api/v1/auth/register` (201; password policy 10+/letter/digit → 422;
+  duplicate → 409; signup = user **and** their organization, user = `owner` in
+  new `organization_members` table) · `POST /api/v1/auth/refresh` (opaque
+  rotating refresh token; only SHA-256 **hash** stored in new
+  `user_refresh_tokens` table; rotation revokes predecessor; reuse of a
+  revoked token revokes the whole `family_id` chain) · `POST
+  /api/v1/auth/change-password` (204; current-password re-auth 401; revokes
+  all refresh tokens) · `GET /api/v1/auth/me` (now includes
+  `organizations`) · login throttle: `throttle.py` fixed-window Redis failure
+  counters per email + per IP (fail-open; 429 + `Retry-After`; success
+  resets) · `redis>=5.0` dep · migration `c7e2a4f81b63` (**new head**) ·
+  `tests/unit/test_auth.py` **40 tests** (deterministic stub throttlers for
+  the 429 paths + live-Redis tests, skipped when Redis absent) · fixed stale
+  `test_repository.py` table set (+`organization_members`,
+  +`user_refresh_tokens`) · gates green (ruff check+format, mypy strict 161,
+  **933 passed**) · `fa4e6c0`.
 - **2026-09-08 · S8.0 Phase 8 defined — complete + approved.**
   Bible §19 Phase 8 step table (S8.1–S8.6) drafted + user-approved: S8.1 auth
   hardening · S8.2 teams/org-membership + invites · S8.3 RBAC matrix + `audit_log`
@@ -146,22 +163,24 @@
 
 ## 3. NEXT STEP (start here)
 
-**S8.0 is complete and approved** (`457f10f`, 2026-09-08) — the Phase 8 step
-table (S8.1–S8.6) is in bible §19; user approved as drafted (pilot scope §24,
-SSO deferred to Enterprise, local-first billing).
+**S8.1 is complete + gated** (`fa4e6c0`, 2026-09-08) — register + org,
+rotating hashed refresh tokens, change-password, `/auth/me` with orgs, Redis
+login throttle (details in §2 + SESSION_LOG 2026-09-08).
 
-**S8.1 — Auth hardening (user self-service):**
-- `POST /api/v1/auth/register` (email + password policy; duplicate → 409;
-  signup = account + workspace: user **and** organization, user = org owner)
-- `POST /api/v1/auth/refresh` — opaque rotating refresh token, stored **hashed**
-  in new `user_refresh_tokens` table + migration; reuse-after-rotation rejected
-- `POST /api/v1/auth/change-password` (re-auth current password; revokes all
-  refresh tokens) · `GET /api/v1/auth/me` (profile + orgs + projects)
-- login brute-force throttle (per-email + per-IP, Redis-backed, 429 +
-  `Retry-After`) · password never logged/audited (§17)
-- **Exit:** register → login → refresh → change-password → re-login all green
-  in tests; rotated refresh reuse rejected; throttle trips (429 + `Retry-After`);
-  no secret leak in logs/audit (red-team); gates green (ruff/mypy/pytest).
+**S8.2 — Teams (organization membership):**
+- `organization_members` already exists (S8.1: org + user + role
+  `owner`/`member`) — build the membership surface on it; one owner per org
+- `organization_invites` (email, role, one-time code, 7-day expiry) —
+  code-based, no SMTP (local-first) + migration
+- routes: `GET /api/v1/organizations` (mine) · `GET/POST/PATCH/DELETE
+  /organizations/{id}/members` (org owner) · `POST /organizations/{id}/invites`
+  + `POST /invites/{code}/accept` (any authenticated user joins as invited)
+- access model: org membership = baseline access to all org projects (org role
+  maps to a project role when no explicit `project_members` row exists; an
+  explicit row always wins) · non-owner may leave the org
+- **Exit:** two users + one org both see shared projects; org outsider → 403
+  (never 404); invite flow green (accept → member; expiry/reuse rejected);
+  explicit `project_members` row overrides org baseline; gates green.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -295,7 +314,8 @@ SSO deferred to Enterprise, local-first billing).
 - Non-test classes named `Test*` need `__test__ = False` or pytest warns
   (`TestCase`, `TestSuite`, `TestDesignInput`, `TestConventions`, `TestScript`, ...) ·
   `test_repository.py::test_all_core_tables_registered` asserts `== EXPECTED_TABLES` —
-  adding a model without the table entry fails the full suite (caught in S7.1).
+  adding a model without the table entry fails the full suite (caught in S7.1,
+  and again in S8.1 with `organization_members`/`user_refresh_tokens`).
 - pydantic v2: `Field(strip_whitespace=True)` is v1 — use
   `Annotated[str, StringConstraints(...)]` · mypy strict + pydantic: wire-string /
   negative cases go through `model_validate` (typed constructors are arg-checked) ·
@@ -337,3 +357,7 @@ SSO deferred to Enterprise, local-first billing).
 - S7.1 PAT redaction: `\b([?&]token=)` missed `?token=` at line start / after a space
   (`\b` is not a boundary there) — drop the `\b` · goldens pin PAT-shaped secrets echoed
   in bodies, not one fixed token literal.
+- S8.1: password policy = `PASSWORD_MIN_LENGTH` (10) + ≥1 letter + ≥1 digit —
+  fixture passwords without a digit (e.g. `correct-horse-battery-staple`) 422 on
+  register/change-password · 429 throttle tests must use a **stub throttler**,
+  never live Redis counters (shared-state pollution).
