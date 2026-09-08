@@ -2350,4 +2350,49 @@
   404-stale-link decision) or re-scope S7.5 around the Jira leg (user call).
   See `STATE.md` §3.
 
+## 2026-09-08 — S7.5 live E2E baseline (webhook → regression → run) + baseline report
+
+- **Goal:** S7.5 (bible §19) — live E2E baseline: signed webhook (PR) → regression
+  job → ranked set → "Run this set" through S3; commit the live driver (S6.5
+  evidence-pair pattern) + baseline `reports/integrations_v1.json`. The Jira
+  issue-linking leg was already user-deferred (2026-09-06), so S7.5 is scoped to the
+  webhook → regression → run leg.
+- **Did:**
+  - `scripts/_s75_live.py` — live driver: fake GitHub (PAT-checked
+    `ThreadingHTTPServer` on 127.0.0.1) + signed HMAC webhook
+    (`X-Hub-Signature-256` over a `whsec_` secret) → `regression_analysis` job
+    (202+Location) → `regression.set` SSE → POST `/projects/{id}/runs` ("Run this
+    set") → S3 Playwright run; 18 checks captured + baseline-report writer.
+  - `scripts/_s75_seed.py` — seeds the demo project + applied generated test +
+    `test_results` history (fail→pass/flaky evidence) so the S6.2 ranking is
+    deterministic (login test `is_flaky=True`, rank 1).
+  - `scripts/_s75_inspect.py` + `scripts/_s75_jobrow.py` — DB/SSE diagnostic helpers.
+  - `reports/integrations_v1.json` — baseline (18/18 checks pass) + `.gitignore`
+    exception per S6.5 (drift tracking §31.6/§31.7).
+- **Fixes (the two remaining red items this session):**
+  - **Impact `referenced` kind was missing** — the fake GitHub `/files` endpoint
+    served only `e2e/demo.spec.js`; `referenced` requires the test to import a
+    *changed* source file. Now serves the S6.5 changed-file pair
+    (`e2e/fixtures.js` + `e2e/demo.spec.js`) → impact is `direct + generated +
+    referenced` (signal `imports e2e/fixtures.js`).
+  - **SSE stall before `job.completed`** — the driver spawned the API with
+    `stdout=PIPE` without draining it; pipe backpressure blocked the worker (looked
+    like a hang, but the worker was fine). Now the API's output is redirected to
+    `logs/api_s75.log`.
+  - **Pre-existing mypy errors** in `tests/unit/test_jira_client.py`
+    (`token: str`; `# type: ignore[arg-type]` for deliberate bad-input cases) and
+    `tests/unit/test_s73_webhook.py` (`assert project is not None`; `_post ->
+    httpx.Response` + `# type: ignore[no-any-return]`; `job: dict[str, Any]`) —
+    type-annotation only, no behavior change.
+- **Verified (gates, all green):** `ruff check .` ✓ · `ruff format --check .` ✓
+  (206 files) · `mypy` ✓ (strict, 159 files) · `pytest -q` ✓ **896 passed**.
+- **Live evidence:** LLM advisor ran live (LM Studio, `advice.source=llm`) ·
+  Playwright `1 passed / 0 failed` · SSE reached `job.completed` on both the
+  regression and run legs · report `summary.status = "pass"`.
+- **Commit:** `38405d2 step S7.5: live E2E baseline (signed webhook -> regression ->
+  ranked set -> S3 run)` (8 files, +1307/-6).
+- **Next session start:** **Phase 8 — Commercialization** (bible §19; deferred until
+  MVP validation) OR the deferred **S7.4-API Jira leg** if the user wants S7.5's
+  failure→Jira-issue linking completed. See `STATE.md` §3.
+
 

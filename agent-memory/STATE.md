@@ -5,15 +5,27 @@
 
 ## 1. Current position
 
-- **Phase:** 0–6 **complete** (S0.1–S6.5 ✓ — one line each in §2) ·
-  **Phase 7 — Integrations: in progress** (S7.0 ✓ step table · S7.1 ✓ GitHub core ·
-  S7.2 ✓ PR→regression · S7.3 ✓ webhook · S7.4 ✓ Jira core — **S7.4-API deferred
-  by user 2026-09-06**)
-- **next:** **S7.5 — live E2E + baseline report** (its Jira leg needs the deferred
-  S7.4-API — see §3)
+- **Phase:** 0–7 **complete** (S0.1–S7.5 ✓ — one line each in §2) ·
+  **Phase 7 — Integrations: complete** (S7.0 ✓ step table · S7.1 ✓ GitHub core ·
+  S7.2 ✓ PR→regression · S7.3 ✓ webhook · S7.4 ✓ Jira core — **S7.4-API / Jira leg
+  deferred by user 2026-09-06** · S7.5 ✓ live E2E baseline)
+- **next:** **Phase 8 — Commercialization** (auth/billing/teams/RBAC/deployment
+  hardening — deferred until MVP validation, bible §19) · or the deferred
+  S7.4-API Jira leg if the user wants S7.5's failure→Jira-issue linking completed
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-08 · S7.5 live E2E + baseline report — complete + gated.**
+  `scripts/_s75_live.py` + `_s75_seed.py` (S6.5 evidence pair) — signed HMAC
+  webhook → `regression_analysis` job (202+Location) → `regression.set` SSE →
+  "Run this set" through S3 → Playwright **1/1** · fake GitHub (PAT-checked) +
+  changed-file pair (`e2e/fixtures.js`+`e2e/demo.spec.js`) → impact
+  **direct+generated+referenced** · live LLM advisor (LM Studio) ·
+  **baseline `reports/integrations_v1.json` committed** (18/18 checks pass;
+  `.gitignore` exception per S6.5) · **Jira leg deferred (2026-09-06)** ·
+  fixed driver stdout-PIPE SSE stall (API now → `logs/api_s75.log`) + pre-existing
+  mypy in `test_jira_client.py`/`test_s73_webhook.py` · gates green (ruff, mypy
+  strict 159 files, **896 passed**) · `38405d2`.
 - **2026-09-06 · S7.4 Jira core (LLM-free) — complete + gated.**
   `qa_copilot_integrations.jira` — typed Jira REST v2 client (create/update/fetch issue;
   `JiraAuthError` 401/403 · `JiraNotFoundError` 404 · §17 token redaction) · deterministic
@@ -111,21 +123,20 @@
 
 ## 3. NEXT STEP (start here)
 
-**S7.5 — live E2E + baseline report** (bible §19 Phase 7; exit: live E2E green ·
-baseline report committed):
-- local stack (API + small local HTTP fixtures standing in for GitHub/Jira — the S6.5
-  "live evidence" pattern; no real GitHub/Jira exists on this machine): signed webhook
-  (PR) → regression job → ranked set over PR files → "Run this set" through S3 →
-  **Jira issue created/linked for a seeded failure**;
-- live driver committed (evidence pair, S6.5 pattern) · baseline
-  `reports/integrations_v1.json` (schema + expected events/links; single tracked report,
-  `.gitignore` pattern per S6.5; drift tracking §31.6/§31.7);
-- **⚠ dependency on the deferred S7.4-API part** (user-deferred 2026-09-06): the
-  "Jira issue created/linked" leg needs `POST /projects/{id}/failures/{failure_id}/jira`
-  + a `jira_link` job + `failures.jira_issue_key` (column + repo support + Alembic
-  migration) — build those first (incl. the deferred 404-stale-link decision:
-  recreate-and-relink vs. fail with a stale-link error), or re-scope S7.5 to the
-  webhook → regression → run leg and stub the Jira leg (user call).
+**S7.5 is complete and gated** (commit `38405d2`) — the live webhook → regression →
+S3-run baseline is green and `reports/integrations_v1.json` is committed. Its Jira
+issue-linking leg was intentionally deferred (see below).
+
+**Phase 8 — Commercialization** (bible §19; deferred until MVP validation):
+auth, billing, teams, RBAC, deployment hardening.
+
+OR the **deferred S7.4-API Jira leg** (user-deferred 2026-09-06), if the user wants
+S7.5's "failure → Jira issue" linking completed:
+- `POST /projects/{id}/failures/{failure_id}/jira` (202 + job; owner-or-above)
+- a `jira_link` job + `failures.jira_issue_key` (nullable column + Alembic migration)
+- `GET .../failures/{failure_id}` exposes the link
+- the deferred 404-stale-link decision: recreate-and-relink vs. fail with a stale-link
+  error.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -242,6 +253,15 @@ baseline report committed):
 - `tests/unit/test_integrations_api.py` **hangs without live Postgres on :5433** → run
   targeted tests until PG is up (S7.x Jira/GitHub unit tests are hermetic and pass
   without it).
+- **Subprocess SSE stall (S7.5):** spawning the API with `subprocess` `stdout=PIPE`
+  without draining it → pipe backpressure blocks the worker → the SSE leg never
+  reaches `job.completed` (looks like a hang, but the worker is fine). Redirect the
+  spawned API's stdout/stderr to a log file (`logs/api_s75.log`) — never an undrained
+  PIPE for a long-lived server subprocess.
+- **Impact `referenced` kind (S7.5/S6.5):** a test is `referenced` only if it imports a
+  *changed* source file or uses a `data-testid` defined in a changed file — the changed
+  set must include the imported module (`e2e/fixtures.js`), not just the spec
+  (`e2e/demo.spec.js`).
 
 **Python / tests**
 - ruff isort: `qa_copilot_*` is **not** first-party (src-layout workspace) — sorts in the
