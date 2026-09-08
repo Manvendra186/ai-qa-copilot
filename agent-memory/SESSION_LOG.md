@@ -2395,4 +2395,51 @@
   MVP validation) OR the deferred **S7.4-API Jira leg** if the user wants S7.5's
   failure→Jira-issue linking completed. See `STATE.md` §3.
 
+## 2026-09-08 — S7.4-API — failure→Jira issue linking (the deferred leg) complete + gated
+
+- **Goal:** close the S7.4 API/persistence leg user-deferred on 2026-09-06 (bible §19
+  S7.4): owner-only failure→Jira-issue linking with create-or-update idempotency, a
+  persisted `failures.jira_issue_key`, and complete unit-test coverage.
+- **Built (additive, LLM-free; the S7.4 core client/mapping/golden already existed):**
+  - `packages/domain`: `JobType.JIRA_LINK`; `Failure.jira_issue_key: str | None`.
+  - `packages/repository`: `Failure.jira_issue_key` column (nullable `VARCHAR(128)`,
+    indexed); read helpers `get_failure` + `get_failure_in_project` (failure →
+    test_result → run, for the 404 scoping check).
+  - `infra/migrations/versions/d5a1b9c7e3f2_failures_jira_issue_key_s7_4.py` — new
+    head (down_revision `b3d7e2a91c4f`).
+  - `qa_copilot_api`: `JiraLinkRequest` schema; `POST /projects/{id}/failures/
+    {failure_id}/jira` (owner-or-above; 403 non-member/unknown-project never-404;
+    409 no Jira integration/secret; 404 failure-not-in-project; body validated before
+    side effects; 202 + `Location`) · `JiraLinkJobAgent` (create-or-update idempotency;
+    stale key 404-on-update → recreate-and-relink, self-healing; `jira.issue` SSE with
+    `action`/`key`/`url`/`project_key`; persists `failure.jira_issue_key`) ·
+    `FailureOut.jira_issue_key` now populated on the failure read model · `main.py`
+    wires `app.state.jobs_jira_link_agent`.
+  - `tests/unit/test_s74_jira_link.py` — **18 tests** driving the real
+    `JiraLinkJobAgent` through an in-process `FakeJira` (no mocked agent):
+    auth-required · member/viewer/non-member denied · unknown-project 403 (not 404) ·
+    invalid project_key 422 · 409 without integration / disabled / no token_ref /
+    secret-not-in-env / 409 never leaks the secret · 404 failure-not-in-project ·
+    202+Location · job creates issue · job updates in place · job recreates stale +
+    re-points link · job failure stays token-free · read-model exposes the key ·
+    deterministic agent event sequence · agent missing-integration fails cleanly.
+- **Bug found + fixed by the new test:** `_failure_out` (routes.py) built `FailureOut`
+  **without** `jira_issue_key`, so the read model always returned `None` even when the
+  column was set — the S7.4 schema field + DB column existed, but the mapper was never
+  wired. Added `jira_issue_key=failure.jira_issue_key` to the mapper (the single point
+  every failure read route shares). `test_failure_read_model_exposes_jira_issue_key`
+  now passes.
+- **Design decision (was deferred 2026-09-06):** 404-stale-link → **recreate-and-relink**
+  (self-healing: the stored `jira_issue_key` always resolves to a live issue) — chosen
+  over failing with a stale-link error.
+- **Verified (gates, all green):** `ruff check .` ✓ · `ruff format --check .` ✓ (208
+  files) · `mypy` ✓ (strict, 160 files) · `pytest -q` ✓ **914 passed** · `alembic
+  heads` → `d5a1b9c7e3f2 (head)`.
+- **Commit:** `a7ba016 step S7.4: owner-only failure -> Jira issue linking (the deferred
+  API/persistence leg)` (10 files, +1136).
+- **Next session start:** **Phase 8 — Commercialization** (bible §19; deferred until MVP
+  validation). The S7.5 "failure→Jira issue" leg can now be re-run end-to-end if wanted.
+  See `STATE.md` §3.
+
+
 

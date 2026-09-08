@@ -7,14 +7,27 @@
 
 - **Phase:** 0–7 **complete** (S0.1–S7.5 ✓ — one line each in §2) ·
   **Phase 7 — Integrations: complete** (S7.0 ✓ step table · S7.1 ✓ GitHub core ·
-  S7.2 ✓ PR→regression · S7.3 ✓ webhook · S7.4 ✓ Jira core — **S7.4-API / Jira leg
-  deferred by user 2026-09-06** · S7.5 ✓ live E2E baseline)
+  S7.2 ✓ PR→regression · S7.3 ✓ webhook · S7.4 ✓ Jira core + **API/persistence leg
+  (owner-only failure→issue link, create/update/recreate, `jira_issue_key`)** ·
+  S7.5 ✓ live E2E baseline)
 - **next:** **Phase 8 — Commercialization** (auth/billing/teams/RBAC/deployment
-  hardening — deferred until MVP validation, bible §19) · or the deferred
-  S7.4-API Jira leg if the user wants S7.5's failure→Jira-issue linking completed
+  hardening — deferred until MVP validation, bible §19) · S7.4-API is now complete,
+  so S7.5's failure→Jira-issue leg is ready to run end-to-end if wanted
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-08 · S7.4-API — failure→Jira issue linking (the deferred leg) — complete + gated.**
+  `JobType.JIRA_LINK` + `JiraLinkJobAgent` (LLM-free; create-or-update idempotent; stale
+  key 404-on-update → recreate-and-relink, self-healing) · `failures.jira_issue_key`
+  nullable indexed column + migration `d5a1b9c7e3f2` (**new head**) · `POST
+  /projects/{id}/failures/{failure_id}/jira` (owner-or-above; 403 non-member/unknown
+  never-404 · 409 no Jira integration · 404 failure-not-in-project; body validated before
+  side effects; 202 + `Location`) · `jira.issue` SSE (`action`/`key`/`url`/`project_key`)
+  · `FailureOut.jira_issue_key` exposed on the failure read model ·
+  `tests/unit/test_s74_jira_link.py` **18 tests** (real agent via in-process `FakeJira`;
+  RBAC/validation/config/scoping/202/create/update/recreate/token-leak/read-model/
+  agent-events) · gates green (ruff check+format, mypy strict 160 files, **914 passed**)
+  · `a7ba016`.
 - **2026-09-08 · S7.5 live E2E + baseline report — complete + gated.**
   `scripts/_s75_live.py` + `_s75_seed.py` (S6.5 evidence pair) — signed HMAC
   webhook → `regression_analysis` job (202+Location) → `regression.set` SSE →
@@ -125,18 +138,18 @@
 
 **S7.5 is complete and gated** (commit `38405d2`) — the live webhook → regression →
 S3-run baseline is green and `reports/integrations_v1.json` is committed. Its Jira
-issue-linking leg was intentionally deferred (see below).
+issue-linking leg (deferred 2026-09-06) is now **built** — S7.4-API, commit `a7ba016`.
 
 **Phase 8 — Commercialization** (bible §19; deferred until MVP validation):
 auth, billing, teams, RBAC, deployment hardening.
 
-OR the **deferred S7.4-API Jira leg** (user-deferred 2026-09-06), if the user wants
-S7.5's "failure → Jira issue" linking completed:
-- `POST /projects/{id}/failures/{failure_id}/jira` (202 + job; owner-or-above)
-- a `jira_link` job + `failures.jira_issue_key` (nullable column + Alembic migration)
-- `GET .../failures/{failure_id}` exposes the link
-- the deferred 404-stale-link decision: recreate-and-relink vs. fail with a stale-link
-  error.
+The formerly-deferred **S7.4-API Jira leg is now complete** (`a7ba016`, 2026-09-08):
+- `POST /projects/{id}/failures/{failure_id}/jira` (202 + job; owner-or-above) ✓
+- `jira_link` job + `failures.jira_issue_key` (nullable column + Alembic migration
+  `d5a1b9c7e3f2`) ✓
+- the failure read model exposes `jira_issue_key` ✓
+- 404-stale-link decision: **recreate-and-relink** (self-healing; the stored key always
+  resolves to a live issue) — implemented ✓
 
 ## 4. Environment facts (verified 2026-08-26)
 
