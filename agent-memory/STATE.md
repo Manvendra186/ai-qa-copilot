@@ -11,8 +11,9 @@
   (owner-only failure→issue link, create/update/recreate, `jira_issue_key`)** ·
   S7.5 ✓ live E2E baseline)
 - **next:** **Phase 8 — Commercialization** (auth/billing/teams/RBAC/deployment
-  hardening — deferred until MVP validation, bible §19) · S7.4-API is now complete,
-  so S7.5's failure→Jira-issue leg is ready to run end-to-end if wanted
+  hardening — deferred until MVP validation, bible §19) · S7.5's failure→Jira-issue
+  leg is now driven **live** (create→QA-1, read-back, re-link→updated), so MVP
+  validation (Phase 0–7) is complete
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
@@ -34,11 +35,12 @@
   "Run this set" through S3 → Playwright **1/1** · fake GitHub (PAT-checked) +
   changed-file pair (`e2e/fixtures.js`+`e2e/demo.spec.js`) → impact
   **direct+generated+referenced** · live LLM advisor (LM Studio) ·
-  **baseline `reports/integrations_v1.json` committed** (18/18 checks pass;
-  `.gitignore` exception per S6.5) · **Jira leg deferred (2026-09-06)** ·
-  fixed driver stdout-PIPE SSE stall (API now → `logs/api_s75.log`) + pre-existing
+  **baseline `reports/integrations_v1.json` committed** (29/29 checks pass;
+  `.gitignore` exception per S6.5) · **S7.4 Jira leg driven LIVE** (create→QA-1,
+  read-back, re-link→updated; see SESSION_LOG 2026-09-08) · fixed driver
+  stdout-PIPE SSE stall (API now → `logs/api_s75.log`) + pre-existing
   mypy in `test_jira_client.py`/`test_s73_webhook.py` · gates green (ruff, mypy
-  strict 159 files, **896 passed**) · `38405d2`.
+  strict 159 files, **896 passed**) · `38405d2` + `baa0271` (Jira leg live).
 - **2026-09-06 · S7.4 Jira core (LLM-free) — complete + gated.**
   `qa_copilot_integrations.jira` — typed Jira REST v2 client (create/update/fetch issue;
   `JiraAuthError` 401/403 · `JiraNotFoundError` 404 · §17 token redaction) · deterministic

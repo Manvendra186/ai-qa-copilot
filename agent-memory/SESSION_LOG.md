@@ -2441,5 +2441,36 @@
   validation). The S7.5 "failure→Jira issue" leg can now be re-run end-to-end if wanted.
   See `STATE.md` §3.
 
+## 2026-09-08 — S7.5 live E2E baseline: S7.4 Jira leg driven LIVE (MVP validation closed)
+
+- **Goal:** close the S7.5 live-E2E gap — the baseline was recorded before the S7.4
+  failure→Jira link existed and still marked Jira `DEFERRED`; drive the real
+  webhook → regression → run → failure→Jira-issue loop live and refresh the report.
+- **Did:**
+  - `scripts/_s75_seed.py` — seed the `jira` integration (`token_ref=S75_FAKE_JIRA_TOKEN`);
+    dropped the "Jira leg deferred" wording.
+  - `scripts/_s75_live.py` — added a loopback `FakeJiraServer` (in-memory Jira REST v2
+    issue endpoints: `POST/PUT/GET /rest/api/2/issue[/{key}]`; `Bearer` auth; deterministic
+    first key `QA-1`) — the S6.5 "local HTTP fixture" pattern, so the **real** `JiraClient`
+    HTTP path (incl. bearer auth) is exercised, no mocked agent. `_point_jira_at_fake_server()`
+    points the demo project's `jira` row at it; the API subprocess gets
+    `S75_FAKE_JIRA_TOKEN` in its env. New `link_failure_to_jira()` leg:
+    `POST /projects/{id}/failures/{fid}/jira` (202+Location) → `jira.issue` SSE
+    (`action=created`, `key=QA-1`, `project_key=QA`, `url`) → `failures.jira_issue_key`
+    read-back (`QA-1`) → re-link (`action=updated`, **same** key `QA-1`, never duplicates).
+  - `_build_report` now carries `fake_jira_base` + a live `jira_leg` object (the `DEFERRED`
+    marker is gone).
+- **Verified (all live):** driver **GREEN 29/29** (webhook 202/401/200 · regression set ·
+  S3 Playwright 1/1 · Jira create→read-back→re-link); `test_s74_jira_link.py` **18 passed**
+  (the live path); `ruff check` + `py_compile` clean on the driver. `reports/integrations_v1.json`
+  refreshed (`jira_leg` = live evidence, `summary` 29/29 pass, `DEFERRED` gone).
+- **Live-DB fix:** the S7.4 migration `d5a1b9c7e3f2` (`failures.jira_issue_key`) had never
+  been applied to the live DB (5433); ran `alembic upgrade head` → `d5a1b9c7e3f2 (head)`.
+- **Commits:** `baa0271 step S7.5: live E2E baseline now drives the S7.4 Jira leg`
+  (+ `cbf5811` removed two one-off S7.5 debug scratch scripts `_s75_inspect.py` /
+  `_s75_jobrow.py`, both unreferenced and superseded by the live driver).
+- **Next session start:** **Phase 8 — Commercialization** (bible §19) — MVP validation
+  (Phase 0–7) is now complete: the S7.5 full live loop incl. the failure→Jira link is green.
+
 
 
