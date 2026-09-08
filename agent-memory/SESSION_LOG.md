@@ -2472,5 +2472,42 @@
 - **Next session start:** **Phase 8 — Commercialization** (bible §19) — MVP validation
   (Phase 0–7) is now complete: the S7.5 full live loop incl. the failure→Jira link is green.
 
+## 2026-09-08 — S8.0 — Phase 8 (Commercialization) defined — complete + approved
+
+- **Goal:** enter Phase 8 (bible §18: "auth, billing, teams, RBAC, deployment
+  hardening" → "pilot-ready product") the way every phase starts (S6.0/S7.0
+  pattern): define the step table in bible §19, then get user approval before
+  building S8.1.
+- **Did:**
+  - Grounded the draft in the current code: `organizations.plan` column already
+    exists (default `"dev"` — the billing hook) · `users` has email + PBKDF2 hash
+    (S0.8) · `project_members` is the only membership table · `ai_actions`
+    carries usage (tokens/latency) — the natural metering source · `auth.py`
+    explicitly defers "refresh/rotation" to Phase 8.
+  - Replaced the §19 "detail on demand" placeholder with **Note (S8.0)** (stance:
+    harden/generalize the S0.8 baseline rather than replace it; local-first §29 —
+    no payment processor, no SSO/OAuth in V1 — deferred to the §24 Enterprise
+    stage) + the **S8.1–S8.6 step table** with per-step exit criteria:
+    S8.1 auth hardening (register/refresh/change-password/me + Redis login
+    throttle) · S8.2 teams (`organization_members` + code-based invites; org
+    baseline access, explicit `project_members` wins) · S8.3 RBAC route-matrix
+    test + `audit_log` + deletion workflows · S8.4 billing core (plan catalog,
+    `/usage` + `/plan`, quota enforcement at dispatch, admin-assigned plans) ·
+    S8.5 deployment hardening (prod compose, TLS snippet, headers/CORS/rate
+    limits, request-id logs, backup/restore round-trip) · S8.6 pilot E2E +
+    baseline `reports/commercialization_v1.json` (S6.5/S7.5 evidence pattern).
+  - **User approved as drafted** (2026-09-08): pilot scope, SSO deferred,
+    admin-assigned billing.
+- **Verified:** bible §19 Phase 8 section reads in place (note + 6-row table,
+  markdown table intact); `git status` clean after commit.
+- **Commit:** `457f10f step S8.0: phase 8 (commercialization) step table defined
+  in bible s19 (S8.1-S8.6; pilot scope per s24; SSO deferred to enterprise;
+  local-first billing)`.
+- **Next session start:** S8.1 — auth hardening (user self-service) — see
+  `STATE.md` §3. Note for S8.1: `GET /auth/me` (profile + orgs + projects)
+  needs a user→org link, so the minimal `organization_members` table likely
+  lands in S8.1 (S8.2 then builds invites + membership management + the access
+  model on top of it).
+
 
 

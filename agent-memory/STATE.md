@@ -6,17 +6,25 @@
 ## 1. Current position
 
 - **Phase:** 0–7 **complete** (S0.1–S7.5 ✓ — one line each in §2) ·
-  **Phase 7 — Integrations: complete** (S7.0 ✓ step table · S7.1 ✓ GitHub core ·
-  S7.2 ✓ PR→regression · S7.3 ✓ webhook · S7.4 ✓ Jira core + **API/persistence leg
-  (owner-only failure→issue link, create/update/recreate, `jira_issue_key`)** ·
-  S7.5 ✓ live E2E baseline)
-- **next:** **Phase 8 — Commercialization** (auth/billing/teams/RBAC/deployment
-  hardening — deferred until MVP validation, bible §19) · S7.5's failure→Jira-issue
-  leg is now driven **live** (create→QA-1, read-back, re-link→updated), so MVP
-  validation (Phase 0–7) is complete
+  **Phase 8 — Commercialization: IN PROGRESS** — S8.0 ✓ step table (bible §19;
+  user-approved 2026-09-08: **pilot scope §24**, **SSO/OAuth deferred to
+  Enterprise §24**, **billing = admin-assigned plans + real quota metering, no
+  payment processor**) · S8.1–S8.6 planned (auth hardening → teams →
+  RBAC+audit → billing → deployment → pilot E2E)
+- **next:** **S8.1 — auth hardening** (register/refresh/change-password/me +
+  login throttle — details in §3)
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-08 · S8.0 Phase 8 defined — complete + approved.**
+  Bible §19 Phase 8 step table (S8.1–S8.6) drafted + user-approved: S8.1 auth
+  hardening · S8.2 teams/org-membership + invites · S8.3 RBAC matrix + `audit_log`
+  + deletion workflows · S8.4 billing core (plans/quotas/metering over
+  `organizations.plan` + `ai_actions` usage; admin-assigned, no payment
+  processor) · S8.5 deployment hardening (prod compose, TLS, headers, rate
+  limits, backup/restore) · S8.6 pilot E2E + baseline
+  `reports/commercialization_v1.json` · stance: pilot scope §24, SSO/OAuth
+  deferred to Enterprise, local-first stays §29 · `457f10f`.
 - **2026-09-08 · S7.4-API — failure→Jira issue linking (the deferred leg) — complete + gated.**
   `JobType.JIRA_LINK` + `JiraLinkJobAgent` (LLM-free; create-or-update idempotent; stale
   key 404-on-update → recreate-and-relink, self-healing) · `failures.jira_issue_key`
@@ -138,20 +146,22 @@
 
 ## 3. NEXT STEP (start here)
 
-**S7.5 is complete and gated** (commit `38405d2`) — the live webhook → regression →
-S3-run baseline is green and `reports/integrations_v1.json` is committed. Its Jira
-issue-linking leg (deferred 2026-09-06) is now **built** — S7.4-API, commit `a7ba016`.
+**S8.0 is complete and approved** (`457f10f`, 2026-09-08) — the Phase 8 step
+table (S8.1–S8.6) is in bible §19; user approved as drafted (pilot scope §24,
+SSO deferred to Enterprise, local-first billing).
 
-**Phase 8 — Commercialization** (bible §19; deferred until MVP validation):
-auth, billing, teams, RBAC, deployment hardening.
-
-The formerly-deferred **S7.4-API Jira leg is now complete** (`a7ba016`, 2026-09-08):
-- `POST /projects/{id}/failures/{failure_id}/jira` (202 + job; owner-or-above) ✓
-- `jira_link` job + `failures.jira_issue_key` (nullable column + Alembic migration
-  `d5a1b9c7e3f2`) ✓
-- the failure read model exposes `jira_issue_key` ✓
-- 404-stale-link decision: **recreate-and-relink** (self-healing; the stored key always
-  resolves to a live issue) — implemented ✓
+**S8.1 — Auth hardening (user self-service):**
+- `POST /api/v1/auth/register` (email + password policy; duplicate → 409;
+  signup = account + workspace: user **and** organization, user = org owner)
+- `POST /api/v1/auth/refresh` — opaque rotating refresh token, stored **hashed**
+  in new `user_refresh_tokens` table + migration; reuse-after-rotation rejected
+- `POST /api/v1/auth/change-password` (re-auth current password; revokes all
+  refresh tokens) · `GET /api/v1/auth/me` (profile + orgs + projects)
+- login brute-force throttle (per-email + per-IP, Redis-backed, 429 +
+  `Retry-After`) · password never logged/audited (§17)
+- **Exit:** register → login → refresh → change-password → re-login all green
+  in tests; rotated refresh reuse rejected; throttle trips (429 + `Retry-After`);
+  no secret leak in logs/audit (red-team); gates green (ruff/mypy/pytest).
 
 ## 4. Environment facts (verified 2026-08-26)
 
