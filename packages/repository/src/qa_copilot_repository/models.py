@@ -30,6 +30,7 @@ from qa_copilot_domain.enums import (
     GeneratedTestStatus,
     JobStatus,
     JobType,
+    OrgRole,
     Priority,
     ProjectRole,
     RiskLevel,
@@ -82,6 +83,7 @@ class Organization(Base):
     )
 
     projects: Mapped[list[Project]] = relationship(back_populates="organization")
+    members: Mapped[list[OrganizationMember]] = relationship(back_populates="organization")
 
 
 class User(Base):
@@ -105,6 +107,12 @@ class User(Base):
     )
 
     memberships: Mapped[list[ProjectMember]] = relationship(back_populates="user")
+    organization_memberships: Mapped[list[OrganizationMember]] = relationship(
+        back_populates="user"
+    )
+    refresh_tokens: Mapped[list[UserRefreshToken]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Repository(Base):
@@ -227,6 +235,69 @@ class ProjectMember(Base):
 
     project: Mapped[Project] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")
+
+
+class OrganizationMember(Base):
+    """A user's role within one organization (build bible §19 S8.1).
+
+    Composite primary key ``(organization_id, user_id)``; the extra index on
+    ``user_id`` covers the reverse lookup "which orgs does this user belong
+    to". S8.1 creates the table so registration can make the user the org
+    owner and ``GET /auth/me`` can list their organizations; S8.2 builds the
+    full membership + invite surface on top (one ``owner`` per org is
+    enforced there).
+    """
+
+    __tablename__ = "organization_members"
+
+    organization_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    role: Mapped[OrgRole] = mapped_column(_enum_column(OrgRole))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+    organization: Mapped[Organization] = relationship(back_populates="members")
+    user: Mapped[User] = relationship(back_populates="organization_memberships")
+
+
+class UserRefreshToken(Base):
+    """An opaque rotating refresh token (build bible §19 S8.1, §17).
+
+    Only the SHA-256 **hash** of the token is persisted (``token_hash``) —
+    the plaintext exists solely in the login/refresh responses and never in
+    logs or audit (§17). ``family_id`` groups the tokens of one login chain:
+    rotation revokes the previous token and issues a successor in the same
+    family; presenting a *revoked* token (reuse after rotation) revokes the
+    whole family, so a stolen token kills every live successor.
+    """
+
+    __tablename__ = "user_refresh_tokens"
+
+    id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
+    user_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    family_id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), index=True)
+    token_hash: Mapped[str] = mapped_column(sa.String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="refresh_tokens")
 
 
 class File(Base):

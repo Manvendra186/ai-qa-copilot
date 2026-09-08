@@ -1,9 +1,10 @@
 """API response schemas (build bible §7)."""
 
 from datetime import datetime
+import re
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -16,7 +17,7 @@ class HealthResponse(BaseModel):
     timestamp: datetime
 
 
-# --- Auth baseline (S0.8, §31.3) ---------------------------------------------
+# --- Auth baseline (S0.8, §31.3) + S8.1 hardening (§19) ------------------------
 
 
 class LoginRequest(BaseModel):
@@ -42,21 +43,84 @@ class ProjectRef(BaseModel):
     role: str
 
 
+class OrganizationRef(BaseModel):
+    """S8.1: an organization the caller belongs to, with the caller's org role."""
+
+    id: str
+    name: str
+    role: str
+
+
 class TokenResponse(BaseModel):
-    """Login result: Bearer access token + the caller's project memberships."""
+    """Login/refresh result: Bearer access token + rotating refresh token.
+
+    S8.1: the opaque refresh token (returned exactly once — only its SHA-256
+    hash is stored, §17) and the caller's organization memberships.
+    """
 
     token: str
     token_type: str = "bearer"
     expires_in: int
+    refresh_token: str
+    refresh_expires_in: int
     user: UserOut
+    organizations: list[OrganizationRef]
     projects: list[ProjectRef]
 
 
 class MeResponse(BaseModel):
-    """``GET /api/v1/auth/me``: who I am + where I have roles."""
+    """``GET /api/v1/auth/me``: who I am + where I have roles (S8.1: + orgs)."""
 
     user: UserOut
+    organizations: list[OrganizationRef]
     projects: list[ProjectRef]
+
+
+class RegisterRequest(BaseModel):
+    """S8.1: ``POST /api/v1/auth/register`` — account **and** workspace.
+
+    One signup creates the user and a new organization the user owns
+    (build bible §19 S8.1); ``organization_name`` defaults to a derived
+    name. Email + password are validated (policy: 10+ chars, letter + digit).
+    """
+
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1)
+    organization_name: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v):
+            raise ValueError("invalid email address")
+        return v
+
+
+class RegisterResponse(BaseModel):
+    """S8.1: registration result — the new account + its owned workspace."""
+
+    user: UserOut
+    organization: OrganizationRef
+    projects: list[ProjectRef]
+
+
+class RefreshRequest(BaseModel):
+    """S8.1: ``POST /api/v1/auth/refresh`` — rotate an opaque refresh token."""
+
+    refresh_token: str = Field(min_length=1)
+
+
+class ChangePasswordRequest(BaseModel):
+    """S8.1: ``POST /api/v1/auth/change-password`` (authenticated).
+
+    Re-authenticates ``current_password``; the new password must satisfy the
+    S8.1 policy. All refresh tokens are revoked on success (§17: neither
+    password is ever logged or stored in cleartext).
+    """
+
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=1)
 
 
 class ProjectOut(BaseModel):

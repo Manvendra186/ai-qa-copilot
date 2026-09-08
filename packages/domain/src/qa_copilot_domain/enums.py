@@ -188,6 +188,20 @@ def role_at_least(role: ProjectRole, minimum: ProjectRole) -> bool:
     return ROLE_RANK[role] >= ROLE_RANK[minimum]
 
 
+class OrgRole(StrEnum):
+    """Organization-scoped role (build bible §19 S8.1/S8.2).
+
+    ``owner`` manages the org (membership, billing ops, deletion — S8.2/S8.3);
+    ``member`` is a regular participant. A user's baseline access to an
+    org's projects derives from this role when no explicit
+    ``project_members`` row exists (S8.2 access model; the explicit row
+    always wins).
+    """
+
+    OWNER = "owner"
+    MEMBER = "member"
+
+
 class ImpactKind(StrEnum):
     """Why a test file is in a change-impact set (build bible §19 S6.1).
 

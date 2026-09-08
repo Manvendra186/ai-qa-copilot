@@ -8,6 +8,22 @@ S0.8: auth baseline (§31.3) — ``POST /api/v1/auth/login``,
 - ``GET /api/v1/projects/{id}``     — ``viewer`` or above
 - ``DELETE /api/v1/projects/{id}``  — ``owner`` (§31.3: project deletion)
 
+S8.1: auth hardening (§19 S8.1) — self-service + token hygiene:
+
+- ``POST /api/v1/auth/register``        — account **and** workspace (user
+  owns the new org); duplicate email → 409, weak password/email → 422
+- ``POST /api/v1/auth/refresh``         — rotate the opaque refresh token
+  (re-use after rotation → 401 + whole token family revoked)
+- ``POST /api/v1/auth/change-password`` — re-auth with current password;
+  revokes **all** refresh tokens (204)
+- ``POST /api/v1/auth/login``           — now also returns the rotating
+  refresh token + organizations; brute-force throttled in Redis per email
+  and per IP (429 + ``Retry-After``; a successful login resets the counters)
+- ``GET /api/v1/auth/me``               — now includes ``organizations``
+
+Passwords and refresh tokens never appear in responses other than the
+one-time issuance, logs or audit (§17).
+
 S0.9: async jobs API (§11, §31.2) — the mandatory ``202 + job_id`` pattern:
 
 - ``POST /api/v1/requirements/analyze`` → **202 + {job_id}** (``member`` or above)
@@ -79,6 +95,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from qa_copilot_domain.enums import (
     GeneratedTestStatus,
     JobType,
+    OrgRole,
     ProjectRole,
     TestResultStatus,
     role_at_least,
@@ -94,11 +111,13 @@ from qa_copilot_repository import requirements as repo_requirements
 from qa_copilot_repository import runs as repo_runs
 from qa_copilot_repository import webhooks as repo_webhooks
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import auth, jobs, knowledge_store, schemas
 from .db import get_db
+from .throttle import LoginThrottler
 
 auth_router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 projects_router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -134,7 +153,85 @@ def _member_projects(db: Session, user: models.User) -> list[schemas.ProjectRef]
     ]
 
 
-# --- auth ---------------------------------------------------------------------
+def _org_memberships(db: Session, user: models.User) -> list[schemas.OrganizationRef]:
+    """S8.1: the caller's organizations (role from ``organization_members``)."""
+    rows = db.execute(
+        select(models.Organization, models.OrganizationMember.role)
+        .join(
+            models.OrganizationMember,
+            models.OrganizationMember.organization_id == models.Organization.id,
+        )
+        .where(models.OrganizationMember.user_id == user.id)
+        .order_by(models.Organization.name)
+    ).all()
+    return [
+        schemas.OrganizationRef(id=org.id, name=org.name, role=role) for org, role in rows
+    ]
+
+
+def _token_response(
+    db: Session, user: models.User, secret: str, refresh_token: str
+) -> schemas.TokenResponse:
+    """The shared login/refresh body (access + rotating refresh token, S8.1)."""
+    return schemas.TokenResponse(
+        token=auth.create_access_token(user.id, user.email, secret),
+        expires_in=int(auth.TOKEN_TTL.total_seconds()),
+        refresh_token=refresh_token,
+        refresh_expires_in=int(auth.REFRESH_TTL.total_seconds()),
+        user=_user_out(user),
+        organizations=_org_memberships(db, user),
+        projects=_member_projects(db, user),
+    )
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP (S8.5 hardens proxy trust; local-first stays simple)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+# --- auth (S0.8 baseline + S8.1 hardening, §19) -------------------------------
+
+
+@auth_router.post("/register", status_code=201, response_model=schemas.RegisterResponse)
+def register(
+    body: schemas.RegisterRequest,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.RegisterResponse:
+    """Self-service signup (S8.1): account **and** workspace.
+
+    Creates the user and a new organization the user owns — one signup, one
+    private workspace (build bible §19 S8.1). Duplicate email → 409; the
+    password must satisfy the S8.1 policy (422). The password is only ever
+    hashed (§17).
+    """
+    email = body.email
+    if db.scalar(select(models.User).where(models.User.email == email)) is not None:
+        raise HTTPException(status_code=409, detail="email already registered")
+    violations = auth.password_policy_violations(body.password)
+    if violations:
+        raise HTTPException(
+            status_code=422, detail="password must " + " and ".join(violations)
+        )
+    user = models.User(email=email, role="owner", password_hash=auth.hash_password(body.password))
+    org = models.Organization(
+        name=body.organization_name or f"{email.split('@')[0]}'s workspace"
+    )
+    db.add_all([org, user])
+    db.flush()
+    db.add(models.OrganizationMember(organization_id=org.id, user_id=user.id, role=OrgRole.OWNER))
+    try:
+        db.commit()
+    except IntegrityError as exc:  # a concurrent signup won the unique-email race
+        db.rollback()
+        raise HTTPException(status_code=409, detail="email already registered") from exc
+    return schemas.RegisterResponse(
+        user=_user_out(user),
+        organization=schemas.OrganizationRef(id=org.id, name=org.name, role=OrgRole.OWNER),
+        projects=[],
+    )
 
 
 @auth_router.post("/login", response_model=schemas.TokenResponse)
@@ -143,23 +240,83 @@ def login(
     request: Request,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> schemas.TokenResponse:
-    """Dev-mode login (§31.3): email + password → HS256 Bearer token."""
+    """Email + password → access token + rotating refresh token (S8.1).
+
+    Brute-force throttled in Redis per email *and* per IP: once the failure
+    counter hits the limit the endpoint answers ``429`` + ``Retry-After``;
+    a successful login resets the counters (S8.1, §19).
+    """
     settings = request.app.state.settings
     try:
         secret = auth._require_secret(settings)
     except RuntimeError as exc:
         # fail loud with a readable body instead of a bare 500
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    throttler: LoginThrottler = request.app.state.login_throttler
+    ip = _client_ip(request)
+    decision = throttler.check(body.email, ip)
+    if decision.blocked:
+        raise HTTPException(
+            status_code=429,
+            detail="too many failed login attempts; try again later",
+            headers={"Retry-After": str(decision.retry_after_s)},
+        )
+
     user = db.scalar(select(models.User).where(models.User.email == body.email))
     if user is None or not auth.check_password(body.password, user.password_hash):
+        throttler.record_failure(body.email, ip)
         raise HTTPException(status_code=401, detail="invalid credentials")
-    token = auth.create_access_token(user.id, user.email, secret)
-    return schemas.TokenResponse(
-        token=token,
-        expires_in=int(auth.TOKEN_TTL.total_seconds()),
-        user=_user_out(user),
-        projects=_member_projects(db, user),
-    )
+
+    throttler.reset(body.email, ip)
+    refresh_token, _ = auth.issue_refresh_token(db, user.id)
+    return _token_response(db, user, secret, refresh_token)
+
+
+@auth_router.post("/refresh", response_model=schemas.TokenResponse)
+def refresh(
+    body: schemas.RefreshRequest,
+    request: Request,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.TokenResponse:
+    """Rotate a refresh token (S8.1): the presented token dies, a successor lives.
+
+    Reuse of an already-rotated token is rejected (401) and revokes the
+    whole token family, so a stolen token kills every live successor
+    (stolen-token rule, §17).
+    """
+    settings = request.app.state.settings
+    try:
+        secret = auth._require_secret(settings)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    user, refresh_token = auth.rotate_refresh_token(db, body.refresh_token)
+    return _token_response(db, user, secret, refresh_token)
+
+
+@auth_router.post("/change-password", status_code=204)
+def change_password(
+    body: schemas.ChangePasswordRequest,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> None:
+    """Change the caller's password (S8.1).
+
+    Re-authenticates the current password, then hashes the new one (policy:
+    10+ chars, letter + digit) and revokes **all** refresh tokens — any
+    other session loses its token. Neither password is ever logged, audited
+    or stored in cleartext (§17).
+    """
+    if not auth.check_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="current password is incorrect")
+    violations = auth.password_policy_violations(body.new_password)
+    if violations:
+        raise HTTPException(
+            status_code=422, detail="new password must " + " and ".join(violations)
+        )
+    user.password_hash = auth.hash_password(body.new_password)
+    auth.revoke_user_refresh_tokens(db, user.id)
+    db.commit()
 
 
 @auth_router.get("/me", response_model=schemas.MeResponse)
@@ -167,8 +324,12 @@ def me(
     user: models.User = Depends(auth.get_current_user),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> schemas.MeResponse:
-    """The authenticated user + their project roles (401 without a valid token)."""
-    return schemas.MeResponse(user=_user_out(user), projects=_member_projects(db, user))
+    """The authenticated user + their organizations and project roles (S8.1)."""
+    return schemas.MeResponse(
+        user=_user_out(user),
+        organizations=_org_memberships(db, user),
+        projects=_member_projects(db, user),
+    )
 
 
 # --- projects (role-gated, §31.3) ---------------------------------------------

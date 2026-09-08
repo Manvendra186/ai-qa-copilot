@@ -67,6 +67,19 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AUTH_TOKEN_SECRET"),
     )
 
+    # --- Auth hardening (S8.1, §19): login brute-force throttle (Redis) ------
+    # Max failed logins per email / per IP before ``429`` + ``Retry-After``.
+    login_throttle_max_failures: int = Field(
+        default=5,
+        ge=1,
+        validation_alias=AliasChoices("LOGIN_THROTTLE_MAX_FAILURES"),
+    )
+    login_throttle_window_s: int = Field(
+        default=60,
+        ge=1,
+        validation_alias=AliasChoices("LOGIN_THROTTLE_WINDOW_S"),
+    )
+
     # --- Jobs (S0.9, §31.2: 202 + SSE) ---
     # StubAgent progress-tick delay in seconds (dev pacing; tests use ~0.01).
     job_tick_delay_s: float = Field(

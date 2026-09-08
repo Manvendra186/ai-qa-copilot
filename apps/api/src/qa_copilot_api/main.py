@@ -38,7 +38,7 @@ from qa_copilot_ai import (
 )
 from sqlalchemy import Engine
 
-from qa_copilot_api import jobs, routes
+from qa_copilot_api import jobs, routes, throttle
 from qa_copilot_api.config import Settings, get_settings
 from qa_copilot_api.db import make_app_engine
 from qa_copilot_api.logging_config import configure_logging
@@ -201,6 +201,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.engine = make_app_engine(settings.database_url)
+
+    # S8.1: Redis-backed login throttling (per email + IP). The client is
+    # constructed from the configured URL but is lazy — no connection is
+    # attempted until a request needs it — so the API boots without Redis
+    # running (throttling fails open, see ``throttle.py``).
+    app.state.login_throttler = throttle.LoginThrottler(
+        settings.redis_url or "redis://localhost:6379/0",
+        max_failures=settings.login_throttle_max_failures,
+        window_s=settings.login_throttle_window_s,
+    )
 
     # S0.9: job subsystem (in-process, Phase 0 — see ``qa_copilot_api.jobs``).
     # Created here (not only in the lifespan) so ``app.state`` is complete

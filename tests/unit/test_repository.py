@@ -62,6 +62,8 @@ EXPECTED_TABLES = {
     "generated_tests",
     "integration_configs",
     "webhook_events",
+    "organization_members",
+    "user_refresh_tokens",
 }
 
 

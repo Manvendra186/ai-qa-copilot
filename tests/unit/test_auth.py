@@ -1,18 +1,30 @@
-"""S0.8 auth baseline tests (build bible §31.3).
+"""S0.8 auth baseline tests (build bible Â§31.3) + S8.1 hardening (Â§19).
 
 Covers the full 401/200/403 matrix:
 
 - password hashing (PBKDF2-SHA256): round-trip, wrong password, malformed,
   missing hash (unknown-user timing-equal path)
 - JWT (HS256): round-trip, wrong secret, expired, tampered
-- ``POST /api/v1/auth/login``: valid → 200 + token; bad password / unknown
-  user / no hash → 401
-- ``GET /api/v1/auth/me``: no token / invalid / expired / wrong-secret → 401;
-  valid → 200 with user + project roles
+- ``POST /api/v1/auth/login``: valid â†’ 200 + token; bad password / unknown
+  user / no hash â†’ 401
+- ``GET /api/v1/auth/me``: no token / invalid / expired / wrong-secret â†’ 401;
+  valid â†’ 200 with user + organizations + project roles
 - project-scoped RBAC (``project_members`` is authoritative, ``users.role``
-  is not): non-member → 403; ``viewer`` OK on read, blocked on delete;
-  ``member`` blocked where ``owner`` required; ``owner`` delete → 204
-- fail loud: no ``AUTH_TOKEN_SECRET`` → 500 (no fallback secret in code)
+  is not): non-member â†’ 403; ``viewer`` OK on read, blocked on delete;
+  ``member`` blocked where ``owner`` required; ``owner`` delete â†’ 204
+- fail loud: no ``AUTH_TOKEN_SECRET`` â†’ 500 (no fallback secret in code)
+
+S8.1 additions:
+
+- ``POST /api/v1/auth/register``: 201 + user + owned organization;
+  duplicate email â†’ 409; password policy / bad email â†’ 422
+- rotating opaque refresh tokens: login issues one; ``/auth/refresh``
+  rotates; reuse after rotation â†’ 401 + whole family revoked; unknown â†’ 401
+- ``POST /api/v1/auth/change-password``: 204 + all refresh tokens revoked +
+  old password dead; wrong current â†’ 401 (tokens survive); weak new â†’ 422
+- login brute-force throttling (Redis): blocks after the failure limit,
+  success resets, and it fails open when Redis is unreachable (tests that
+  need a live Redis skip honestly when none is running)
 """
 
 from __future__ import annotations
@@ -23,14 +35,14 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import NAMESPACE_DNS, uuid5
+from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 import jwt as pyjwt
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from qa_copilot_api import auth
+from qa_copilot_api import auth, throttle
 from qa_copilot_api.config import Settings
 from qa_copilot_api.main import create_app
 from qa_copilot_domain.enums import ProjectRole
@@ -44,8 +56,10 @@ ADMIN_URL = "postgresql+psycopg://qa:qa@localhost:5433/postgres"
 
 SECRET = "test-secret-0123456789abcdef"  # 16+ chars, test-only
 PASSWORD = "correct-horse-battery-staple"
+# S8.1 policy (10+ chars, letter + digit) â€” required by register / change-password.
+STRONG_PASSWORD = "correct-horse-battery-9staple"
 
-# ids are Postgres UUIDs — deterministic values, stable across runs
+# ids are Postgres UUIDs â€” deterministic values, stable across runs
 NS = NAMESPACE_DNS
 ORG_ID = str(uuid5(NS, "org-acme"))
 ACME_ID = str(uuid5(NS, "acme-store"))
@@ -107,6 +121,94 @@ def _auth_header(
     return {"Authorization": f"Bearer {token}"}
 
 
+# --- S8.1: throttle stubs + live-Redis helpers ----------------------------------
+
+
+class _OpenThrottler:
+    """Permissive stand-in for ``throttle.LoginThrottler`` (no Redis).
+
+    Installed by the ``env`` fixture so the HTTP tests stay deterministic:
+    never blocks, never counts, never needs a live Redis (and never pollutes
+    shared counters). The throttle behaviour itself is covered by the
+    dedicated tests at the bottom of this file.
+    """
+
+    def check(self, email: str, ip: str) -> throttle.ThrottleDecision:
+        return throttle.ThrottleDecision(False, 0)
+
+    def record_failure(self, email: str, ip: str) -> None:
+        return None
+
+    def reset(self, email: str, ip: str) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+class _BlockedThrottler:
+    """``LoginThrottler`` stand-in that always blocks (deterministic 429).
+
+    ``record_failure`` / ``reset`` must never run while blocked (no password
+    check, no timing signal) â€” if the route reaches them the test fails loud.
+    """
+
+    def __init__(self, retry_after_s: int = 42) -> None:
+        self._retry_after_s = retry_after_s
+        self.checked: list[tuple[str, str]] = []
+
+    def check(self, email: str, ip: str) -> throttle.ThrottleDecision:
+        self.checked.append((email, ip))
+        return throttle.ThrottleDecision(True, self._retry_after_s)
+
+    def record_failure(self, email: str, ip: str) -> None:
+        raise AssertionError("password check ran while throttled")
+
+    def reset(self, email: str, ip: str) -> None:
+        raise AssertionError("throttle reset ran while throttled")
+
+    def close(self) -> None:
+        return None
+
+
+#: A URL where nothing listens (localhost port 1) â€” exercises the fail-open path.
+DEAD_REDIS_URL = "redis://127.0.0.1:1/0"
+
+
+def _live_redis_url() -> str:
+    """The URL the app's throttler would use (same resolution as ``main``)."""
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    return settings.redis_url or "redis://localhost:6379/0"
+
+
+def _redis_up(url: str) -> bool:
+    """True when a Redis answers ``PING`` at *url* (skip live tests otherwise)."""
+    from redis import Redis
+
+    client = Redis.from_url(url, socket_connect_timeout=1, socket_timeout=1)
+    try:
+        return bool(client.ping())
+    except Exception:
+        return False
+    finally:
+        client.close()
+
+
+#: Live-Redis tests skip honestly when no Redis is running (local-first, Â§19).
+REQUIRES_REDIS = pytest.mark.skipif(
+    not _redis_up(_live_redis_url()), reason="live Redis unavailable"
+)
+
+
+def _real_throttler(settings: Settings) -> throttle.LoginThrottler:
+    """The same ``LoginThrottler`` construction ``main.py`` uses (S8.1)."""
+    return throttle.LoginThrottler(
+        settings.redis_url or "redis://localhost:6379/0",
+        max_failures=settings.login_throttle_max_failures,
+        window_s=settings.login_throttle_window_s,
+    )
+
+
 @pytest.fixture()
 def env() -> Iterator[dict[str, Any]]:
     """Scratch Postgres DB + migrated schema + users/projects/roles + app."""
@@ -148,11 +250,17 @@ def env() -> Iterator[dict[str, Any]]:
 
     app = create_app(
         # ``_env_file=None`` is pydantic-settings' private init kwarg (keep
-        # tests from reading the dev .env) — mypy can't see it in the stubs.
+        # tests from reading the dev .env) â€” mypy can't see it in the stubs.
         settings=Settings(  # type: ignore[call-arg]
             database_url=TEST_URL, auth_token_secret=SECRET, _env_file=None
         )
     )
+
+    # S8.1: deterministic login throttling â€” swap the app's Redis-backed
+    # throttler for a permissive stub so the HTTP tests never depend on (or
+    # pollute) live Redis state; the dedicated throttle tests below install
+    # their own stubs / real throttlers on demand.
+    app.state.login_throttler = _OpenThrottler()
 
     yield {"app": app, "engine": engine}
 
@@ -295,9 +403,11 @@ def test_me_ok_returns_user_and_projects(client: TestClient) -> None:
     body = response.json()
     assert body["user"]["email"] == "bob@local.dev"
     assert body["projects"] == [{"id": ACME_ID, "name": "Acme Store", "role": "member"}]
+    # S8.1: bob has no organization membership in the seed data â†’ empty list
+    assert body["organizations"] == []
 
 
-# --- RBAC (project-scoped, §31.3) ----------------------------------------------
+# --- RBAC (project-scoped, Â§31.3) ----------------------------------------------
 
 
 def test_projects_list_requires_auth(client: TestClient) -> None:
@@ -318,7 +428,7 @@ def test_project_read_ok_for_owner_member_and_viewer(client: TestClient) -> None
 
 
 def test_project_read_forbidden_for_non_member(client: TestClient) -> None:
-    # dave owns beta but is not a member of acme → 403 (no existence leak either)
+    # dave owns beta but is not a member of acme â†’ 403 (no existence leak either)
     response = client.get(f"/api/v1/projects/{ACME_ID}", headers=_auth_header("dave"))
     assert response.status_code == 403
     response = client.get(f"/api/v1/projects/{GHOST_ID}", headers=_auth_header("dave"))
@@ -326,17 +436,17 @@ def test_project_read_forbidden_for_non_member(client: TestClient) -> None:
 
 
 def test_project_delete_requires_owner(client: TestClient) -> None:
-    # member and viewer may not delete (§31.3: owner-only)
+    # member and viewer may not delete (Â§31.3: owner-only)
     for user in ("bob", "carol"):
         response = client.delete(f"/api/v1/projects/{ACME_ID}", headers=_auth_header(user))
         assert response.status_code == 403, (user, response.text)
     # non-member may not delete either
     response = client.delete(f"/api/v1/projects/{ACME_ID}", headers=_auth_header("dave"))
     assert response.status_code == 403
-    # owner deletes → 204, project is gone, its memberships with it
+    # owner deletes â†’ 204, project is gone, its memberships with it
     response = client.delete(f"/api/v1/projects/{ACME_ID}", headers=_auth_header("alice"))
     assert response.status_code == 204
-    # alice lost her membership → 403 (not 404: non-members get no existence leak)
+    # alice lost her membership â†’ 403 (not 404: non-members get no existence leak)
     assert (
         client.get(f"/api/v1/projects/{ACME_ID}", headers=_auth_header("alice")).status_code == 403
     )
@@ -351,7 +461,7 @@ def test_project_delete_requires_auth(client: TestClient) -> None:
 
 
 def test_missing_secret_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No ``AUTH_TOKEN_SECRET`` → 500; there must be no fallback secret."""
+    """No ``AUTH_TOKEN_SECRET`` â†’ 500; there must be no fallback secret."""
     monkeypatch.delenv("AUTH_TOKEN_SECRET", raising=False)
     app = create_app(
         settings=Settings(database_url=TEST_URL, _env_file=None)  # type: ignore[call-arg]
@@ -363,3 +473,363 @@ def test_missing_secret_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status_code == 500
     assert "AUTH_TOKEN_SECRET" in response.text
     app.state.engine.dispose()
+
+
+# --- S8.1: register (account + owned workspace, Â§19) ----------------------------
+
+
+def test_register_creates_account_and_owned_organization(client: TestClient) -> None:
+    """One signup creates the user and a new organization the user owns."""
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "new@local.dev",
+            "password": STRONG_PASSWORD,
+            "organization_name": "New Org",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["user"]["email"] == "new@local.dev"
+    assert body["user"]["role"] == "owner"
+    assert body["organization"]["name"] == "New Org"
+    assert body["organization"]["role"] == "owner"
+    assert body["projects"] == []
+    # the new account sees its owned workspace in /auth/me (S8.1)
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "new@local.dev", "password": STRONG_PASSWORD}
+    )
+    assert login.status_code == 200, login.text
+    token = login.json()["token"]
+    me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200, me.text
+    me_body = me.json()
+    assert me_body["organizations"] == [
+        {"id": body["organization"]["id"], "name": "New Org", "role": "owner"}
+    ]
+    assert me_body["projects"] == []
+
+
+def test_register_default_organization_name(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/register", json={"email": "new@local.dev", "password": STRONG_PASSWORD}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["organization"]["name"] == "new's workspace"
+
+
+def test_register_rejects_duplicate_email(client: TestClient) -> None:
+    # an already-seeded emailâ€¦
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"email": "alice@local.dev", "password": PASSWORD},
+    )
+    assert response.status_code == 409
+    # â€¦and a freshly registered one (same email â†’ one account)
+    client.post(
+        "/api/v1/auth/register", json={"email": "new@local.dev", "password": STRONG_PASSWORD}
+    )
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"email": "new@local.dev", "password": STRONG_PASSWORD},
+    )
+    assert response.status_code == 409
+
+
+def test_register_rejects_weak_password(client: TestClient) -> None:
+    for weak in ("short", "alllettershere", "1234567890"):
+        response = client.post(
+            "/api/v1/auth/register", json={"email": "new@local.dev", "password": weak}
+        )
+        assert response.status_code == 422, (weak, response.text)
+        assert "password must" in response.json()["detail"]
+
+
+def test_register_rejects_bad_email(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/register", json={"email": "not-an-email", "password": PASSWORD}
+    )
+    assert response.status_code == 422
+
+
+# --- S8.1: rotating refresh tokens (opaque, stored hashed, Â§17) -----------------
+
+
+def test_login_issues_rotating_refresh_token(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert isinstance(body["refresh_token"], str) and body["refresh_token"]
+    assert body["refresh_expires_in"] == int(auth.REFRESH_TTL.total_seconds())
+    # the token is opaque, not a JWT (a JWT would contain dots)
+    assert "." not in body["refresh_token"]
+
+
+def test_refresh_rotates_and_new_access_token_works(client: TestClient) -> None:
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}
+    )
+    assert login.status_code == 200, login.text
+    first = login.json()["refresh_token"]
+    response = client.post("/api/v1/auth/refresh", json={"refresh_token": first})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["refresh_token"] != first
+    # the successor's access token works against /auth/me
+    me = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {body['token']}"},
+    )
+    assert me.status_code == 200, me.text
+    assert me.json()["user"]["email"] == "alice@local.dev"
+
+
+def test_refresh_reuse_revokes_whole_family(client: TestClient) -> None:
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}
+    )
+    assert login.status_code == 200, login.text
+    first = login.json()["refresh_token"]
+    # rotate: the presented token dies, a successor lives
+    second = client.post("/api/v1/auth/refresh", json={"refresh_token": first})
+    assert second.status_code == 200, second.text
+    successor = second.json()["refresh_token"]
+    # reuse of the rotated token â†’ 401 â€¦
+    response = client.post("/api/v1/auth/refresh", json={"refresh_token": first})
+    assert response.status_code == 401, response.text
+    # â€¦and the whole token family is revoked â€” the successor is dead too
+    response = client.post("/api/v1/auth/refresh", json={"refresh_token": successor})
+    assert response.status_code == 401, response.text
+
+
+def test_refresh_rejects_unknown_token(client: TestClient) -> None:
+    response = client.post("/api/v1/auth/refresh", json={"refresh_token": "not-a-token"})
+    assert response.status_code == 401
+
+
+# --- S8.1: change password (re-auth + full token revocation, Â§17) ---------------
+
+
+def test_change_password_success_reauth_and_revoke(client: TestClient) -> None:
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}
+    )
+    assert login.status_code == 200, login.text
+    refresh_token = login.json()["refresh_token"]
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+    new_password = "new-password-12345"
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": PASSWORD, "new_password": new_password},
+        headers=headers,
+    )
+    assert response.status_code == 204, response.text
+    # old password is dead, new one works
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@local.dev", "password": new_password},
+        ).status_code
+        == 200
+    )
+    # every active refresh token was revoked (other sessions are out, Â§17)
+    response = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert response.status_code == 401
+
+
+def test_change_password_wrong_current_password(client: TestClient) -> None:
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}
+    )
+    assert login.status_code == 200, login.text
+    refresh_token = login.json()["refresh_token"]
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "wrong-current", "new_password": "new-password-12345"},
+        headers=headers,
+    )
+    assert response.status_code == 401, response.text
+    # nothing changed: the old refresh token still rotatesâ€¦
+    response = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert response.status_code == 200, response.text
+    # â€¦and the password is still the old one
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "alice@local.dev", "password": "new-password-12345"},
+        ).status_code
+        == 401
+    )
+
+
+def test_change_password_weak_new_password(client: TestClient) -> None:
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "alice@local.dev", "password": PASSWORD}
+    )
+    assert login.status_code == 200, login.text
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": PASSWORD, "new_password": "weak"},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    assert "new password must" in response.json()["detail"]
+
+
+def test_change_password_requires_auth(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": PASSWORD, "new_password": "new-password-12345"},
+    )
+    assert response.status_code == 401
+
+
+# --- S8.1: login brute-force throttling (Redis, Â§19) ----------------------------
+
+
+def test_throttle_fails_open_when_redis_unreachable() -> None:
+    """No Redis â†’ no 429, no exception: availability wins (local-first)."""
+    throttler = throttle.LoginThrottler(DEAD_REDIS_URL, max_failures=1, window_s=10)
+    try:
+        assert not throttler.check("a@b.c", "192.0.2.1").blocked
+        throttler.record_failure("a@b.c", "192.0.2.1")
+        assert not throttler.check("a@b.c", "192.0.2.1").blocked
+        throttler.reset("a@b.c", "192.0.2.1")
+    finally:
+        throttler.close()
+
+
+@REQUIRES_REDIS
+def test_throttle_counters_block_then_reset() -> None:
+    """Failure counter: unblocked â†’ blocked after the limit â†’ unblocked on reset."""
+    email = f"throttle-{uuid4().hex}@local.dev"
+    ip = "192.0.2.77"  # TEST-NET-1: never a real client address
+    throttler = throttle.LoginThrottler(_live_redis_url(), max_failures=3, window_s=30)
+    try:
+        assert not throttler.check(email, ip).blocked
+        for _ in range(3):
+            throttler.record_failure(email, ip)
+        decision = throttler.check(email, ip)
+        assert decision.blocked
+        assert 0 < decision.retry_after_s <= 30
+        throttler.reset(email, ip)
+        assert not throttler.check(email, ip).blocked
+    finally:
+        throttler.reset(email, ip)
+        throttler.close()
+
+
+def test_login_blocked_answers_429_with_retry_after(
+    client: TestClient, env: dict[str, Any]
+) -> None:
+    """A blocked email gets 429 + Retry-After â€” even with the correct password."""
+    app = env["app"]
+    stub = _BlockedThrottler(retry_after_s=42)
+    app.state.login_throttler = stub
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "alice@local.dev", "password": PASSWORD},
+        headers={"x-forwarded-for": "192.0.2.9"},
+    )
+    assert response.status_code == 429, response.text
+    assert response.headers["retry-after"] == "42"
+    assert "too many failed login attempts" in response.json()["detail"]
+    # the check saw the email and the (X-Forwarded-For) client IPâ€¦
+    assert stub.checked == [("alice@local.dev", "192.0.2.9")]
+    # â€¦and the password was never checked (record_failure / reset never ran)
+
+
+def test_login_fails_open_when_redis_is_down(client: TestClient, env: dict[str, Any]) -> None:
+    """Redis down â†’ logins still answer 401/200, never 429 or 500."""
+    app = env["app"]
+    # max_failures=1: a single failure would block if the counters worked at all
+    app.state.login_throttler = throttle.LoginThrottler(DEAD_REDIS_URL, max_failures=1)
+    body = {"email": "alice@local.dev"}
+    response = client.post("/api/v1/auth/login", json={**body, "password": "wrong"})
+    assert response.status_code == 401, response.text
+    response = client.post("/api/v1/auth/login", json={**body, "password": "wrong"})
+    assert response.status_code == 401, response.text
+    response = client.post("/api/v1/auth/login", json={**body, "password": PASSWORD})
+    assert response.status_code == 200, response.text
+
+
+@REQUIRES_REDIS
+def test_login_blocked_after_max_failures(client: TestClient, env: dict[str, Any]) -> None:
+    """Live Redis: the (max_failures + 1)-th login attempt is throttled (429)."""
+    app = env["app"]
+    settings: Settings = app.state.settings
+    app.state.login_throttler = _real_throttler(settings)
+    email = f"block-{uuid4().hex}@local.dev"
+    assert (
+        client.post(
+            "/api/v1/auth/register", json={"email": email, "password": STRONG_PASSWORD}
+        ).status_code
+        == 201
+    )
+    headers = {"x-forwarded-for": "192.0.2.51"}
+    max_failures = settings.login_throttle_max_failures
+    for _ in range(max_failures):
+        response = client.post(
+            "/api/v1/auth/login", json={"email": email, "password": "wrong"}, headers=headers
+        )
+        assert response.status_code == 401, response.text
+    # limit reached â†’ blocked before any password check
+    response = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": STRONG_PASSWORD}, headers=headers
+    )
+    assert response.status_code == 429, response.text
+    retry_after = int(response.headers["retry-after"])
+    assert 0 < retry_after <= settings.login_throttle_window_s
+    # a reset unblocks again (proves the block came from the counter)
+    app.state.login_throttler.reset(email, "192.0.2.51")
+    response = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": STRONG_PASSWORD}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+
+
+@REQUIRES_REDIS
+def test_successful_login_resets_failure_counter(client: TestClient, env: dict[str, Any]) -> None:
+    """Live Redis: a successful login clears the failure counters (S8.1, Â§19)."""
+    app = env["app"]
+    settings: Settings = app.state.settings
+    app.state.login_throttler = _real_throttler(settings)
+    email = f"reset-{uuid4().hex}@local.dev"
+    assert (
+        client.post(
+            "/api/v1/auth/register", json={"email": email, "password": STRONG_PASSWORD}
+        ).status_code
+        == 201
+    )
+    headers = {"x-forwarded-for": "192.0.2.52"}
+    max_failures = settings.login_throttle_max_failures
+    # (max_failures âˆ’ 1) failures, then a success resets the counterâ€¦
+    for _ in range(max_failures - 1):
+        response = client.post(
+            "/api/v1/auth/login", json={"email": email, "password": "wrong"}, headers=headers
+        )
+        assert response.status_code == 401, response.text
+    response = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": STRONG_PASSWORD}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    # â€¦so (max_failures âˆ’ 1) more failures must not block (counter restarted)
+    for _ in range(max_failures - 1):
+        response = client.post(
+            "/api/v1/auth/login", json={"email": email, "password": "wrong"}, headers=headers
+        )
+        assert response.status_code == 401, response.text
+    response = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": STRONG_PASSWORD}, headers=headers
+    )
+    assert response.status_code == 200, response.text

@@ -1,4 +1,4 @@
-"""Auth baseline (build bible §31.3 — S0.8).
+"""Auth baseline (build bible §31.3 — S0.8) + S8.1 hardening.
 
 Dev-mode single user + JWT, project-scoped roles ``owner`` / ``member`` /
 ``viewer``:
@@ -13,9 +13,19 @@ Dev-mode single user + JWT, project-scoped roles ``owner`` / ``member`` /
   deletion needs ``owner``). ``users.role`` is only a default and is never
   used for authorization.
 
+S8.1 (build bible §19 S8.1) hardens the baseline without replacing it:
+
+- :func:`password_policy_violations` — the register/change-password policy
+  (length + letter + digit); the plaintext is only ever hashed.
+- Opaque **rotating** refresh tokens: :func:`issue_refresh_token` /
+  :func:`rotate_refresh_token` / :func:`revoke_user_refresh_tokens`.
+  Only the SHA-256 hash is persisted (``user_refresh_tokens``); a token
+  reused after rotation revokes its whole family (stolen-token rule, §17).
+
 The HS256 secret comes from ``Settings.auth_token_secret``
 (``AUTH_TOKEN_SECRET`` env var, 16+ chars) — fail loud if unset, no
-fallback key in code. SSO / full RBAC stay in Phase 8 (§31.3).
+fallback key in code. SSO / OAuth providers stay deferred (Enterprise,
+§24).
 """
 
 from __future__ import annotations
@@ -23,6 +33,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import secrets
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -31,7 +43,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from qa_copilot_domain.enums import ProjectRole, role_at_least
 from qa_copilot_repository import models
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.orm import Session
 
 from .config import Settings
@@ -39,20 +51,28 @@ from .db import get_db
 
 __all__ = [
     "AuthError",
+    "REFRESH_TTL",
     "check_password",
     "create_access_token",
     "decode_access_token",
     "get_current_user",
     "hash_password",
+    "issue_refresh_token",
+    "new_refresh_token",
+    "password_policy_violations",
     "require_role",
+    "revoke_user_refresh_tokens",
+    "rotate_refresh_token",
     "verify_password",
 ]
 
 #: PBKDF2-SHA256 work factor (OWASP 2023 minimum for PBKDF2-SHA256).
 _PBKDF2_ITERATIONS = 390_000
 _SALT_BYTES = 16
-#: Access-token lifetime (dev baseline; refresh/rotation is Phase 8).
+#: Access-token lifetime (dev baseline).
 TOKEN_TTL = timedelta(hours=8)
+#: Refresh-token lifetime (S8.1: opaque, rotating; stored hashed, §17).
+REFRESH_TTL = timedelta(days=30)
 
 
 class AuthError(HTTPException):
@@ -112,6 +132,29 @@ def check_password(password: str, stored: str | None) -> bool:
     return verify_password(password, stored or _DUMMY_HASH)
 
 
+# --- Password policy (S8.1, §19: register + change-password) --------------------
+
+#: Minimum length for self-service password choices (register / change).
+PASSWORD_MIN_LENGTH = 10
+
+
+def password_policy_violations(password: str) -> list[str]:
+    """Human-readable policy violations (empty list = acceptable password).
+
+    Deliberately small and local: length + letter + digit (build bible
+    S8.1 "password policy"). The violations never contain the password
+    itself (§17 — nothing secret ever reaches a message or log line).
+    """
+    violations: list[str] = []
+    if len(password) < PASSWORD_MIN_LENGTH:
+        violations.append(f"be at least {PASSWORD_MIN_LENGTH} characters long")
+    if not any(c.isalpha() for c in password):
+        violations.append("contain a letter")
+    if not any(c.isdigit() for c in password):
+        violations.append("contain a digit")
+    return violations
+
+
 # --- JWT (HS256, PyJWT) -------------------------------------------------------
 
 
@@ -133,6 +176,100 @@ def decode_access_token(token: str, secret: str) -> dict[str, Any]:
         return jwt.decode(token, secret, algorithms=["HS256"])
     except jwt.PyJWTError as exc:
         raise AuthError(f"invalid token: {exc.__class__.__name__}") from exc
+
+
+# --- Refresh tokens (S8.1, §19: opaque, rotating, stored hashed) ----------------
+
+
+def new_refresh_token() -> str:
+    """A fresh opaque refresh token (384 bits of entropy, URL-safe).
+
+    The plaintext is returned exactly once (login/refresh response) and is
+    never logged, audited or persisted — only its :func:`hash_refresh_token`
+    lands in the database (§17).
+    """
+    return secrets.token_urlsafe(48)
+
+
+def hash_refresh_token(token: str) -> str:
+    """SHA-256 hex digest of *token* — the only form stored (§17)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_refresh_token(
+    db: Session, user_id: str, family_id: str | None = None
+) -> tuple[str, models.UserRefreshToken]:
+    """Store a new refresh token for *user_id*; return ``(plaintext, row)``.
+
+    *family_id* groups one login chain: a login mints a new family, while
+    :func:`rotate_refresh_token` keeps the family so reuse detection works
+    across rotations. The plaintext is returned exactly once — the database
+    holds only its SHA-256 hash (§17).
+    """
+    token = new_refresh_token()
+    row = models.UserRefreshToken(
+        user_id=user_id,
+        family_id=family_id or str(uuid.uuid4()),
+        token_hash=hash_refresh_token(token),
+        expires_at=datetime.now(UTC) + REFRESH_TTL,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return token, row
+
+
+def rotate_refresh_token(db: Session, presented: str) -> tuple[models.User, str]:
+    """Validate *presented*, revoke it, and issue its family successor.
+
+    Returns ``(user, new_plaintext)``. Rejections (all 401):
+
+    - unknown token;
+    - **reuse after rotation** (token already revoked) → the *whole family*
+      is revoked, so a stolen token kills every live successor;
+    - expired token.
+    """
+    row = db.scalar(
+        select(models.UserRefreshToken).where(
+            models.UserRefreshToken.token_hash == hash_refresh_token(presented)
+        )
+    )
+    if row is None:
+        raise AuthError("invalid refresh token")
+    now = datetime.now(UTC)
+    if row.revoked_at is not None:
+        db.execute(
+            sa_update(models.UserRefreshToken)
+            .where(
+                models.UserRefreshToken.family_id == row.family_id,
+                models.UserRefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        db.commit()
+        raise AuthError("refresh token reuse detected; token family revoked")
+    if row.expires_at <= now:
+        raise AuthError("refresh token expired")
+    row.revoked_at = now
+    db.commit()
+    user = db.get(models.User, row.user_id)
+    if user is None:
+        raise AuthError("refresh token subject no longer exists")
+    token, _ = issue_refresh_token(db, user.id, family_id=row.family_id)
+    return user, token
+
+
+def revoke_user_refresh_tokens(db: Session, user_id: str) -> None:
+    """Revoke every active refresh token of *user_id* (password change, S8.1)."""
+    db.execute(
+        sa_update(models.UserRefreshToken)
+        .where(
+            models.UserRefreshToken.user_id == user_id,
+            models.UserRefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC))
+    )
+    db.commit()
 
 
 # --- FastAPI dependencies ------------------------------------------------------
