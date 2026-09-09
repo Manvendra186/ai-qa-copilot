@@ -9,13 +9,33 @@
   **Phase 8 — Commercialization: IN PROGRESS** — S8.0 ✓ step table (bible §19;
   user-approved 2026-09-08: **pilot scope §24**, **SSO/OAuth deferred to
   Enterprise §24**, **billing = admin-assigned plans + real quota metering, no
-  payment processor**) · **S8.1 ✓ auth hardening** · S8.2–S8.6 planned
-  (teams → RBAC+audit → billing → deployment → pilot E2E)
-- **next:** **S8.2 — teams / organization membership** (members + code-based
-  invites — details in §3)
+  payment processor**) · **S8.1 ✓ auth hardening** · **S8.2 ✓ teams** ·
+  S8.3–S8.6 planned (RBAC+audit → billing → deployment → pilot E2E)
+- **next:** **S8.3 — RBAC hardening + audit trail** (route-role matrix test,
+  org-level gates, `audit_log`, deletion workflows — details in §3)
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-09 · S8.2 Teams (organization membership) — complete + gated.**
+  Org membership surface: `GET /organizations` (mine + role + member count) ·
+  `GET/POST/PATCH/DELETE /organizations/{id}/members` (owner-only ops;
+  outsider → 403 never 404; a member may leave via self-DELETE; one owner per
+  org — partial unique index `uq_organization_members_single_owner`; transfer
+  = demote-then-promote in one transaction) · one-time code invites (owner-only
+  `POST /organizations/{id}/invites` → 128-bit URL-safe code returned exactly
+  once, 7-day TTL, only SHA-256 hash stored §17 · `POST /invites/{code}/accept`:
+  email mismatch 403 · already member 409 · unknown/expired/reused all 404, no
+  reason leak) · org-baseline project access: `require_role` resolves an
+  explicit `project_members` row first, else the org role (owner→owner,
+  member→member) · core `qa_copilot_repository.invites` + `membership`
+  extensions (LLM-free, core never commits) · migration `f3a9c2d81b57`
+  (**new head**: `organization_invites` + single-owner index) · tests:
+  `test_s82_teams.py` **22** (API) + 7 new in `test_repository.py` (core:
+  issue/accept, reuse/expiry/mismatch/already-member, single-owner index,
+  baseline + explicit override) · exit green (two users see shared projects ·
+  outsider 403 · invite accept/expiry/reuse · explicit row wins) · gates green
+  (ruff check+format — also cleared pre-existing repo-wide mechanical
+  lint/format debt · mypy strict 163 files · **962 passed**) · `7a0e154`.
 - **2026-09-08 · S8.1 Auth hardening — complete + gated.**
   `POST /api/v1/auth/register` (201; password policy 10+/letter/digit → 422;
   duplicate → 409; signup = user **and** their organization, user = `owner` in
@@ -163,24 +183,26 @@
 
 ## 3. NEXT STEP (start here)
 
-**S8.1 is complete + gated** (`fa4e6c0`, 2026-09-08) — register + org,
-rotating hashed refresh tokens, change-password, `/auth/me` with orgs, Redis
-login throttle (details in §2 + SESSION_LOG 2026-09-08).
+**S8.2 is complete + gated** (`7a0e154`, 2026-09-09) — org membership CRUD,
+one-time code invites (hash-only, 7-day TTL, non-leaking errors), org-baseline
+project access with explicit-row override (details in §2 + SESSION_LOG 2026-09-09).
 
-**S8.2 — Teams (organization membership):**
-- `organization_members` already exists (S8.1: org + user + role
-  `owner`/`member`) — build the membership surface on it; one owner per org
-- `organization_invites` (email, role, one-time code, 7-day expiry) —
-  code-based, no SMTP (local-first) + migration
-- routes: `GET /api/v1/organizations` (mine) · `GET/POST/PATCH/DELETE
-  /organizations/{id}/members` (org owner) · `POST /organizations/{id}/invites`
-  + `POST /invites/{code}/accept` (any authenticated user joins as invited)
-- access model: org membership = baseline access to all org projects (org role
-  maps to a project role when no explicit `project_members` row exists; an
-  explicit row always wins) · non-owner may leave the org
-- **Exit:** two users + one org both see shared projects; org outsider → 403
-  (never 404); invite flow green (accept → member; expiry/reuse rejected);
-  explicit `project_members` row overrides org baseline; gates green.
+**S8.3 — RBAC hardening + audit trail:**
+- route-level role audit — a test asserting **every** route declares a minimum
+  role (org- or project-scoped) or is explicitly public (login/register/
+  invite-accept/health/webhook)
+- org-level gates: membership + billing ops = org owner · org deletion =
+  owner with re-auth
+- `audit_log` table (actor, action, target, outcome, ip, at; append-only) +
+  migration — security events: auth success/failure, membership changes, plan
+  changes, quota denials, deletions (complements `ai_actions`, which is
+  AI-only, §31.5)
+- deletion workflows (§17): `DELETE /organizations/{id}` (owner; cascades) +
+  user self-delete (purges PII, keeps audit rows)
+- **Exit:** route-matrix test green (no unguarded route); cross-org access →
+  403 never 404; audit rows exist for the red-team scenario list (login fail,
+  membership change, plan change, quota denial, org delete); org-delete
+  cascade verified; gates green.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -241,10 +263,10 @@ login throttle (details in §2 + SESSION_LOG 2026-09-08).
 - Demo app (S0.10): `c:\Users\manve\Workspace\ai-qa-copilot-demo-app` (separate repo;
   `pnpm dev`/`smoke`/`defect-check` · user `qa`/`qa1234` · server :4000)
 - Domain: `packages/domain/src/qa_copilot_domain/{base,enums,entities}.py` · ORM:
-  `packages/repository/src/qa_copilot_repository/models.py` (18 core tables — new tables
+  `packages/repository/src/qa_copilot_repository/models.py` (25 core tables — new tables
   must be added to `tests/unit/test_repository.py` `EXPECTED_TABLES`) · migrations
-  `infra/migrations/` (initial `60fa1027d8d2`) · DB URL `.../repository/db.py`
-  (env → `.env` → default)
+  `infra/migrations/` (initial `60fa1027d8d2`, current head `f3a9c2d81b57`) · DB URL
+  `.../repository/db.py` (env → `.env` → default)
 - API: `apps/api/src/qa_copilot_api/` — `app.py` (factory) · `auth.py` (hash/JWT/deps) ·
   `jobs.py` (JobAgent/StubAgent/bus/`sse_stream`/reaper + all `*JobAgent`s) · `routes.py`
   · `schemas.py` · `config.py` · `main.py` (agent wiring) · tests `tests/unit/`
@@ -261,7 +283,8 @@ login throttle (details in §2 + SESSION_LOG 2026-09-08).
   `scripts/llm_live_check.py` · `ai_actions` writer `qa_copilot_repository.audit`
 - Repository cores (`packages/repository/src/qa_copilot_repository/`): `scanner.py` (S2.1)
   · `conventions.py` (S2.2) · `generated_tests.py` (S2.4) · `impact.py` (S6.1) ·
-  `history.py` (S6.2) · `regression.py` (S6.3) · `membership.py` (S0.8) · sample repos
+  `history.py` (S6.2) · `regression.py` (S6.3) · `membership.py` (S0.8/S8.2) ·
+  `invites.py` (S8.2) · sample repos
   `packages/repository/samples/sample_repos/{js-web-app,python-api,js-monorepo}`
 - Goldens: `packages/ai/golden/golden_v1.json` (S1.2/S1.4) ·
   `packages/ai/golden/regression_v1.json` (S6.3) ·

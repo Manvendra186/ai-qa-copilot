@@ -2571,3 +2571,94 @@
 
 
 
+
+## 2026-09-09 — S8.2 Teams (organization membership) — complete + gated
+
+- **Goal:** bible §19 S8.2 — teams: the org membership surface, one-time
+  code-based invites (local-first, no SMTP), org-baseline project access
+  (an explicit `project_members` row always wins), one owner per org.
+- **Did:**
+  - `GET /api/v1/organizations` — the caller's orgs with their org role +
+    member count (ordered by org name; `membership.user_orgs`).
+  - `GET/POST/PATCH/DELETE /api/v1/organizations/{id}/members` — list
+    (any member) · add (owner; duplicate → 409) · change role (owner;
+    demoting the org owner → 409; promoting a second owner while one exists
+    → 409 via the DB partial unique index) · remove (owner for others;
+    **any member may leave** by removing themselves; removing the org's
+    owner → 409; unknown member → 404).
+  - Outsider semantics: every org-scoped route answers **403, never 404**,
+    for a non-member (no existence leak — §31.3 pattern, S8.2 exit).
+  - Owner transfer = demote the acting owner **then** promote the target,
+    flushed in one transaction (no temporary two-owner state against
+    `uq_organization_members_single_owner`; a legitimate transfer never
+    hits the 409 path).
+  - One-time code invites (owner-only `POST /organizations/{id}/invites`,
+    201): 128-bit URL-safe `secrets.token_urlsafe(16)` code returned
+    **exactly once**; only its SHA-256 hex hash is persisted (unique
+    `code_hash`, §17 — the S8.1 refresh-token pattern) · 7-day TTL
+    (`invites.INVITE_TTL`) · `POST /invites/{code}/accept` (authenticated):
+    email mismatch → 403 · already member → 409 · unknown/expired/reused →
+    **all 404** (the three reasons are indistinguishable by design — no
+    reason-leak oracle) · accept sets `accepted_at`/`accepted_by` + inserts
+    the membership row with the invited role.
+  - Org-baseline project access: `auth.require_role` now resolves
+    `membership.get_project_role` — an explicit `project_members` row wins
+    (can narrow *or* widen), else the caller's org role via
+    `ORG_ROLE_TO_PROJECT_ROLE` (org owner → project owner, org member →
+    project member) · no row + no org → 403 as before.
+  - Core `qa_copilot_repository.invites` (LLM-free — stdlib crypto + DB
+    only; `issue_invite`/`accept_invite`/`find_invite_by_code`;
+    `InviteErrorKind` taxonomy the API maps to HTTP; **core never commits**
+    — the API owns the transaction, S7.3 pattern) + `membership` extensions
+    (`user_orgs`, `get_org_role`, `get_org_owner_id`, `get_project_role`,
+    `ORG_ROLE_TO_PROJECT_ROLE`) · package `__init__` exports `invites`.
+  - Migration `f3a9c2d81b57` (**new head**, revises `c7e2a4f81b63`):
+    `organization_invites` (unique `code_hash`, `expires_at`,
+    `accepted_at`/`accepted_by` nullable) + **partial unique index**
+    `uq_organization_members_single_owner` on
+    `organization_members(organization_id) WHERE role = 'owner'` — the
+    second owner insert fails at the DB level, even under a race · local
+    dev DB (5433) migrated to head.
+  - `tests/unit/test_s82_teams.py` — **22 API-level tests** (fresh org DB
+    per test; register → login): list mine (200 + 401 unauth) · member
+    list (200 + non-member 403) · add (owner-only 403; duplicate 409) ·
+    update rules (demote-owner 409; transfer via promotion) · sole-owner
+    protection (remove owner 409) · remove by owner + member self-removal
+    (204) · invite owner-only (403) · invite flow end-to-end (create →
+    accept → member row with invited role, code gone) · unknown code 404 +
+    unauthenticated accept 401 · email mismatch 403 · already member 409 ·
+    invalid role 422 · org baseline: two users both see + access the shared
+    project (member listing, org owner → project owner baseline) · explicit
+    `project_members` row narrowing an org owner · widening an org member ·
+    org baseline grants project access · non-member project 403 (never 404).
+  - `tests/unit/test_repository.py` — 7 new core tests (invite
+    issue/accept flow · reuse rejected as unknown · expiry rejected as
+    unknown · email mismatch · already member · single-owner partial unique
+    index · org baseline + explicit override) + `EXPECTED_TABLES` +=
+    `organization_invites` (the §7 gotcha, pre-empted).
+  - Also: cleared **pre-existing repo-wide** ruff debt — the committed tree
+    failed `ruff check`/`ruff format --check` before this step; ran
+    `ruff check --fix .` + `ruff format .`. Non-S8.2 files touched are
+    mechanical only (`throttle.py` line-join + EOF newline, `_s75_live.py`
+    slice/line-join, S8.1 migration EOF newline) — committed with the step
+    per the §7 gotcha.
+  - Mypy: no baseline existed; the 71 reported errors were all in S8.2
+    files and fixed (`_s82_env()` → `sa.orm.Session`;
+    `_explicit_project_rows()` → `list[tuple[models.Project, str]]` via
+    `role.value`; `resp.json()` annotated `list[dict[str, Any]]` /
+    `dict[str, Any]` in `test_s82_teams.py`).
+- **Verified:** S8.2 tests **29/29** (22 API + 7 core) · **full suite 962
+  passed, 0 failed** (310.7 s; a stale `lastfailed` cache naming long-removed
+  tests initially looked like failures — cleared + rerun) · `ruff check` +
+  `ruff format --check` clean (211 files formatted) · mypy strict clean
+  (163 source files) · red-team: invite code plaintext appears only in the
+  create response — never in the DB (`code_hash` only), logs, or error
+  bodies; unknown/expired/reused are indistinguishable (all 404).
+- **Commit:** `7a0e154 step S8.2: teams (org membership, one-time code
+  invites, org-baseline project access)` (14 files: routes/schemas/auth/
+  main + `invites.py` + `membership.py` + models + package exports +
+  migration + `test_s82_teams.py` + `test_repository.py` + mechanical
+  ruff fixes).
+- **Next session start:** **S8.3 — RBAC hardening + audit trail** — see
+  `STATE.md` §3 (route-role matrix test, org-level gates, `audit_log`
+  append-only table, deletion workflows).
