@@ -8,10 +8,14 @@ Dev-mode single user + JWT, project-scoped roles ``owner`` / ``member`` /
   iterations — OWASP's 2023 minimum for PBKDF2-SHA256), stored in
   ``users.password_hash``.
 - ``Authorization: Bearer <token>`` is verified by :func:`get_current_user`.
-- :func:`require_role` enforces project-scoped RBAC against
-  ``project_members`` (§31.3: code apply/approve needs ``member``+, project
-  deletion needs ``owner``). ``users.role`` is only a default and is never
-  used for authorization.
+- :func:`require_role` enforces project-scoped RBAC (§31.3: code
+  apply/approve needs ``member``+, project deletion needs ``owner``).
+  ``users.role`` is only a default and is never used for authorization.
+  S8.2 (build bible §19): the effective role resolves through
+  ``project_members`` first, then falls back to the caller's **org** role
+  for the project's organization (org baseline; the explicit row always
+  wins) — see
+  :func:`qa_copilot_repository.membership.get_project_role`.
 
 S8.1 (build bible §19 S8.1) hardens the baseline without replacing it:
 
@@ -43,7 +47,9 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from qa_copilot_domain.enums import ProjectRole, role_at_least
 from qa_copilot_repository import models
-from sqlalchemy import select, update as sa_update
+from qa_copilot_repository.membership import get_project_role
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from .config import Settings
@@ -321,12 +327,10 @@ def require_role(minimum: ProjectRole) -> Callable[..., tuple[models.User, str]]
         user: models.User = Depends(get_current_user),  # noqa: B008
         db: Session = Depends(get_db),  # noqa: B008
     ) -> tuple[models.User, str]:
-        role = db.scalars(
-            select(models.ProjectMember.role).where(
-                models.ProjectMember.project_id == project_id,
-                models.ProjectMember.user_id == user.id,
-            )
-        ).first()
+        # S8.2 (bible §19): explicit project_members row wins, else the
+        # caller's org role is the baseline — resolved in the repository
+        # package (LLM-free core).
+        role = get_project_role(db, project_id, user.id)
         if role is None:
             raise HTTPException(status_code=403, detail="no role for this project")
         if not role_at_least(ProjectRole(role), minimum):

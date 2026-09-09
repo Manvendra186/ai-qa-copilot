@@ -84,6 +84,7 @@ class Organization(Base):
 
     projects: Mapped[list[Project]] = relationship(back_populates="organization")
     members: Mapped[list[OrganizationMember]] = relationship(back_populates="organization")
+    invites: Mapped[list[OrganizationInvite]] = relationship(back_populates="organization")
 
 
 class User(Base):
@@ -107,9 +108,7 @@ class User(Base):
     )
 
     memberships: Mapped[list[ProjectMember]] = relationship(back_populates="user")
-    organization_memberships: Mapped[list[OrganizationMember]] = relationship(
-        back_populates="user"
-    )
+    organization_memberships: Mapped[list[OrganizationMember]] = relationship(back_populates="user")
     refresh_tokens: Mapped[list[UserRefreshToken]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -238,17 +237,27 @@ class ProjectMember(Base):
 
 
 class OrganizationMember(Base):
-    """A user's role within one organization (build bible §19 S8.1).
+    """A user's role within one organization (build bible §19 S8.1/S8.2).
 
     Composite primary key ``(organization_id, user_id)``; the extra index on
     ``user_id`` covers the reverse lookup "which orgs does this user belong
-    to". S8.1 creates the table so registration can make the user the org
+    to". S8.1 created the table so registration can make the user the org
     owner and ``GET /auth/me`` can list their organizations; S8.2 builds the
-    full membership + invite surface on top (one ``owner`` per org is
-    enforced there).
+    full membership + invite surface on top and enforces **one ``owner``
+    per org** with the partial unique index
+    ``uq_organization_members_single_owner`` (the second owner insert fails
+    at the database level, even under a race).
     """
 
     __tablename__ = "organization_members"
+    __table_args__ = (
+        sa.Index(
+            "uq_organization_members_single_owner",
+            "organization_id",
+            unique=True,
+            postgresql_where=sa.text("role = 'owner'"),
+        ),
+    )
 
     organization_id: Mapped[str] = mapped_column(
         sa.Uuid(as_uuid=False),
@@ -268,6 +277,43 @@ class OrganizationMember(Base):
 
     organization: Mapped[Organization] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="organization_memberships")
+
+
+class OrganizationInvite(Base):
+    """A one-time, code-based invite to join an organization (§19 S8.2).
+
+    Local-first (§29 — no SMTP): the org owner creates the invite for an
+    email and receives a single-use ``code``; the invitee (an authenticated
+    account whose email matches the invite) accepts the code and joins the
+    org with the invited role. The code expires 7 days out (``expires_at``)
+    and is **consumed** on accept (``accepted_at``/``accepted_by``).
+
+    Only the SHA-256 ``code_hash`` is persisted (S8.1 refresh-token pattern,
+    §17) — the plaintext code exists solely in the ``POST /invites``
+    response and never in logs or audit.
+    """
+
+    __tablename__ = "organization_invites"
+
+    id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
+    organization_id: Mapped[str] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(sa.String(320))
+    role: Mapped[OrgRole] = mapped_column(_enum_column(OrgRole))
+    code_hash: Mapped[str] = mapped_column(sa.String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    accepted_by: Mapped[str | None] = mapped_column(
+        sa.Uuid(as_uuid=False), sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    organization: Mapped[Organization] = relationship(back_populates="invites")
 
 
 class UserRefreshToken(Base):
@@ -765,6 +811,8 @@ __all__ = [
     "Job",
     "KnowledgeDocument",
     "Organization",
+    "OrganizationInvite",
+    "OrganizationMember",
     "Project",
     "ProjectMember",
     "PromptVersion",
@@ -775,6 +823,7 @@ __all__ = [
     "TestRun",
     "TestCase",
     "User",
+    "UserRefreshToken",
     "VECTOR_DIM",
     "WebhookEvent",
 ]

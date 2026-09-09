@@ -46,6 +46,11 @@ S7.3: inbound CI/CD webhook delivery — repository → project resolution
 from the payload's ``owner/repo`` + the ``webhook_events`` dedupe helpers
 (unique ``delivery_id``, a re-sent delivery never spawns a second job)
 (:mod:`qa_copilot_repository.webhooks`, build bible §19 S7.3).
+S8.2: teams — one-time code-based organization invites (single-use code,
+7-day expiry, hash-only storage, §17/§29) + the org-baseline access model
+(org role → baseline project role; an explicit ``project_members`` row
+always wins) (:mod:`qa_copilot_repository.invites`,
+:mod:`qa_copilot_repository.membership`, build bible §19 S8.2).
 """
 
 from . import (
@@ -56,6 +61,7 @@ from . import (
     history,
     impact,
     integrations,
+    invites,
     membership,
     models,
     prompts,
@@ -111,6 +117,7 @@ __all__ = [
     "impact",
     "impact_from_session",
     "integrations",
+    "invites",
     "main",
     "membership",
     "models",

@@ -266,6 +266,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # pull_request opened/synchronize reuses the S6.4 regression_analysis
     # job (no new agent, no new JobType).
     app.include_router(routes.webhooks_router)
+    # S8.2: teams — organizations, member management, code-based invites
+    # (§19 S8.2; org baseline project access + one owner per org).
+    app.include_router(routes.organizations_router)
+    app.include_router(routes.invites_router)
 
     return app
 

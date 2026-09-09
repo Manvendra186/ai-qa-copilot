@@ -75,9 +75,7 @@ class LoginThrottler:
                     return ThrottleDecision(True, ttl or self._window_s)
             return ThrottleDecision(False, 0)
         except RedisError as exc:
-            logger.warning(
-                "login throttle unavailable (%s); failing open", exc.__class__.__name__
-            )
+            logger.warning("login throttle unavailable (%s); failing open", exc.__class__.__name__)
             return ThrottleDecision(False, 0)
 
     def record_failure(self, email: str, ip: str) -> None:

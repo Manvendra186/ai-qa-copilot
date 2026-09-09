@@ -250,7 +250,7 @@ class _FakeJiraHandler(BaseHTTPRequestHandler):
         prefix = "/rest/api/2/issue/"
         if not path.startswith(prefix):
             return None
-        key = path[len(prefix):]
+        key = path[len(prefix) :]
         return key or None
 
     def do_POST(self) -> None:  # noqa: N802 (http.server contract)
@@ -598,9 +598,7 @@ def link_failure_to_jira(
         relink_action = issue2.get("action")
         relink_key = issue2.get("key")
     checks.add("jira.relink_action", "updated", relink_action, relink_action == "updated")
-    checks.add(
-        "jira.relink_key_same", JIRA_FIRST_KEY, relink_key, relink_key == JIRA_FIRST_KEY
-    )
+    checks.add("jira.relink_key_same", JIRA_FIRST_KEY, relink_key, relink_key == JIRA_FIRST_KEY)
 
     return {
         "failure_id": failure_id,

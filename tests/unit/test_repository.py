@@ -13,7 +13,7 @@ import pytest
 import sqlalchemy as sa
 from qa_copilot_ai import AICallResult, PromptNotFound, TokenUsage
 from qa_copilot_knowledge.persist import load_document_embeddings, store_document_embedding
-from qa_copilot_repository import audit, db, models, prompts
+from qa_copilot_repository import audit, db, invites, membership, models, prompts
 
 # --- URL resolution ---------------------------------------------------------
 
@@ -63,6 +63,7 @@ EXPECTED_TABLES = {
     "integration_configs",
     "webhook_events",
     "organization_members",
+    "organization_invites",
     "user_refresh_tokens",
 }
 
@@ -443,4 +444,295 @@ def test_persist_run_writes_run_result_and_artifact_rows() -> None:
             assert video.uri == f"runs/s31-test/{slug}/video"
             assert video.metadata_ == {"size_bytes": 67633}
     finally:
+        engine.dispose()
+
+
+# --- S8.2: organization invites + membership (build bible §19 S8.2) -------------
+#
+# Self-contained (S5.2 guarded-persistence pattern): each test builds its own
+# org/users/invites in a transaction that is **rolled back**, so the dev DB is
+# left untouched. Skipped when the dev database is unreachable.
+
+
+def _s82_env() -> tuple[sa.Engine, sa.orm.Session] | None:
+    """(engine, session) for a rolled-back S8.2 smoke test, or ``None`` to skip."""
+    engine = _engine_or_skip()
+    if engine is None:
+        return None
+    return engine, db.make_session_factory(engine)()
+
+
+def test_s82_invite_issue_and_accept_flow() -> None:
+    """Issue → hash-only storage + 7-day TTL → accept → membership at invited role."""
+    from datetime import UTC, datetime
+
+    from qa_copilot_domain.enums import OrgRole
+
+    env = _s82_env()
+    if env is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    engine, session = env
+    try:
+        now = datetime(2026, 9, 1, tzinfo=UTC)
+        org = models.Organization(name="S8.2 invite flow org")
+        owner = models.User(id=str(uuid.uuid4()), email="s82-owner@local.dev", role="developer")
+        invitee = models.User(id=str(uuid.uuid4()), email="s82-invitee@local.dev", role="developer")
+        session.add_all([org, owner, invitee])
+        session.flush()
+        session.add(
+            models.OrganizationMember(organization_id=org.id, user_id=owner.id, role=OrgRole.OWNER)
+        )
+        assert membership.get_org_owner_id(session, org.id) == owner.id
+
+        row, code = invites.issue_invite(
+            session,
+            organization_id=org.id,
+            email=invitee.email,
+            role=OrgRole.MEMBER,
+            now=now,
+        )
+        session.flush()
+        # §17: only the SHA-256 hash is persisted; the plaintext code is returned once.
+        assert row.code_hash == invites.hash_invite_code(code)
+        assert len(code) >= 20  # 128-bit URL-safe → ≥22 chars
+        assert row.expires_at == now + invites.INVITE_TTL
+        assert invites.INVITE_TTL.days == 7
+        assert row.accepted_at is None
+
+        member, org_loaded = invites.accept_invite(session, code=code, user=invitee, now=now)
+        session.flush()
+        assert org_loaded.id == org.id
+        assert member.organization_id == org.id
+        assert member.role is OrgRole.MEMBER
+        assert row.accepted_at == now  # consumed on accept
+        assert row.accepted_by == invitee.id
+        assert membership.get_org_role(session, org.id, invitee.id) is OrgRole.MEMBER
+        # a real but non-member user id → None (never a DB error)
+        assert membership.get_org_role(session, org.id, str(uuid.uuid4())) is None
+    finally:
+        session.rollback()
+        session.close()
+        engine.dispose()
+
+
+def test_s82_invite_reuse_rejected_as_unknown() -> None:
+    """A second accept of a consumed code → ``UNKNOWN`` (404 class, no reason leak)."""
+    from datetime import UTC, datetime
+
+    from qa_copilot_domain.enums import OrgRole
+
+    env = _s82_env()
+    if env is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    engine, session = env
+    try:
+        now = datetime(2026, 9, 1, tzinfo=UTC)
+        org = models.Organization(name="S8.2 reuse org")
+        invitee = models.User(id=str(uuid.uuid4()), email="s82-reuse@local.dev", role="developer")
+        session.add_all([org, invitee])
+        session.flush()
+        _, code = invites.issue_invite(
+            session, organization_id=org.id, email=invitee.email, role=OrgRole.MEMBER, now=now
+        )
+        invites.accept_invite(session, code=code, user=invitee, now=now)
+        session.flush()
+        with pytest.raises(invites.InviteError) as excinfo:
+            invites.accept_invite(session, code=code, user=invitee, now=now)
+        assert excinfo.value.kind == invites.InviteErrorKind.UNKNOWN
+    finally:
+        session.rollback()
+        session.close()
+        engine.dispose()
+
+
+def test_s82_invite_expired_rejected_as_unknown() -> None:
+    """Expired code → ``UNKNOWN`` — same shape as unknown/reused (no oracle)."""
+    from datetime import UTC, datetime
+
+    from qa_copilot_domain.enums import OrgRole
+
+    env = _s82_env()
+    if env is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    engine, session = env
+    try:
+        now = datetime(2026, 9, 1, tzinfo=UTC)
+        org = models.Organization(name="S8.2 expiry org")
+        invitee = models.User(id=str(uuid.uuid4()), email="s82-expired@local.dev", role="developer")
+        session.add_all([org, invitee])
+        session.flush()
+        row, code = invites.issue_invite(
+            session, organization_id=org.id, email=invitee.email, role=OrgRole.MEMBER, now=now
+        )
+        session.flush()
+        with pytest.raises(invites.InviteError) as excinfo:
+            invites.accept_invite(session, code=code, user=invitee, now=row.expires_at)
+        assert excinfo.value.kind == invites.InviteErrorKind.UNKNOWN
+    finally:
+        session.rollback()
+        session.close()
+        engine.dispose()
+
+
+def test_s82_invite_email_mismatch() -> None:
+    """A valid code accepted by a different email → ``EMAIL_MISMATCH`` (403)."""
+    from datetime import UTC, datetime
+
+    from qa_copilot_domain.enums import OrgRole
+
+    env = _s82_env()
+    if env is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    engine, session = env
+    try:
+        now = datetime(2026, 9, 1, tzinfo=UTC)
+        org = models.Organization(name="S8.2 mismatch org")
+        target = models.User(id=str(uuid.uuid4()), email="s82-target@local.dev", role="developer")
+        imposter = models.User(
+            id=str(uuid.uuid4()), email="s82-imposter@local.dev", role="developer"
+        )
+        session.add_all([org, target, imposter])
+        session.flush()
+        _, code = invites.issue_invite(
+            session, organization_id=org.id, email=target.email, role=OrgRole.MEMBER, now=now
+        )
+        session.flush()
+        with pytest.raises(invites.InviteError) as excinfo:
+            invites.accept_invite(session, code=code, user=imposter, now=now)
+        assert excinfo.value.kind == invites.InviteErrorKind.EMAIL_MISMATCH
+    finally:
+        session.rollback()
+        session.close()
+        engine.dispose()
+
+
+def test_s82_invite_already_member() -> None:
+    """Matching email but already a member → ``ALREADY_MEMBER`` (409)."""
+    from datetime import UTC, datetime
+
+    from qa_copilot_domain.enums import OrgRole
+
+    env = _s82_env()
+    if env is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    engine, session = env
+    try:
+        now = datetime(2026, 9, 1, tzinfo=UTC)
+        org = models.Organization(name="S8.2 already-member org")
+        existing = models.User(
+            id=str(uuid.uuid4()), email="s82-existing@local.dev", role="developer"
+        )
+        session.add_all([org, existing])
+        session.flush()
+        session.add(
+            models.OrganizationMember(
+                organization_id=org.id, user_id=existing.id, role=OrgRole.MEMBER
+            )
+        )
+        _, code = invites.issue_invite(
+            session, organization_id=org.id, email=existing.email, role=OrgRole.OWNER, now=now
+        )
+        session.flush()
+        with pytest.raises(invites.InviteError) as excinfo:
+            invites.accept_invite(session, code=code, user=existing, now=now)
+        assert excinfo.value.kind == invites.InviteErrorKind.ALREADY_MEMBER
+        # the existing membership is untouched (no silent role escalation)
+        assert membership.get_org_role(session, org.id, existing.id) is OrgRole.MEMBER
+    finally:
+        session.rollback()
+        session.close()
+        engine.dispose()
+
+
+def test_s82_single_owner_partial_unique_index() -> None:
+    """One ``owner`` per org — a second owner row violates the partial index."""
+    from qa_copilot_domain.enums import OrgRole
+
+    env = _s82_env()
+    if env is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    engine, session = env
+    try:
+        org = models.Organization(name="S8.2 single-owner org")
+        first = models.User(id=str(uuid.uuid4()), email="s82-owner1@local.dev", role="developer")
+        second = models.User(id=str(uuid.uuid4()), email="s82-owner2@local.dev", role="developer")
+        session.add_all([org, first, second])
+        session.flush()
+        session.add(
+            models.OrganizationMember(organization_id=org.id, user_id=first.id, role=OrgRole.OWNER)
+        )
+        session.add(
+            models.OrganizationMember(organization_id=org.id, user_id=second.id, role=OrgRole.OWNER)
+        )
+        with pytest.raises(sa.exc.IntegrityError):
+            session.flush()
+    finally:
+        session.rollback()
+        session.close()
+        engine.dispose()
+
+
+def test_s82_project_role_org_baseline_and_explicit_override() -> None:
+    """Org baseline: owner→owner, member→member; an explicit row always wins."""
+    from qa_copilot_domain.enums import OrgRole, ProjectRole
+
+    env = _s82_env()
+    if env is None:
+        pytest.skip("dev database not reachable (docker compose up -d?)")
+    engine, session = env
+    try:
+        org = models.Organization(name="S8.2 baseline org")
+        org_owner = models.User(
+            id=str(uuid.uuid4()), email="s82-b-owner@local.dev", role="developer"
+        )
+        org_member = models.User(
+            id=str(uuid.uuid4()), email="s82-b-member@local.dev", role="developer"
+        )
+        outsider = models.User(
+            id=str(uuid.uuid4()), email="s82-b-outsider@local.dev", role="developer"
+        )
+        session.add_all([org, org_owner, org_member, outsider])
+        session.flush()
+        # flush org first — projects.organization_id is NOT NULL and org.id is
+        # server-generated, so it must be materialized before the FK is bound
+        project = models.Project(name="S8.2 baseline project", organization_id=org.id)
+        session.add(project)
+        session.flush()
+        session.add(
+            models.OrganizationMember(
+                organization_id=org.id, user_id=org_owner.id, role=OrgRole.OWNER
+            )
+        )
+        session.add(
+            models.OrganizationMember(
+                organization_id=org.id, user_id=org_member.id, role=OrgRole.MEMBER
+            )
+        )
+        session.flush()
+
+        # org baseline (no explicit project_members rows)
+        assert membership.get_project_role(session, project.id, org_owner.id) == "owner"
+        assert membership.get_project_role(session, project.id, org_member.id) == "member"
+        assert membership.get_project_role(session, project.id, outsider.id) is None
+
+        # an explicit row always wins — it can *narrow* the org owner to viewer…
+        session.add(
+            models.ProjectMember(
+                project_id=project.id, user_id=org_owner.id, role=ProjectRole.VIEWER
+            )
+        )
+        session.flush()
+        assert membership.get_project_role(session, project.id, org_owner.id) == "viewer"
+
+        # …and *widen* the org member to owner.
+        session.add(
+            models.ProjectMember(
+                project_id=project.id, user_id=org_member.id, role=ProjectRole.OWNER
+            )
+        )
+        session.flush()
+        assert membership.get_project_role(session, project.id, org_member.id) == "owner"
+    finally:
+        session.rollback()
+        session.close()
         engine.dispose()

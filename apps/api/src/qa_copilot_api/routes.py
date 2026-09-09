@@ -89,6 +89,7 @@ import json
 import mimetypes
 import re
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -106,11 +107,12 @@ from qa_copilot_knowledge import SearchHit
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import integrations as repo_integrations
+from qa_copilot_repository import invites as repo_invites
 from qa_copilot_repository import membership, models
 from qa_copilot_repository import requirements as repo_requirements
 from qa_copilot_repository import runs as repo_runs
 from qa_copilot_repository import webhooks as repo_webhooks
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
@@ -129,6 +131,8 @@ generated_tests_router = APIRouter(prefix="/api/v1/generated-tests", tags=["gene
 runs_router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 integrations_router = APIRouter(prefix="/api/v1/projects", tags=["integrations"])
 webhooks_router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
+organizations_router = APIRouter(prefix="/api/v1/organizations", tags=["organizations"])
+invites_router = APIRouter(prefix="/api/v1/invites", tags=["invites"])
 
 #: S7.3: the only webhook deliveries that spawn a job (§19: "``pull_request``
 #: opened/synchronize → ``regression_analysis`` job"); every other event is
@@ -140,16 +144,68 @@ def _user_out(user: models.User) -> schemas.UserOut:
     return schemas.UserOut(id=user.id, email=user.email, role=user.role)
 
 
-def _member_projects(db: Session, user: models.User) -> list[schemas.ProjectRef]:
-    """The caller's project memberships (role from ``project_members``)."""
+def _explicit_project_rows(db: Session, user: models.User) -> list[tuple[models.Project, str]]:
+    """The caller's explicit ``project_members`` rows (role from the row)."""
     rows = db.execute(
         select(models.Project, models.ProjectMember.role)
         .join(models.ProjectMember, models.ProjectMember.project_id == models.Project.id)
         .where(models.ProjectMember.user_id == user.id)
         .order_by(models.Project.name)
     ).all()
+    return [(project, role.value) for project, role in rows]
+
+
+def _org_baseline_projects(db: Session, user: models.User) -> list[tuple[models.Project, str]]:
+    """S8.2 baseline: the caller's org projects with **no** explicit row.
+
+    Role = the caller's org role for the project's org mapped to the project
+    role (org ``owner`` → ``owner``, org ``member`` → ``member``); an
+    explicit ``project_members`` row always wins (never listed here).
+    """
+    org_rows = db.execute(
+        select(
+            models.OrganizationMember.organization_id,
+            models.OrganizationMember.role,
+        ).where(models.OrganizationMember.user_id == user.id)
+    ).all()
+    if not org_rows:
+        return []
+    org_role_by_id = {organization_id: OrgRole(role) for organization_id, role in org_rows}
+    explicit_ids = set(
+        db.scalars(
+            select(models.ProjectMember.project_id).where(models.ProjectMember.user_id == user.id)
+        )
+    )
+    projects = db.scalars(
+        select(models.Project)
+        .where(models.Project.organization_id.in_(org_role_by_id))
+        .order_by(models.Project.name)
+    ).all()
+    out: list[tuple[models.Project, str]] = []
+    for project in projects:
+        if project.id in explicit_ids or project.organization_id is None:
+            continue
+        org_role = org_role_by_id[project.organization_id]
+        out.append((project, membership.ORG_ROLE_TO_PROJECT_ROLE[org_role].value))
+    return out
+
+
+def _member_projects(db: Session, user: models.User) -> list[schemas.ProjectRef]:
+    """Projects the caller can access, with the caller's *effective* role.
+
+    S8.2 (bible §19): an explicit ``project_members`` row always wins; a
+    project without one falls back to the caller's **org** role for that
+    project's organization (org ``owner`` → ``owner``, org ``member`` →
+    ``member``).
+    """
+    by_id: dict[str, tuple[str, str]] = {}
+    for project, role in _explicit_project_rows(db, user):
+        by_id[project.id] = (project.name, role)
+    for project, role in _org_baseline_projects(db, user):
+        by_id.setdefault(project.id, (project.name, role))
     return [
-        schemas.ProjectRef(id=project.id, name=project.name, role=role) for project, role in rows
+        schemas.ProjectRef(id=project_id, name=name, role=role)
+        for project_id, (name, role) in sorted(by_id.items(), key=lambda kv: kv[1][0])
     ]
 
 
@@ -164,9 +220,7 @@ def _org_memberships(db: Session, user: models.User) -> list[schemas.Organizatio
         .where(models.OrganizationMember.user_id == user.id)
         .order_by(models.Organization.name)
     ).all()
-    return [
-        schemas.OrganizationRef(id=org.id, name=org.name, role=role) for org, role in rows
-    ]
+    return [schemas.OrganizationRef(id=org.id, name=org.name, role=role) for org, role in rows]
 
 
 def _token_response(
@@ -212,13 +266,9 @@ def register(
         raise HTTPException(status_code=409, detail="email already registered")
     violations = auth.password_policy_violations(body.password)
     if violations:
-        raise HTTPException(
-            status_code=422, detail="password must " + " and ".join(violations)
-        )
+        raise HTTPException(status_code=422, detail="password must " + " and ".join(violations))
     user = models.User(email=email, role="owner", password_hash=auth.hash_password(body.password))
-    org = models.Organization(
-        name=body.organization_name or f"{email.split('@')[0]}'s workspace"
-    )
+    org = models.Organization(name=body.organization_name or f"{email.split('@')[0]}'s workspace")
     db.add_all([org, user])
     db.flush()
     db.add(models.OrganizationMember(organization_id=org.id, user_id=user.id, role=OrgRole.OWNER))
@@ -311,9 +361,7 @@ def change_password(
         raise HTTPException(status_code=401, detail="current password is incorrect")
     violations = auth.password_policy_violations(body.new_password)
     if violations:
-        raise HTTPException(
-            status_code=422, detail="new password must " + " and ".join(violations)
-        )
+        raise HTTPException(status_code=422, detail="new password must " + " and ".join(violations))
     user.password_hash = auth.hash_password(body.new_password)
     auth.revoke_user_refresh_tokens(db, user.id)
     db.commit()
@@ -1813,3 +1861,261 @@ def delete_integration(
     if not repo_integrations.delete_integration(db, project_id, provider):
         raise HTTPException(status_code=404, detail="no integration config for this project")
     db.commit()
+
+
+# --- Teams: organizations, members, invites (S8.2, bible §19) ------------------
+
+
+def _org_role_or_403(db: Session, user: models.User, organization_id: str) -> OrgRole:
+    """The caller's org role in *organization_id* — 403 for non-members."""
+    role = membership.get_org_role(db, organization_id, user.id)
+    if role is None:
+        raise HTTPException(status_code=403, detail="not a member of this organization")
+    return role
+
+
+def _require_org_owner(db: Session, user: models.User, organization_id: str) -> None:
+    """S8.2: owner-only guard (membership first — 403, never a 404 leak)."""
+    role = membership.get_org_role(db, organization_id, user.id)
+    if role is None:
+        raise HTTPException(status_code=403, detail="not a member of this organization")
+    if role is not OrgRole.OWNER:
+        raise HTTPException(status_code=403, detail="requires owner role")
+
+
+def _org_member_row(
+    db: Session, organization_id: str, member_id: str
+) -> models.OrganizationMember | None:
+    """The (org, user) membership row, or ``None``."""
+    return db.scalar(
+        select(models.OrganizationMember).where(
+            models.OrganizationMember.organization_id == organization_id,
+            models.OrganizationMember.user_id == member_id,
+        )
+    )
+
+
+def _org_member_out(db: Session, row: models.OrganizationMember) -> schemas.OrgMemberOut:
+    user = db.get(models.User, row.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="member user no longer exists")
+    return schemas.OrgMemberOut(
+        id=row.user_id,
+        email=user.email,
+        role=row.role,
+        joined_at=row.created_at,
+    )
+
+
+@organizations_router.get("", response_model=list[schemas.OrganizationOut])
+def list_organizations(
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.OrganizationOut]:
+    """S8.2: the caller's organizations with their org role + member count."""
+    out: list[schemas.OrganizationOut] = []
+    for membership_row in membership.user_orgs(db, user.id):
+        org = db.get(models.Organization, membership_row.organization_id)
+        if org is None:
+            continue
+        member_count = db.scalar(
+            select(func.count())
+            .select_from(models.OrganizationMember)
+            .where(models.OrganizationMember.organization_id == org.id)
+        )
+        out.append(
+            schemas.OrganizationOut(
+                id=org.id,
+                name=org.name,
+                role=membership_row.role,
+                member_count=int(member_count or 0),
+                created_at=org.created_at,
+            )
+        )
+    return out
+
+
+@organizations_router.get("/{organization_id}/members", response_model=list[schemas.OrgMemberOut])
+def list_org_members(
+    organization_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.OrgMemberOut]:
+    """S8.2: the org's member roster — any member may read (non-member → 403)."""
+    _org_role_or_403(db, user, organization_id)
+    rows = db.scalars(
+        select(models.OrganizationMember)
+        .where(models.OrganizationMember.organization_id == organization_id)
+        .order_by(models.OrganizationMember.created_at, models.OrganizationMember.user_id)
+    ).all()
+    return [_org_member_out(db, row) for row in rows]
+
+
+@organizations_router.post(
+    "/{organization_id}/members", status_code=201, response_model=schemas.OrgMemberOut
+)
+def add_org_member(
+    organization_id: str,
+    body: schemas.AddOrgMemberRequest,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.OrgMemberOut:
+    """S8.2: add an **existing** account (by email) to the org — ``owner`` only.
+
+    New people join via a code invite (``POST .../invites``). Unknown email →
+    404; already a member → 409; a second ``owner`` → 409 (one owner per org,
+    enforced at the DB level).
+    """
+    _require_org_owner(db, user, organization_id)
+    target = db.scalar(select(models.User).where(models.User.email == body.email))
+    if target is None:
+        raise HTTPException(status_code=404, detail="no user with that email")
+    if membership.get_org_role(db, organization_id, target.id) is not None:
+        raise HTTPException(status_code=409, detail="user is already a member of this organization")
+    if body.role == "owner" and membership.get_org_owner_id(db, organization_id) is not None:
+        raise HTTPException(status_code=409, detail="organization already has an owner")
+    row = models.OrganizationMember(
+        organization_id=organization_id,
+        user_id=target.id,
+        role=OrgRole(body.role),
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="organization membership conflict") from exc
+    db.refresh(row)
+    return _org_member_out(db, row)
+
+
+@organizations_router.patch(
+    "/{organization_id}/members/{member_id}", response_model=schemas.OrgMemberOut
+)
+def update_org_member(
+    organization_id: str,
+    member_id: str,
+    body: schemas.UpdateOrgMemberRequest,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.OrgMemberOut:
+    """S8.2: change a member's org role — ``owner`` only.
+
+    Promoting someone to ``owner`` **transfers** ownership (the acting owner
+    steps down to ``member`` — one owner per org, §19 S8.2). Demoting the
+    org's sole ``owner`` → 409. Unknown member → 404.
+    """
+    _require_org_owner(db, user, organization_id)
+    row = _org_member_row(db, organization_id, member_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="member not found")
+    current_owner_id = membership.get_org_owner_id(db, organization_id)
+    if body.role == "owner" and row.role is not OrgRole.OWNER:
+        if current_owner_id is not None and current_owner_id not in (member_id, user.id):
+            raise HTTPException(status_code=409, detail="cannot reassign ownership")
+        if current_owner_id == user.id:
+            # Ownership transfer: step the acting owner down to ``member`` and
+            # flush **before** promoting the target — Postgres checks the
+            # single-owner index per statement, so the intermediate state must
+            # never hold two owners. Both changes stay in one transaction
+            # (a flush does not commit), so the transfer is atomic.
+            actor_row = _org_member_row(db, organization_id, user.id)
+            if actor_row is not None:
+                actor_row.role = OrgRole.MEMBER
+                db.flush()
+    elif body.role == "member" and row.role is OrgRole.OWNER and current_owner_id == member_id:
+        raise HTTPException(status_code=409, detail="cannot demote the organization owner")
+    row.role = OrgRole(body.role)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="organization already has an owner") from exc
+    return _org_member_out(db, row)
+
+
+@organizations_router.delete("/{organization_id}/members/{member_id}", status_code=204)
+def remove_org_member(
+    organization_id: str,
+    member_id: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> None:
+    """S8.2: remove a member — the org's ``owner`` (or the member themselves).
+
+    Any member may remove **themselves** (leave); only the ``owner`` may
+    remove others (403 otherwise). Removing the org's sole ``owner`` → 409;
+    unknown member → 404.
+    """
+    role = _org_role_or_403(db, user, organization_id)
+    row = _org_member_row(db, organization_id, member_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="member not found")
+    if member_id != user.id and role is not OrgRole.OWNER:
+        raise HTTPException(status_code=403, detail="only the owner can remove other members")
+    if row.role is OrgRole.OWNER and membership.get_org_owner_id(db, organization_id) == member_id:
+        raise HTTPException(status_code=409, detail="cannot remove the organization owner")
+    db.delete(row)
+    db.commit()
+
+
+@organizations_router.post(
+    "/{organization_id}/invites", status_code=201, response_model=schemas.InviteOut
+)
+def create_invite(
+    organization_id: str,
+    body: schemas.InviteRequest,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.InviteOut:
+    """S8.2: create a one-time invite code — ``owner`` only.
+
+    The single-use ``code`` is returned **exactly once** (only its SHA-256
+    hash is stored, §17) and expires 7 days out (§19 S8.2).
+    """
+    _require_org_owner(db, user, organization_id)
+    row, code = repo_invites.issue_invite(
+        db,
+        organization_id=organization_id,
+        email=body.email,
+        role=OrgRole(body.role),
+        now=datetime.now(UTC),
+    )
+    db.commit()
+    db.refresh(row)
+    return schemas.InviteOut(
+        id=row.id,
+        email=row.email,
+        role=row.role,
+        code=code,
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+    )
+
+
+@invites_router.post("/{code}/accept", response_model=schemas.InviteAcceptResult)
+def accept_invite(
+    code: str,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.InviteAcceptResult:
+    """S8.2: accept a one-time invite code — join the org with the invited role.
+
+    The account's email must match the invite's email (403). Unknown,
+    expired, or already-used codes all → 404 (no reason leak — §17).
+    Already a member → 409.
+    """
+    try:
+        member, org = repo_invites.accept_invite(db, code=code, user=user, now=datetime.now(UTC))
+    except repo_invites.InviteError as exc:
+        status_code = {
+            repo_invites.InviteErrorKind.UNKNOWN: 404,
+            repo_invites.InviteErrorKind.EMAIL_MISMATCH: 403,
+            repo_invites.InviteErrorKind.ALREADY_MEMBER: 409,
+        }[exc.kind]
+        raise HTTPException(status_code=status_code, detail=exc.detail) from exc
+    db.commit()
+    return schemas.InviteAcceptResult(
+        organization=schemas.OrganizationRef(id=org.id, name=org.name, role=member.role),
+        role=member.role,
+    )

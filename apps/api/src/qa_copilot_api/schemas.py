@@ -1,8 +1,8 @@
 """API response schemas (build bible §7)."""
 
-from datetime import datetime
 import re
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -667,3 +667,99 @@ class IntegrationConfigOut(BaseModel):
     enabled: bool
     created_at: datetime
     updated_at: datetime
+
+
+# --- Teams: organizations, members, invites (S8.2, §19 S8.2) -------------------
+
+
+class OrganizationOut(BaseModel):
+    """S8.2: an organization the caller belongs to, with the caller's org role."""
+
+    id: str
+    name: str
+    role: str
+    member_count: int
+    created_at: datetime
+
+
+class OrgMemberOut(BaseModel):
+    """S8.2: one member of an organization (``id`` is the user id)."""
+
+    id: str
+    email: str
+    role: str
+    joined_at: datetime
+
+
+class AddOrgMemberRequest(BaseModel):
+    """S8.2: ``POST /organizations/{id}/members`` (owner only).
+
+    Promotes an **existing** account (by email) into the organization.
+    New people join through a code-based invite (``POST .../invites`` +
+    ``POST /invites/{code}/accept``) — there is no account creation here.
+    """
+
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["owner", "member"] = "member"
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v):
+            raise ValueError("invalid email address")
+        return v
+
+
+class UpdateOrgMemberRequest(BaseModel):
+    """S8.2: ``PATCH /organizations/{id}/members/{member_id}`` (owner only).
+
+    Changing the role to ``owner`` transfers ownership: the acting owner
+    steps down to ``member`` (one ``owner`` per org, enforced at the DB
+    level). Demoting/removing the org's sole ``owner`` is a 409.
+    """
+
+    role: Literal["owner", "member"]
+
+
+class InviteRequest(BaseModel):
+    """S8.2: ``POST /organizations/{id}/invites`` (owner only).
+
+    A one-time, code-based invite for an email (§29 — local-first, no SMTP):
+    the response carries the single-use ``code`` exactly once; only its
+    SHA-256 hash is stored (§17). The code expires 7 days out.
+    """
+
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["owner", "member"] = "member"
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v):
+            raise ValueError("invalid email address")
+        return v
+
+
+class InviteOut(BaseModel):
+    """S8.2: a created invite.
+
+    ``code`` is the single-use accept code — returned **exactly once**
+    (only its SHA-256 hash is persisted, §17). ``expires_at`` is 7 days
+    out; the code is consumed on accept.
+    """
+
+    id: str
+    email: str
+    role: str
+    code: str
+    created_at: datetime
+    expires_at: datetime
+
+
+class InviteAcceptResult(BaseModel):
+    """S8.2: ``POST /invites/{code}/accept`` — the org the caller joined."""
+
+    organization: OrganizationRef
+    role: str
