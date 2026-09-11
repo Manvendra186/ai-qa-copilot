@@ -202,6 +202,15 @@ class OrgRole(StrEnum):
     MEMBER = "member"
 
 
+#: S8.3: org role ladder (build bible §19 S8.2/S8.3): owner → member.
+ORG_ROLE_RANK: dict[OrgRole, int] = {OrgRole.OWNER: 2, OrgRole.MEMBER: 1}
+
+
+def org_role_at_least(actual: OrgRole, minimum: OrgRole) -> bool:
+    """True when *actual* meets *minimum* on the org ladder (owner ≥ member)."""
+    return ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum]
+
+
 class ImpactKind(StrEnum):
     """Why a test file is in a change-impact set (build bible §19 S6.1).
 
@@ -217,3 +226,50 @@ class ImpactKind(StrEnum):
     DIRECT = "direct"
     GENERATED = "generated"
     REFERENCED = "referenced"
+
+
+class AuditOutcome(StrEnum):
+    """Outcome of an audited security event (build bible §19 S8.3, §17).
+
+    ``denied`` is the RBAC-gate outcome (a 403 on a role-gated org route —
+    the caller existed but lacks the role); ``failure`` is an
+    authentication/policy failure (wrong password, weak password, token
+    reuse).
+    """
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    DENIED = "denied"
+
+
+class AuditAction(StrEnum):
+    """Closed vocabulary for every ``audit_log.action`` row (§19 S8.3, §17).
+
+    One row per audited security event: auth success/failure, org
+    membership changes, deletions. The wire string (e.g.
+    ``auth.login.failure``) is what the audit export and the red-team
+    scenarios key on — adding an event means adding a member here, not a
+    free-form string at the call site.
+    """
+
+    LOGIN_SUCCESS = "auth.login.success"
+    LOGIN_FAILURE = "auth.login.failure"
+    LOGIN_BLOCKED = "auth.login.blocked"
+    REGISTER_SUCCESS = "auth.register.success"
+    REGISTER_FAILURE = "auth.register.failure"
+    REFRESH_SUCCESS = "auth.refresh.success"
+    REFRESH_FAILURE = "auth.refresh.failure"
+    CHANGE_PASSWORD_SUCCESS = "auth.change_password.success"
+    CHANGE_PASSWORD_FAILURE = "auth.change_password.failure"
+    ACCOUNT_DELETE = "auth.account.delete"
+    ORG_GATE_DENIED = "org.gate.denied"
+    ORG_MEMBERSHIP_ADD = "org.membership.add"
+    ORG_MEMBERSHIP_UPDATE = "org.membership.update"
+    ORG_MEMBERSHIP_REMOVE = "org.membership.remove"
+    ORG_MEMBERSHIP_LEAVE = "org.membership.leave"
+    ORG_INVITE_CREATE = "org.invite.create"
+    ORG_INVITE_ACCEPT = "org.invite.accept"
+    ORG_INVITE_DENIED = "org.invite.denied"
+    ORG_DELETE = "org.delete"
+    ORG_DELETE_REAUTH_FAILURE = "org.delete.reauth_failure"
+    PROJECT_DELETE = "project.delete"

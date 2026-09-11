@@ -29,7 +29,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import NAMESPACE_DNS, uuid5
+from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 import jwt as pyjwt
 import pytest
@@ -41,6 +41,7 @@ from qa_copilot_api.config import Settings
 from qa_copilot_api.main import create_app
 from qa_copilot_domain.enums import OrgRole, ProjectRole
 from qa_copilot_repository import db, models
+from sqlalchemy import select
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -49,6 +50,7 @@ TEST_URL = f"postgresql+psycopg://qa:qa@localhost:5433/{TEST_DB}"
 ADMIN_URL = "postgresql+psycopg://qa:qa@localhost:5433/postgres"
 
 SECRET = "test-secret-0123456789abcdef"  # 16+ chars, test-only
+PASSWORD = "correct-horse-battery-staple"  # S8.3: org deletion re-auth
 
 # ids are Postgres UUIDs — deterministic values, stable across runs
 NS = NAMESPACE_DNS
@@ -132,7 +134,15 @@ def env() -> Iterator[dict[str, Any]]:
 
     with db.make_session_factory(engine)() as session:
         for user in EMAILS:
-            session.add(models.User(id=USER_IDS[user], email=EMAILS[user], role="developer"))
+            session.add(
+                models.User(
+                    id=USER_IDS[user],
+                    email=EMAILS[user],
+                    role="developer",
+                    # S8.3: org deletion requires a password re-auth
+                    password_hash=auth.hash_password(PASSWORD),
+                )
+            )
         session.add_all(
             [
                 models.Organization(id=ACME_ID, name="Acme Inc"),
@@ -419,6 +429,130 @@ def test_member_self_removal(client: TestClient) -> None:
     # bob is out: membership gone, only alice remains
     assert client.get(_org_url(ACME_ID, "/members"), headers=_auth_header("bob")).status_code == 403
     assert {row["email"] for row in _member_rows(client, ACME_ID)} == {EMAILS["alice"]}
+
+
+# --- organization deletion (S8.2/S8.3: owner, cascade, token revocation, §17) ---
+
+
+def test_delete_organization_requires_owner(client: TestClient) -> None:
+    """Only the org's ``owner`` may delete it — never a 404 existence leak."""
+    # a mere member cannot…
+    assert client.delete(_org_url(ACME_ID), headers=_auth_header("bob")).status_code == 403
+    # …nor an outsider who owns a different org…
+    assert client.delete(_org_url(ACME_ID), headers=_auth_header("carol")).status_code == 403
+    # …nor an unauthenticated caller…
+    assert client.delete(_org_url(ACME_ID)).status_code == 401
+    # …and probing a non-existent org is indistinguishable (403, not 404).
+    assert client.delete(_org_url(GHOST_ORG_ID), headers=_auth_header("alice")).status_code == 403
+    # nothing was deleted
+    orgs = client.get("/api/v1/organizations", headers=_auth_header("alice")).json()
+    assert [org["id"] for org in orgs] == [ACME_ID]
+
+
+def test_delete_organization_cascades(client: TestClient, env: dict[str, Any]) -> None:
+    """The org, its projects, memberships, and live invites all disappear."""
+    # a live invite must go with the org
+    invite = client.post(
+        _org_url(ACME_ID, "/invites"),
+        json={"email": EMAILS["dave"], "role": "member"},
+        headers=_auth_header("alice"),
+    )
+    assert invite.status_code == 201, invite.text
+    # S8.3: the owner re-auths with the current password
+    res = client.request(
+        "DELETE",
+        _org_url(ACME_ID),
+        headers=_auth_header("alice"),
+        json={"current_password": PASSWORD},
+    )
+    assert res.status_code == 204
+
+    # the org is gone for everyone (membership check precedes lookup → 403)
+    assert client.get(_org_url(ACME_ID, "/members"), headers=_auth_header("bob")).status_code == 403
+    # its projects are out of every member's project list…
+    for who in ("alice", "bob"):
+        projects = client.get("/api/v1/projects", headers=_auth_header(who)).json()
+        assert all(p["id"] not in (ACME_PROJECT_ID, BASELINE_PROJECT_ID) for p in projects)
+    # …and role-gated access to them is 403 (no role left — never a 404)
+    assert (
+        client.delete(
+            f"/api/v1/projects/{ACME_PROJECT_ID}", headers=_auth_header("bob")
+        ).status_code
+        == 403
+    )
+    # re-deleting is a 403 no-op (alice has no membership left)
+    assert client.delete(_org_url(ACME_ID), headers=_auth_header("alice")).status_code == 403
+
+    # the users survive the org's death; other orgs are untouched
+    carol_orgs = client.get("/api/v1/organizations", headers=_auth_header("carol")).json()
+    assert [org["id"] for org in carol_orgs] == [BETA_ID]
+    with db.make_session_factory(env["engine"])() as session:
+        assert session.get(models.Organization, ACME_ID) is None
+        assert session.get(models.Project, ACME_PROJECT_ID) is None
+        assert session.get(models.Project, BASELINE_PROJECT_ID) is None
+        assert (
+            session.scalar(
+                select(models.OrganizationInvite).where(
+                    models.OrganizationInvite.organization_id == ACME_ID
+                )
+            )
+            is None
+        )
+        assert (
+            session.scalar(
+                select(models.OrganizationMember)
+                .where(models.OrganizationMember.user_id == ALICE_ID)
+                .where(models.OrganizationMember.organization_id == ACME_ID)
+            )
+            is None
+        )
+        assert session.get(models.User, ALICE_ID) is not None
+        assert session.get(models.User, BOB_ID) is not None
+
+
+def test_delete_organization_revokes_member_refresh_tokens(
+    client: TestClient, env: dict[str, Any]
+) -> None:
+    """Former members' active refresh tokens die; outsiders' stay live."""
+    with db.make_session_factory(env["engine"])() as session:
+        now = datetime.now(UTC)
+        rows = {
+            who: models.UserRefreshToken(
+                user_id=USER_IDS[who],
+                family_id=str(uuid4()),
+                token_hash=auth.hash_refresh_token(f"live-token-{who}"),
+                expires_at=now + timedelta(days=7),
+            )
+            for who in ("alice", "bob", "carol")
+        }
+        hashes = {who: row.token_hash for who, row in rows.items()}
+        session.add_all(rows.values())
+        session.commit()
+
+    # S8.3: the owner re-auths with the current password
+    res = client.request(
+        "DELETE",
+        _org_url(ACME_ID),
+        headers=_auth_header("alice"),
+        json={"current_password": PASSWORD},
+    )
+    assert res.status_code == 204
+
+    with db.make_session_factory(env["engine"])() as session:
+
+        def _revoked(who: str) -> bool:
+            return (
+                session.scalar(
+                    select(models.UserRefreshToken.revoked_at).where(
+                        models.UserRefreshToken.token_hash == hashes[who]
+                    )
+                )
+                is not None
+            )
+
+        assert _revoked("alice")  # the owner was a member → out
+        assert _revoked("bob")  # member → out
+        assert not _revoked("carol")  # never in acme → untouched
 
 
 # --- invites ---------------------------------------------------------------------------

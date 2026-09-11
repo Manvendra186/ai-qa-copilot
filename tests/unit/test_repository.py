@@ -65,6 +65,7 @@ EXPECTED_TABLES = {
     "organization_members",
     "organization_invites",
     "user_refresh_tokens",
+    "audit_log",
 }
 
 

@@ -763,3 +763,33 @@ class InviteAcceptResult(BaseModel):
 
     organization: OrganizationRef
     role: str
+
+
+class DeleteOrganizationRequest(BaseModel):
+    """S8.3: ``DELETE /api/v1/organizations/{id}`` — owner re-authentication.
+
+    Org deletion is the most destructive org operation (§19 S8.3): the
+    owner's **current password** is re-verified in the body before anything
+    is deleted (wrong password → 401, audited as
+    ``org.delete.reauth_failure``). The password is only ever verified
+    against the hash — never stored, logged or audited (§17).
+    """
+
+    current_password: str = Field(min_length=1)
+
+
+class AuditEventOut(BaseModel):
+    """S8.3: one row of the append-only security audit trail (§17).
+
+    ``actor_id`` is ``null`` when the actor is unknown (login failure) or
+    was deleted (``ON DELETE SET NULL`` — the row survives its author);
+    ``target`` is an opaque org/project/user id or email — never a
+    credential. Returned newest-first by ``GET /organizations/{id}/audit``.
+    """
+
+    actor_id: str | None
+    action: str
+    target: str | None
+    outcome: str
+    ip: str | None
+    at: datetime

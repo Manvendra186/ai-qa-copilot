@@ -81,6 +81,42 @@ S7.3: CI/CD webhook (§19 S7.3):
 
 Token values never appear in these payloads (§17): the PUT body takes
 ``token_ref`` (the secret's name) and reads return ``token_configured``.
+
+S8.2: teams — organizations, membership, invites (§19 S8.2):
+
+- ``GET    /api/v1/organizations``                   — the caller's orgs
+- ``GET    /api/v1/organizations/{id}/members``      — roster (any member)
+- ``POST   /api/v1/organizations/{id}/members``      — add an existing account
+- ``PUT    /api/v1/organizations/{id}/members/{uid}`` — change a member's role
+- ``DELETE /api/v1/organizations/{id}/members/{uid}`` — self-leave, or removed
+- ``POST   /api/v1/organizations/{id}/invites``      — one-time code (owner)
+- ``POST   /api/v1/invites/{code}/accept``           — the invitee (email match)
+- ``DELETE /api/v1/organizations/{id}``              — owner; hard-deletes the
+  org and its projects (all project-scoped rows cascade) and revokes the
+  refresh tokens of every former member (S8.3 deletion workflow, §17)
+- ``DELETE /api/v1/auth/account``                    — self-delete: purges the
+  user row (PII) + memberships + refresh tokens; ``ai_sessions`` rows survive
+  with ``user_id`` nulled (history/audit kept, §17)
+
+S8.3: RBAC hardening + append-only audit trail (§19 S8.3, §17):
+
+- Org role gates are now the ``auth.require_org_role`` dependency (same
+  pattern as ``require_role`` for projects): any member may read the
+  roster; membership changes, invites, deletion and audit export are
+  ``owner``-only. Every denied gate (403) is recorded as
+  ``org.gate.denied``; RBAC runs before body validation, so 403/401 always
+  precede a 422.
+- ``DELETE /api/v1/organizations/{id}`` now takes a body —
+  ``{"current_password"}`` — and re-authenticates the owner (wrong
+  password → 401 + ``org.delete.reauth_failure``).
+- ``GET /api/v1/organizations/{id}/audit`` (owner) exports the org's
+  newest audit rows (newest first, capped at 200) — append-only: no API
+  path can update or delete them.
+- Every auth flow (login/register/refresh/change-password/account delete)
+  and org flow (membership add/update/remove/leave, invite
+  create/accept/deny, org deletion, project deletion) records a
+  success/failure/blocked row in ``audit_log`` with the client IP; rows
+  outlive their actors (``actor_id`` ON DELETE SET NULL).
 """
 
 from __future__ import annotations
@@ -94,6 +130,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from qa_copilot_domain.enums import (
+    AuditAction,
+    AuditOutcome,
     GeneratedTestStatus,
     JobType,
     OrgRole,
@@ -111,8 +149,9 @@ from qa_copilot_repository import invites as repo_invites
 from qa_copilot_repository import membership, models
 from qa_copilot_repository import requirements as repo_requirements
 from qa_copilot_repository import runs as repo_runs
+from qa_copilot_repository import security_audit as repo_security_audit
 from qa_copilot_repository import webhooks as repo_webhooks
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
@@ -246,12 +285,36 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _audit(
+    db: Session,
+    action: AuditAction,
+    *,
+    actor_id: str | None,
+    target: str | None,
+    outcome: AuditOutcome,
+    ip: str | None,
+    commit: bool = True,
+) -> None:
+    """S8.3: one append-only ``audit_log`` row (§17) — never a credential in *target*.
+
+    *commit=False* folds the row into the caller's pending business commit
+    (atomic with the write it describes); failure paths commit standalone
+    before the error response.
+    """
+    repo_security_audit.record(
+        db, actor_id=actor_id, action=action, target=target, outcome=outcome, ip=ip
+    )
+    if commit:
+        db.commit()
+
+
 # --- auth (S0.8 baseline + S8.1 hardening, §19) -------------------------------
 
 
 @auth_router.post("/register", status_code=201, response_model=schemas.RegisterResponse)
 def register(
     body: schemas.RegisterRequest,
+    request: Request,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> schemas.RegisterResponse:
     """Self-service signup (S8.1): account **and** workspace.
@@ -259,23 +322,61 @@ def register(
     Creates the user and a new organization the user owns — one signup, one
     private workspace (build bible §19 S8.1). Duplicate email → 409; the
     password must satisfy the S8.1 policy (422). The password is only ever
-    hashed (§17).
+    hashed (§17). S8.3: the outcome is audited (``auth.register.*``) with
+    the target email — never the password.
     """
+    ip = _client_ip(request)
     email = body.email
     if db.scalar(select(models.User).where(models.User.email == email)) is not None:
+        _audit(
+            db,
+            AuditAction.REGISTER_FAILURE,
+            actor_id=None,
+            target=email,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="email already registered")
     violations = auth.password_policy_violations(body.password)
     if violations:
+        _audit(
+            db,
+            AuditAction.REGISTER_FAILURE,
+            actor_id=None,
+            target=email,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=422, detail="password must " + " and ".join(violations))
     user = models.User(email=email, role="owner", password_hash=auth.hash_password(body.password))
     org = models.Organization(name=body.organization_name or f"{email.split('@')[0]}'s workspace")
     db.add_all([org, user])
     db.flush()
     db.add(models.OrganizationMember(organization_id=org.id, user_id=user.id, role=OrgRole.OWNER))
+    # S8.3: the audit row commits atomically with the account + workspace —
+    # the commit happens below, so a lost unique-email race 409s *and*
+    # leaves no orphaned success row behind.
+    _audit(
+        db,
+        AuditAction.REGISTER_SUCCESS,
+        actor_id=user.id,
+        target=email,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
     try:
         db.commit()
     except IntegrityError as exc:  # a concurrent signup won the unique-email race
         db.rollback()
+        _audit(
+            db,
+            AuditAction.REGISTER_FAILURE,
+            actor_id=None,
+            target=email,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="email already registered") from exc
     return schemas.RegisterResponse(
         user=_user_out(user),
@@ -295,6 +396,10 @@ def login(
     Brute-force throttled in Redis per email *and* per IP: once the failure
     counter hits the limit the endpoint answers ``429`` + ``Retry-After``;
     a successful login resets the counters (S8.1, §19).
+
+    S8.3: every outcome is audited (``auth.login.success`` / ``failure`` /
+    ``blocked``) with the target email and client IP — the password never
+    reaches the trail (§17).
     """
     settings = request.app.state.settings
     try:
@@ -307,6 +412,14 @@ def login(
     ip = _client_ip(request)
     decision = throttler.check(body.email, ip)
     if decision.blocked:
+        _audit(
+            db,
+            AuditAction.LOGIN_BLOCKED,
+            actor_id=None,
+            target=body.email,
+            outcome=AuditOutcome.DENIED,
+            ip=ip,
+        )
         raise HTTPException(
             status_code=429,
             detail="too many failed login attempts; try again later",
@@ -316,9 +429,27 @@ def login(
     user = db.scalar(select(models.User).where(models.User.email == body.email))
     if user is None or not auth.check_password(body.password, user.password_hash):
         throttler.record_failure(body.email, ip)
+        _audit(
+            db,
+            AuditAction.LOGIN_FAILURE,
+            actor_id=None,
+            target=body.email,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=401, detail="invalid credentials")
 
     throttler.reset(body.email, ip)
+    # S8.3: the success row commits with the refresh-token issuance below.
+    _audit(
+        db,
+        AuditAction.LOGIN_SUCCESS,
+        actor_id=user.id,
+        target=body.email,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
     refresh_token, _ = auth.issue_refresh_token(db, user.id)
     return _token_response(db, user, secret, refresh_token)
 
@@ -333,20 +464,44 @@ def refresh(
 
     Reuse of an already-rotated token is rejected (401) and revokes the
     whole token family, so a stolen token kills every live successor
-    (stolen-token rule, §17).
+    (stolen-token rule, §17). S8.3: both outcomes are audited
+    (``auth.refresh.success`` / ``failure``) — the token itself is never
+    written to the trail (§17).
     """
     settings = request.app.state.settings
     try:
         secret = auth._require_secret(settings)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    user, refresh_token = auth.rotate_refresh_token(db, body.refresh_token)
+    ip = _client_ip(request)
+    try:
+        user, refresh_token = auth.rotate_refresh_token(db, body.refresh_token)
+    except auth.AuthError as exc:
+        _audit(
+            db,
+            AuditAction.REFRESH_FAILURE,
+            actor_id=None,
+            target=None,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    # rotation already committed; the success row commits on its own.
+    _audit(
+        db,
+        AuditAction.REFRESH_SUCCESS,
+        actor_id=user.id,
+        target=None,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+    )
     return _token_response(db, user, secret, refresh_token)
 
 
 @auth_router.post("/change-password", status_code=204)
 def change_password(
     body: schemas.ChangePasswordRequest,
+    request: Request,
     user: models.User = Depends(auth.get_current_user),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
@@ -355,15 +510,80 @@ def change_password(
     Re-authenticates the current password, then hashes the new one (policy:
     10+ chars, letter + digit) and revokes **all** refresh tokens — any
     other session loses its token. Neither password is ever logged, audited
-    or stored in cleartext (§17).
+    or stored in cleartext (§17). S8.3: the outcome is audited as
+    ``auth.change_password.success`` / ``failure`` (actor + user id only).
     """
+    ip = _client_ip(request)
     if not auth.check_password(body.current_password, user.password_hash):
+        _audit(
+            db,
+            AuditAction.CHANGE_PASSWORD_FAILURE,
+            actor_id=user.id,
+            target=user.id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=401, detail="current password is incorrect")
     violations = auth.password_policy_violations(body.new_password)
     if violations:
+        _audit(
+            db,
+            AuditAction.CHANGE_PASSWORD_FAILURE,
+            actor_id=user.id,
+            target=user.id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=422, detail="new password must " + " and ".join(violations))
     user.password_hash = auth.hash_password(body.new_password)
+    # S8.3: the success row commits with the hash update + token revocation
+    # (``revoke_user_refresh_tokens`` issues the commit below).
+    _audit(
+        db,
+        AuditAction.CHANGE_PASSWORD_SUCCESS,
+        actor_id=user.id,
+        target=user.id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
     auth.revoke_user_refresh_tokens(db, user.id)
+    db.commit()
+
+
+@auth_router.delete("/account", status_code=204)
+def delete_account(
+    request: Request,
+    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> None:
+    """Self-delete the caller's account (S8.2/S8.3, §17 deletion workflows).
+
+    Purges the PII — the ``users`` row (email + password hash) — and, with
+    it, the cascading ``project_members`` / ``organization_members`` /
+    ``user_refresh_tokens`` rows (no token can resolve to a missing user, so
+    every live session dies). ``ai_sessions.user_id`` has **no** ON DELETE
+    rule, so the session rows are kept project-scoped with ``user_id``
+    nulled — the AI history/audit outlives the person (§17). S8.3: the
+    deletion is audited (``auth.account.delete``); the audit row itself
+    survives the cascade with its ``actor_id`` nulled.
+    """
+    ip = _client_ip(request)
+    # S8.3: written before the user row is deleted — the commit below keeps
+    # the audit record (``actor_id`` ON DELETE SET NULL, §17).
+    _audit(
+        db,
+        AuditAction.ACCOUNT_DELETE,
+        actor_id=user.id,
+        target=user.id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
+    db.execute(
+        update(models.AISession).where(models.AISession.user_id == user.id).values(user_id=None)
+    )
+    db.execute(delete(models.User).where(models.User.id == user.id))
     db.commit()
 
 
@@ -407,14 +627,29 @@ def get_project(
 
 @projects_router.delete("/{project_id}", status_code=204)
 def delete_project(
+    request: Request,
     ctx: tuple[models.User, str] = Depends(auth.require_role(ProjectRole.OWNER)),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
-    """Delete a project — ``owner`` only (§31.3). Memberships cascade per schema FKs."""
-    _, project_id = ctx
+    """Delete a project — ``owner`` only (§31.3). Memberships cascade per schema FKs.
+
+    S8.3: the deletion is audited (``project.delete``) with the project id
+    as target — the row survives the project's own deletion (§17).
+    """
+    user, project_id = ctx
     project = db.get(models.Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="project not found")
+    # S8.3: audit row commits with the deletion (the project id outlives it).
+    _audit(
+        db,
+        AuditAction.PROJECT_DELETE,
+        actor_id=user.id,
+        target=project_id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=_client_ip(request),
+        commit=False,
+    )
     # ORM: remove membership rows first — the ORM would otherwise try to
     # null out the composite PK instead of relying on ON DELETE CASCADE.
     db.execute(delete(models.ProjectMember).where(models.ProjectMember.project_id == project_id))
@@ -1866,23 +2101,6 @@ def delete_integration(
 # --- Teams: organizations, members, invites (S8.2, bible §19) ------------------
 
 
-def _org_role_or_403(db: Session, user: models.User, organization_id: str) -> OrgRole:
-    """The caller's org role in *organization_id* — 403 for non-members."""
-    role = membership.get_org_role(db, organization_id, user.id)
-    if role is None:
-        raise HTTPException(status_code=403, detail="not a member of this organization")
-    return role
-
-
-def _require_org_owner(db: Session, user: models.User, organization_id: str) -> None:
-    """S8.2: owner-only guard (membership first — 403, never a 404 leak)."""
-    role = membership.get_org_role(db, organization_id, user.id)
-    if role is None:
-        raise HTTPException(status_code=403, detail="not a member of this organization")
-    if role is not OrgRole.OWNER:
-        raise HTTPException(status_code=403, detail="requires owner role")
-
-
 def _org_member_row(
     db: Session, organization_id: str, member_id: str
 ) -> models.OrganizationMember | None:
@@ -1937,12 +2155,15 @@ def list_organizations(
 
 @organizations_router.get("/{organization_id}/members", response_model=list[schemas.OrgMemberOut])
 def list_org_members(
-    organization_id: str,
-    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.MEMBER)),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> list[schemas.OrgMemberOut]:
-    """S8.2: the org's member roster — any member may read (non-member → 403)."""
-    _org_role_or_403(db, user, organization_id)
+    """S8.2/S8.3: the org's member roster — any member may read.
+
+    The ``require_org_role`` dependency enforces membership (non-member →
+    403, audited as ``org.gate.denied``) — never a 404 leak.
+    """
+    _, organization_id = ctx
     rows = db.scalars(
         select(models.OrganizationMember)
         .where(models.OrganizationMember.organization_id == organization_id)
@@ -1955,24 +2176,51 @@ def list_org_members(
     "/{organization_id}/members", status_code=201, response_model=schemas.OrgMemberOut
 )
 def add_org_member(
-    organization_id: str,
+    request: Request,
     body: schemas.AddOrgMemberRequest,
-    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.OWNER)),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> schemas.OrgMemberOut:
-    """S8.2: add an **existing** account (by email) to the org — ``owner`` only.
+    """S8.2/S8.3: add an **existing** account (by email) to the org — ``owner`` only.
 
     New people join via a code invite (``POST .../invites``). Unknown email →
     404; already a member → 409; a second ``owner`` → 409 (one owner per org,
-    enforced at the DB level).
+    enforced at the DB level). S8.3: every outcome is audited as
+    ``org.membership.add`` (success or failure) — the gate itself audits
+    denials as ``org.gate.denied``.
     """
-    _require_org_owner(db, user, organization_id)
+    user, organization_id = ctx
+    ip = _client_ip(request)
     target = db.scalar(select(models.User).where(models.User.email == body.email))
     if target is None:
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_ADD,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=404, detail="no user with that email")
     if membership.get_org_role(db, organization_id, target.id) is not None:
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_ADD,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="user is already a member of this organization")
     if body.role == "owner" and membership.get_org_owner_id(db, organization_id) is not None:
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_ADD,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="organization already has an owner")
     row = models.OrganizationMember(
         organization_id=organization_id,
@@ -1980,10 +2228,28 @@ def add_org_member(
         role=OrgRole(body.role),
     )
     db.add(row)
+    # S8.3: the success row commits with the membership row.
+    _audit(
+        db,
+        AuditAction.ORG_MEMBERSHIP_ADD,
+        actor_id=user.id,
+        target=organization_id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_ADD,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="organization membership conflict") from exc
     db.refresh(row)
     return _org_member_out(db, row)
@@ -1993,25 +2259,43 @@ def add_org_member(
     "/{organization_id}/members/{member_id}", response_model=schemas.OrgMemberOut
 )
 def update_org_member(
-    organization_id: str,
+    request: Request,
     member_id: str,
     body: schemas.UpdateOrgMemberRequest,
-    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.OWNER)),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> schemas.OrgMemberOut:
-    """S8.2: change a member's org role — ``owner`` only.
+    """S8.2/S8.3: change a member's org role — ``owner`` only.
 
     Promoting someone to ``owner`` **transfers** ownership (the acting owner
     steps down to ``member`` — one owner per org, §19 S8.2). Demoting the
-    org's sole ``owner`` → 409. Unknown member → 404.
+    org's sole ``owner`` → 409. Unknown member → 404. S8.3: audited as
+    ``org.membership.update`` (success or failure).
     """
-    _require_org_owner(db, user, organization_id)
+    user, organization_id = ctx
+    ip = _client_ip(request)
     row = _org_member_row(db, organization_id, member_id)
     if row is None:
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_UPDATE,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=404, detail="member not found")
     current_owner_id = membership.get_org_owner_id(db, organization_id)
     if body.role == "owner" and row.role is not OrgRole.OWNER:
         if current_owner_id is not None and current_owner_id not in (member_id, user.id):
+            _audit(
+                db,
+                AuditAction.ORG_MEMBERSHIP_UPDATE,
+                actor_id=user.id,
+                target=organization_id,
+                outcome=AuditOutcome.FAILURE,
+                ip=ip,
+            )
             raise HTTPException(status_code=409, detail="cannot reassign ownership")
         if current_owner_id == user.id:
             # Ownership transfer: step the acting owner down to ``member`` and
@@ -2024,37 +2308,106 @@ def update_org_member(
                 actor_row.role = OrgRole.MEMBER
                 db.flush()
     elif body.role == "member" and row.role is OrgRole.OWNER and current_owner_id == member_id:
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_UPDATE,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="cannot demote the organization owner")
     row.role = OrgRole(body.role)
+    # S8.3: the success row commits with the role change.
+    _audit(
+        db,
+        AuditAction.ORG_MEMBERSHIP_UPDATE,
+        actor_id=user.id,
+        target=organization_id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_UPDATE,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="organization already has an owner") from exc
     return _org_member_out(db, row)
 
 
 @organizations_router.delete("/{organization_id}/members/{member_id}", status_code=204)
 def remove_org_member(
-    organization_id: str,
+    request: Request,
     member_id: str,
-    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.MEMBER)),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
-    """S8.2: remove a member — the org's ``owner`` (or the member themselves).
+    """S8.2/S8.3: remove a member — the org's ``owner`` (or the member themselves).
 
     Any member may remove **themselves** (leave); only the ``owner`` may
     remove others (403 otherwise). Removing the org's sole ``owner`` → 409;
-    unknown member → 404.
+    unknown member → 404. S8.3: audited as ``org.membership.remove`` /
+    ``org.membership.leave`` (self-removal); a non-owner removing someone
+    else is a gate denial (``org.gate.denied``).
     """
-    role = _org_role_or_403(db, user, organization_id)
+    user, organization_id = ctx
+    ip = _client_ip(request)
     row = _org_member_row(db, organization_id, member_id)
     if row is None:
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_REMOVE,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=404, detail="member not found")
+    role = membership.get_org_role(db, organization_id, user.id)
     if member_id != user.id and role is not OrgRole.OWNER:
+        _audit(
+            db,
+            AuditAction.ORG_GATE_DENIED,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.DENIED,
+            ip=ip,
+        )
         raise HTTPException(status_code=403, detail="only the owner can remove other members")
     if row.role is OrgRole.OWNER and membership.get_org_owner_id(db, organization_id) == member_id:
+        _audit(
+            db,
+            AuditAction.ORG_MEMBERSHIP_REMOVE,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=409, detail="cannot remove the organization owner")
+    action = (
+        AuditAction.ORG_MEMBERSHIP_LEAVE
+        if member_id == user.id
+        else AuditAction.ORG_MEMBERSHIP_REMOVE
+    )
+    # S8.3: the success row commits with the membership deletion.
+    _audit(
+        db,
+        action,
+        actor_id=user.id,
+        target=organization_id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
     db.delete(row)
     db.commit()
 
@@ -2063,23 +2416,34 @@ def remove_org_member(
     "/{organization_id}/invites", status_code=201, response_model=schemas.InviteOut
 )
 def create_invite(
-    organization_id: str,
+    request: Request,
     body: schemas.InviteRequest,
-    user: models.User = Depends(auth.get_current_user),  # noqa: B008
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.OWNER)),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> schemas.InviteOut:
-    """S8.2: create a one-time invite code — ``owner`` only.
+    """S8.2/S8.3: create a one-time invite code — ``owner`` only.
 
     The single-use ``code`` is returned **exactly once** (only its SHA-256
-    hash is stored, §17) and expires 7 days out (§19 S8.2).
+    hash is stored, §17) and expires 7 days out (§19 S8.2). S8.3: audited as
+    ``org.invite.create``.
     """
-    _require_org_owner(db, user, organization_id)
+    user, organization_id = ctx
     row, code = repo_invites.issue_invite(
         db,
         organization_id=organization_id,
         email=body.email,
         role=OrgRole(body.role),
         now=datetime.now(UTC),
+    )
+    # S8.3: the success row commits with the invite row.
+    _audit(
+        db,
+        AuditAction.ORG_INVITE_CREATE,
+        actor_id=user.id,
+        target=organization_id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=_client_ip(request),
+        commit=False,
     )
     db.commit()
     db.refresh(row)
@@ -2093,18 +2457,120 @@ def create_invite(
     )
 
 
+@organizations_router.get("/{organization_id}/audit", response_model=list[schemas.AuditEventOut])
+def export_org_audit(
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.OWNER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[schemas.AuditEventOut]:
+    """S8.3: the org's audit trail, newest first — the org's ``owner`` only.
+
+    Every event targeting the org (membership changes, invites, deletion,
+    gate denials…) — capped at the most recent 200 rows (§19 S8.3).
+    Non-owners → 403 (audited as ``org.gate.denied``); the audit trail is
+    never exposed to members or outsiders.
+    """
+    _, organization_id = ctx
+    rows = repo_security_audit.list_for_target(db, organization_id, limit=200)
+    return [
+        schemas.AuditEventOut(
+            actor_id=row.actor_id,
+            action=row.action,
+            target=row.target,
+            outcome=row.outcome,
+            ip=row.ip,
+            at=row.at,
+        )
+        for row in rows
+    ]
+
+
+@organizations_router.delete("/{organization_id}", status_code=204)
+def delete_organization(
+    request: Request,
+    body: schemas.DeleteOrganizationRequest,
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.OWNER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> None:
+    """S8.2/S8.3: hard-delete the organization — the org's ``owner``, re-authenticated.
+
+    S8.3 re-authentication: the body carries the owner's **current password**;
+    a wrong password → 401 (``org.delete.reauth_failure``) and *nothing* is
+    deleted. The password is verified against the hash and never stored or
+    audited (§17).
+
+    Deletion cascade (§17): the org's **projects** are deleted first —
+    ``projects.organization_id`` has no ON DELETE rule, and deleting a
+    project cascades its memberships, requirements, test cases, runs,
+    results, artifacts, sessions, jobs and webhooks — then the org row
+    itself (``organization_members`` / ``organization_invites`` are ON
+    DELETE CASCADE). Every former member's active refresh tokens are
+    revoked, so a deleted org leaves no path back in; the users themselves
+    (and their other orgs) are untouched. Non-owners → 403 (audited as
+    ``org.gate.denied``; membership check precedes lookup — never a 404
+    leak).
+    """
+    user, organization_id = ctx
+    ip = _client_ip(request)
+    if not auth.check_password(body.current_password, user.password_hash):
+        _audit(
+            db,
+            AuditAction.ORG_DELETE_REAUTH_FAILURE,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
+        raise HTTPException(status_code=401, detail="current password is incorrect")
+    member_ids = list(
+        db.scalars(
+            select(models.OrganizationMember.user_id).where(
+                models.OrganizationMember.organization_id == organization_id
+            )
+        )
+    )
+    # S8.3: the success row commits with the whole cascade — and outlives it
+    # (``target`` is an opaque id; ``actor_id`` nulls out if the owner then
+    # deletes their account, §17).
+    _audit(
+        db,
+        AuditAction.ORG_DELETE,
+        actor_id=user.id,
+        target=organization_id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
+    db.execute(delete(models.Project).where(models.Project.organization_id == organization_id))
+    db.execute(delete(models.Organization).where(models.Organization.id == organization_id))
+    if member_ids:
+        db.execute(
+            update(models.UserRefreshToken)
+            .where(
+                models.UserRefreshToken.user_id.in_(member_ids),
+                models.UserRefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )
+    db.commit()
+
+
 @invites_router.post("/{code}/accept", response_model=schemas.InviteAcceptResult)
 def accept_invite(
+    request: Request,
     code: str,
     user: models.User = Depends(auth.get_current_user),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> schemas.InviteAcceptResult:
-    """S8.2: accept a one-time invite code — join the org with the invited role.
+    """S8.2/S8.3: accept a one-time invite code — join the org with the invited role.
 
     The account's email must match the invite's email (403). Unknown,
     expired, or already-used codes all → 404 (no reason leak — §17).
-    Already a member → 409.
+    Already a member → 409. S8.3: audited as ``org.invite.accept`` —
+    success (with the joined org as target) or failure (org id is unknown,
+    so the target is ``None``). The invite code itself is never audited
+    (§17).
     """
+    ip = _client_ip(request)
     try:
         member, org = repo_invites.accept_invite(db, code=code, user=user, now=datetime.now(UTC))
     except repo_invites.InviteError as exc:
@@ -2113,7 +2579,25 @@ def accept_invite(
             repo_invites.InviteErrorKind.EMAIL_MISMATCH: 403,
             repo_invites.InviteErrorKind.ALREADY_MEMBER: 409,
         }[exc.kind]
+        _audit(
+            db,
+            AuditAction.ORG_INVITE_ACCEPT,
+            actor_id=user.id,
+            target=None,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
         raise HTTPException(status_code=status_code, detail=exc.detail) from exc
+    # S8.3: the success row commits with the membership join.
+    _audit(
+        db,
+        AuditAction.ORG_INVITE_ACCEPT,
+        actor_id=user.id,
+        target=org.id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,
+    )
     db.commit()
     return schemas.InviteAcceptResult(
         organization=schemas.OrganizationRef(id=org.id, name=org.name, role=member.role),

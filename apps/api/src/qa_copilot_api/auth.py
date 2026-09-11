@@ -45,9 +45,17 @@ from typing import Any
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
-from qa_copilot_domain.enums import ProjectRole, role_at_least
+from qa_copilot_domain.enums import (
+    AuditAction,
+    AuditOutcome,
+    OrgRole,
+    ProjectRole,
+    org_role_at_least,
+    role_at_least,
+)
 from qa_copilot_repository import models
-from qa_copilot_repository.membership import get_project_role
+from qa_copilot_repository import security_audit as repo_security_audit
+from qa_copilot_repository.membership import get_org_role, get_project_role
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
@@ -66,6 +74,7 @@ __all__ = [
     "issue_refresh_token",
     "new_refresh_token",
     "password_policy_violations",
+    "require_org_role",
     "require_role",
     "revoke_user_refresh_tokens",
     "rotate_refresh_token",
@@ -340,3 +349,58 @@ def require_role(minimum: ProjectRole) -> Callable[..., tuple[models.User, str]]
         return user, project_id
 
     return dependency
+
+
+def require_org_role(minimum: OrgRole) -> Callable[..., tuple[models.User, str]]:
+    """FastAPI dependency factory: org-scoped RBAC (build bible §19 S8.3).
+
+    Usage (the route must have an ``{organization_id}`` path parameter)::
+
+        @router.delete("/organizations/{organization_id}")
+        def delete_org(
+            ctx: tuple[models.User, str] = Depends(require_org_role(OrgRole.OWNER)),
+        ):
+            user, organization_id = ctx
+            ...
+
+    * ``OrgRole.MEMBER`` → roster read, self-leave (any member).
+    * ``OrgRole.OWNER`` → membership changes, invites, deletion, audit
+      export (S8.2/S8.3).
+
+    Non-members and roles below *minimum* get 403 (auth runs before lookup,
+    so unknown orgs also 403 for non-members — no existence leak). The
+    denial itself is audited (``org.gate.denied``, §17). Because FastAPI
+    resolves dependencies before body validation, RBAC (403/401) always
+    takes precedence over a malformed body (422).
+    """
+
+    def dependency(
+        organization_id: str,
+        user: models.User = Depends(get_current_user),  # noqa: B008
+        db: Session = Depends(get_db),  # noqa: B008
+    ) -> tuple[models.User, str]:
+        role = get_org_role(db, organization_id, user.id)
+        if role is None:
+            _audit_org_gate_denied(db, user, organization_id)
+            raise HTTPException(status_code=403, detail="not a member of this organization")
+        if not org_role_at_least(OrgRole(role), minimum):
+            _audit_org_gate_denied(db, user, organization_id)
+            raise HTTPException(
+                status_code=403, detail=f"requires {minimum.value} org role (has {role})"
+            )
+        return user, organization_id
+
+    return dependency
+
+
+def _audit_org_gate_denied(db: Session, user: models.User, organization_id: str) -> None:
+    """S8.3: a denied org RBAC gate (403) is part of the audit trail (§17)."""
+    repo_security_audit.record(
+        db,
+        actor_id=user.id,
+        action=AuditAction.ORG_GATE_DENIED,
+        target=organization_id,
+        outcome=AuditOutcome.DENIED,
+        ip=None,
+    )
+    db.commit()

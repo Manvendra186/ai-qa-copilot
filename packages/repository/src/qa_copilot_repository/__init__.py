@@ -51,6 +51,10 @@ S8.2: teams — one-time code-based organization invites (single-use code,
 (org role → baseline project role; an explicit ``project_members`` row
 always wins) (:mod:`qa_copilot_repository.invites`,
 :mod:`qa_copilot_repository.membership`, build bible §19 S8.2).
+
+ S8.3: security audit trail — the append-only ``audit_log`` table + the
+ record/export core (:mod:`qa_copilot_repository.security_audit`,
+ build bible §19 S8.3, §17).
 """
 
 from . import (
@@ -69,6 +73,7 @@ from . import (
     requirements,
     runs,
     scanner,
+    security_audit,
     webhooks,
 )
 from .conventions import extract_conventions
@@ -131,6 +136,7 @@ __all__ = [
     "runs",
     "scan_repository",
     "scanner",
+    "security_audit",
     "strongest_impact_kind",
     "webhooks",
 ]

@@ -26,6 +26,8 @@ import pgvector.sqlalchemy
 import sqlalchemy as sa
 from qa_copilot_domain.enums import (
     ArtifactType,
+    AuditAction,
+    AuditOutcome,
     FailureCategory,
     GeneratedTestStatus,
     JobStatus,
@@ -798,10 +800,40 @@ class WebhookEvent(Base):
     job: Mapped[Job | None] = relationship()
 
 
+class AuditLog(Base):
+    """Append-only security audit trail (build bible §19 S8.3, §17).
+
+    One row per audited security event: who (*actor_id* — ``NULL`` when the
+    actor is unknown, e.g. a login failure), what (*action*: the closed
+    :class:`~qa_copilot_domain.enums.AuditAction` vocabulary), against what
+    (*target*: an org / project / user id or email — never a credential),
+    the *outcome*, the client *ip* and the server *at* timestamp.
+
+    Append-only by contract (S8.3): no API endpoint updates or deletes
+    rows, and ``actor_id`` is ON DELETE SET NULL so self-deletion and org
+    deletion never erase history ("audit rows remain", §17).
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(sa.Uuid(as_uuid=False), primary_key=True, default=_new_id)
+    actor_id: Mapped[str | None] = mapped_column(
+        sa.Uuid(as_uuid=False),
+        sa.ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    action: Mapped[AuditAction] = mapped_column(_enum_column(AuditAction))
+    target: Mapped[str | None] = mapped_column(sa.String(512), index=True)
+    outcome: Mapped[AuditOutcome] = mapped_column(_enum_column(AuditOutcome))
+    ip: Mapped[str | None] = mapped_column(sa.String(64))
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now())
+
+
 __all__ = [
     "AIAction",
     "AISession",
     "Artifact",
+    "AuditLog",
     "Base",
     "Embedding",
     "Failure",

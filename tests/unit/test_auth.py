@@ -47,6 +47,7 @@ from qa_copilot_api.config import Settings
 from qa_copilot_api.main import create_app
 from qa_copilot_domain.enums import ProjectRole
 from qa_copilot_repository import db, models
+from sqlalchemy import select
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -692,6 +693,75 @@ def test_change_password_requires_auth(client: TestClient) -> None:
         json={"current_password": PASSWORD, "new_password": "new-password-12345"},
     )
     assert response.status_code == 401
+
+
+# --- S8.2/S8.3: account self-delete (PII purge, §17) ------------------------------
+
+
+def test_account_delete_requires_auth(client: TestClient) -> None:
+    """Unauthenticated self-delete is 401 (no account to delete, no leak)."""
+    assert client.delete("/api/v1/auth/account").status_code == 401
+    assert (
+        client.delete(
+            "/api/v1/auth/account", headers={"Authorization": "Bearer garbage"}
+        ).status_code
+        == 401
+    )
+
+
+def test_account_delete_purges_account_and_keeps_history(
+    client: TestClient, env: dict[str, Any]
+) -> None:
+    """Self-delete kills the user (PII), memberships and tokens; sessions stay.
+
+    §17: the ``users`` row (email + password hash) is the PII — it goes.
+    With it cascade the memberships and refresh tokens (no token can resolve
+    to a missing user). ``ai_sessions.user_id`` has no ON DELETE rule, so
+    the session row survives project-scoped with ``user_id`` nulled — the
+    AI history outlives the person.
+    """
+    login = client.post("/api/v1/auth/login", json={"email": EMAILS["dave"], "password": PASSWORD})
+    assert login.status_code == 200, login.text
+    access = f"Bearer {login.json()['token']}"
+    refresh_token = login.json()["refresh_token"]
+    # dave's AI session on BETA must survive the self-delete
+    with db.make_session_factory(env["engine"])() as session:
+        session.add(models.AISession(project_id=BETA_ID, user_id=DAVE_ID, task_type="regression"))
+        session.commit()
+
+    response = client.delete("/api/v1/auth/account", headers={"Authorization": access})
+    assert response.status_code == 204, response.text
+
+    # the access token can no longer resolve to a user…
+    assert client.get("/api/v1/auth/me", headers={"Authorization": access}).status_code == 401
+    # …the refresh token is gone (cascade) and login is dead (hash purged)
+    assert (
+        client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token}).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": EMAILS["dave"], "password": PASSWORD}
+        ).status_code
+        == 401
+    )
+    # DB: user + project membership gone…
+    with db.make_session_factory(env["engine"])() as session:
+        assert session.get(models.User, DAVE_ID) is None
+        assert (
+            session.scalar(
+                select(models.ProjectMember).where(models.ProjectMember.user_id == DAVE_ID)
+            )
+            is None
+        )
+        # …the session row survives with user_id nulled…
+        session_row = session.scalar(
+            select(models.AISession).where(models.AISession.project_id == BETA_ID)
+        )
+        assert session_row is not None and session_row.user_id is None
+        # …and the org + project it belonged to are untouched
+        assert session.get(models.Organization, ORG_ID) is not None
+        assert session.get(models.Project, BETA_ID) is not None
 
 
 # --- S8.1: login brute-force throttling (Redis, Â§19) ----------------------------
