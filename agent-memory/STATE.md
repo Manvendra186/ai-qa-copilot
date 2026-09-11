@@ -9,13 +9,42 @@
   **Phase 8 — Commercialization: IN PROGRESS** — S8.0 ✓ step table (bible §19;
   user-approved 2026-09-08: **pilot scope §24**, **SSO/OAuth deferred to
   Enterprise §24**, **billing = admin-assigned plans + real quota metering, no
-  payment processor**) · **S8.1 ✓ auth hardening** · **S8.2 ✓ teams** ·
-  S8.3–S8.6 planned (RBAC+audit → billing → deployment → pilot E2E)
-- **next:** **S8.3 — RBAC hardening + audit trail** (route-role matrix test,
-  org-level gates, `audit_log`, deletion workflows — details in §3)
+  payment processor**) · **S8.1 ✓ auth hardening** · **S8.2 ✓ teams** · **S8.3 ✓ RBAC+audit** ·
+  S8.4–S8.6 planned (billing → deployment → pilot E2E)
+- **next:** **S8.4 — billing core** (plans/quotas/metering over
+  `organizations.plan` + `ai_actions` usage; admin-assigned, no payment
+  processor — details in §3)
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-11 · S8.3 RBAC hardening + audit trail — complete + gated.**
+  Owner-gated org deletion: `DELETE /organizations/{id}` 204 — cascades the
+  org's projects/memberships/invites and revokes **every former member's**
+  refresh tokens; member/outsider/probed-unknown → **403 never 404** ·
+  **re-auth** (`current_password` in the body; wrong password → 401 +
+  `org.delete.reauth_failure` row) — the RBAC check runs **before** body
+  validation (member + no body → 403, owner + no body → 422) · account
+  self-delete `DELETE /auth/account` 204 (purges user + PII, cascades
+  memberships/tokens, nulls `ai_sessions.user_id`; `auth.account.delete` row) ·
+  **append-only `audit_log`** (`actor_id` nullable — a login failure has no
+  actor; `action` = closed `AuditAction` vocabulary; `target`; `outcome`
+  success/failure/denied; `ip`; `at`; `actor_id` ON DELETE SET NULL → rows
+  outlive BOTH org and actor deletion; no update/delete path anywhere) · core
+  `qa_copilot_repository.security_audit` (`record` flush-only,
+  `list_for_target` newest-first, `DEFAULT_LIMIT=200`; core never commits —
+  API owns the transaction, S7.3 pattern) · events: login/register/refresh/
+  change-password success+failure, org gate-denied, membership add/update/
+  remove/leave, invite create/accept/denied, org delete (+reauth failure),
+  project delete · owner-only export `GET /organizations/{id}/audit`
+  (newest-first, capped 200) · domain `ORG_ROLE_RANK` + `org_role_at_least` ·
+  migration `b7e4d9c2a815` (**new head**) + dev DB (5433) migrated · tests:
+  `test_s83_rbac_audit.py` **7** (delete role matrix · re-auth 401 + success ·
+  export owner-only/newest-first/capped · invite create+accept rows · rows
+  outlive org + actor deletion) + `test_s82_teams.py` repaired to the re-auth
+  contract (`current_password` + `client.request("DELETE", …)` — httpx's
+  `.delete()` takes no `json`) + `test_auth.py` self-delete +
+  `EXPECTED_TABLES` += `audit_log` · gates green (ruff check+format, mypy
+  strict 165 files, **974 passed**) · `2ff56bf`.
 - **2026-09-09 · S8.2 Teams (organization membership) — complete + gated.**
   Org membership surface: `GET /organizations` (mine + role + member count) ·
   `GET/POST/PATCH/DELETE /organizations/{id}/members` (owner-only ops;
@@ -187,22 +216,40 @@
 one-time code invites (hash-only, 7-day TTL, non-leaking errors), org-baseline
 project access with explicit-row override (details in §2 + SESSION_LOG 2026-09-09).
 
-**S8.3 — RBAC hardening + audit trail:**
-- route-level role audit — a test asserting **every** route declares a minimum
-  role (org- or project-scoped) or is explicitly public (login/register/
-  invite-accept/health/webhook)
-- org-level gates: membership + billing ops = org owner · org deletion =
-  owner with re-auth
-- `audit_log` table (actor, action, target, outcome, ip, at; append-only) +
-  migration — security events: auth success/failure, membership changes, plan
-  changes, quota denials, deletions (complements `ai_actions`, which is
-  AI-only, §31.5)
-- deletion workflows (§17): `DELETE /organizations/{id}` (owner; cascades) +
-  user self-delete (purges PII, keeps audit rows)
-- **Exit:** route-matrix test green (no unguarded route); cross-org access →
-  403 never 404; audit rows exist for the red-team scenario list (login fail,
-  membership change, plan change, quota denial, org delete); org-delete
-  cascade verified; gates green.
+**S8.3 is complete + gated** (`2ff56bf`, 2026-09-11) — owner-gated
+org deletion (`DELETE /organizations/{id}` 204; cascades the org's
+projects/memberships/invites; revokes every former member's refresh
+tokens; member/outsider/probed-unknown → 403 never 404) with
+`current_password` re-auth (RBAC checked before body validation: member+
+no body → 403, owner + no body → 422, wrong password →
+401 + `org.delete.reauth_failure` row) · account self-delete
+(`DELETE /auth/account` 204; purges PII, cascades memberships/tokens,
+nulls `ai_sessions.user_id`; `auth.account.delete` row) · **append-only
+`audit_log`** (`actor_id` nullable → login failures have no actor;
+`action` = closed `AuditAction` vocabulary; `target`; `outcome` success/
+failure/denied; `ip`; `at`; `actor_id` ON DELETE SET NULL → rows outlive
+BOTH org and actor deletion; no update/delete path anywhere) · core
+`qa_copilot_repository.security_audit` (`record` flush-only;
+`list_for_target` newest-first; `DEFAULT_LIMIT=200`; core never commits →
+API owns the transaction, S7.3 pattern) · events: login/register/
+refresh/change-password success+failure, org gate-denied, membership
+add/update/remove/leave, invite create/accept/denied, org delete
+(+reauth failure), project delete · owner-only export
+`GET /organizations/{id}/audit` (newest-first, capped 200) · 7 S8.3
+tests + `test_s82_teams.py` repaired to the re-auth contract
+(`client.request("DELETE", ...)` → httpx's `.delete()` takes no
+`json`) + `EXPECTED_TABLES` += `audit_log` · migration `b7e4d9c2a815`
+(new head; dev DB 5433 migrated) · gates green (ruff check+format,
+mypy strict 165 files, **974 passed**). Details: SESSION_LOG 2026-09-11.
+
+**S8.4 — billing core:**
+- plans/quotas/metering over `organizations.plan` + `ai_actions` usage
+  (admin-assigned plans; **no payment processor** → S8.0 stance)
+- quota enforcement on the job routes (requirement/design/automation) →
+  the red-team "quota denial" audit event
+- plan-change events (add to `AuditAction` when building)
+- **Exit:** quota denial → 403 + audit row (never a mid-run crash);
+  plan change visible in the audit export; gates green.
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -263,9 +310,9 @@ project access with explicit-row override (details in §2 + SESSION_LOG 2026-09-
 - Demo app (S0.10): `c:\Users\manve\Workspace\ai-qa-copilot-demo-app` (separate repo;
   `pnpm dev`/`smoke`/`defect-check` · user `qa`/`qa1234` · server :4000)
 - Domain: `packages/domain/src/qa_copilot_domain/{base,enums,entities}.py` · ORM:
-  `packages/repository/src/qa_copilot_repository/models.py` (25 core tables — new tables
+  `packages/repository/src/qa_copilot_repository/models.py` (26 core tables — new tables
   must be added to `tests/unit/test_repository.py` `EXPECTED_TABLES`) · migrations
-  `infra/migrations/` (initial `60fa1027d8d2`, current head `f3a9c2d81b57`) · DB URL
+  `infra/migrations/` (initial `60fa1027d8d2`, current head `b7e4d9c2a815`) · DB URL
   `.../repository/db.py` (env → `.env` → default)
 - API: `apps/api/src/qa_copilot_api/` — `app.py` (factory) · `auth.py` (hash/JWT/deps) ·
   `jobs.py` (JobAgent/StubAgent/bus/`sse_stream`/reaper + all `*JobAgent`s) · `routes.py`
@@ -384,3 +431,18 @@ project access with explicit-row override (details in §2 + SESSION_LOG 2026-09-
   fixture passwords without a digit (e.g. `correct-horse-battery-staple`) 422 on
   register/change-password · 429 throttle tests must use a **stub throttler**,
   never live Redis counters (shared-state pollution).
+
+- S8.3: **RBAC before body validation** → `DELETE /organizations/{id}`
+  checks the role first, then the `current_password` body (member + no
+  body → 403, not 422; owner + no body → 422).
+- S8.3: **httpx.TestClient** → `client.delete(url)` takes no `json=`
+  kwarg; use `client.request("DELETE", url, json=...)` for DELETE bodies.
+- S8.3: **dev DB (Docker Postgres 5433) must be migrated** → the
+  `test_db_smoke_seed_rows_present` smoke test inspects the *dev* database
+  directly (`EXPECTED_TABLES` must exist there); after adding a table
+  migration + `EXPECTED_TABLES` entry (e.g. `b7e4d9c2a815` / `audit_log`)
+  run `alembic upgrade head` on the dev DB too, or the smoke test fails
+  (`audit_log` missing from the live schema).
+- S8.3: **audit rows outlive actors** → `audit_log.actor_id` is ON
+  DELETE SET NULL; never add a CASCADE from `users`/`organizations` to
+  `audit_log`.

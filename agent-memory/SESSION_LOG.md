@@ -2662,3 +2662,77 @@
 - **Next session start:** **S8.3 — RBAC hardening + audit trail** — see
   `STATE.md` §3 (route-role matrix test, org-level gates, `audit_log`
   append-only table, deletion workflows).
+
+## 2026-09-11 — S8.3 RBAC hardening + audit trail — complete + gated
+
+- **Goal:** bible §19 S8.3 — RBAC hardening + audit trail: owner-gated org
+  deletion with re-authentication, account self-delete, an append-only
+  `audit_log` with a closed action vocabulary, an owner-only audit export,
+  and audit hooks covering the red-team scenario list (login failure,
+  membership changes, deletions).
+- **Did:**
+  - `packages/domain` — `ORG_ROLE_RANK` + `org_role_at_least` (the
+    owner→member ladder) · new `AuditOutcome` (success/failure/denied) and
+    `AuditAction` closed vocabulary (`auth.login/register/refresh/
+    change-password success+failure`, `auth.account.delete`,
+    `org.gate.denied`, `org.membership.add/update/remove/leave`,
+    `org.invite.create/accept/denied`, `org.delete`,
+    `org.delete.reauth_failure`, `project.delete`).
+  - `packages/repository` — `AuditLog` model (`actor_id` nullable + ON
+    DELETE SET NULL; `action`/`outcome` enums; `target` string, indexed;
+    `ip`; `at` server-default; indexes on actor + target) · new core
+    `security_audit.py` (`record` flush-only; `list_for_target` newest-first;
+    `DEFAULT_LIMIT=200`; the core never commits — the API owns the
+    transaction, S7.3 pattern).
+  - Migration `b7e4d9c2a815` (new head, revises `f3a9c2d81b57`) + dev DB
+    (5433) migrated to head.
+  - `apps/api` — `DELETE /organizations/{id}` (org **owner** only;
+    member/outsider/probed-unknown → 403 never 404, audited
+    `org.gate.denied`) with a `current_password` re-auth body (wrong
+    password → 401 + `org.delete.reauth_failure` row) — RBAC is checked
+    **before** body validation (member + no body → 403, not 422; owner + no
+    body → 422) · success cascades the org's projects/memberships/invites and
+    revokes the refresh tokens of **every former member** · `DELETE
+    /auth/account` (self-delete: purges the user + PII, cascades
+    memberships/tokens, `ai_sessions.user_id` nulled so AI history outlives
+    the person; `auth.account.delete` row) · `GET /organizations/{id}/audit`
+    (owner only; newest-first; capped at 200) · audit hooks on
+    login/register/refresh/change-password (success + failure — failures
+    record `actor_id` NULL), org gate denials, membership add/update/remove/
+    leave, invite create/accept/denied (denials carry no org target by
+    design), project deletion.
+  - `tests/unit/test_s83_rbac_audit.py` — **7 API-level tests** (dedicated
+    `qa_copilot_s83_test` scratch DB, same pattern as S8.2): delete role
+    matrix (member 403 · outsider 403 · probed-unknown 403 · unauth 401 ·
+    owner 204 + cascade + former members' tokens revoked) · re-auth failure
+    (401 + audited row, org intact) · re-auth success (204) · audit export
+    (member 403 · owner newest-first) · export capped at 200 · invite
+    create+accept audit rows · audit rows outlive **both** org deletion
+    (visible via `target`) and actor self-delete (`actor_id` nulled, rows
+    kept).
+  - `tests/unit/test_s82_teams.py` — repaired to the new re-auth contract:
+    owner-delete tests now send `current_password` and use
+    `client.request("DELETE", url, json=...)` (httpx `TestClient.delete()`
+    takes no `json=` kwarg) · `tests/unit/test_auth.py` — self-delete
+    coverage (401 unauth; 204 + PII purge + session rows survive) ·
+    `tests/unit/test_repository.py` — `EXPECTED_TABLES` += `audit_log` (the
+    §7 gotcha, pre-empted).
+  - Also: auto-fixed pre-existing ruff import-order debt surfaced by the
+    new modules (mechanical only) — committed with the step per the §7
+    gotcha.
+- **Verified:** S8.3 tests **7/7** · affected suites `test_s82_teams.py` +
+  `test_auth.py` + `test_s83_rbac_audit.py` **74/74** + `test_repository.py`
+  **23/23** · **full suite 974 passed, 0 failed** (363.4 s) · `ruff check` +
+  `ruff format --check` clean (214 files formatted) · mypy strict clean
+  (165 files) · red-team: no org-existence leak (403, never 404, on both the
+  delete and the audit routes) · audit rows survive org + actor deletion ·
+  no update/delete path anywhere on `audit_log` · §7 gotchas updated.
+- **Commit:** `2ff56bf step S8.3: RBAC hardening + audit trail (owner-gated
+  org delete + re-auth, account self-delete, append-only audit_log +
+  owner-only export, audit hooks on auth/membership/invite routes)` (12
+  files: routes/schemas/auth + enums + models + `security_audit.py` +
+  package exports + migration + 4 test files).
+- **Next session start:** **S8.4 — billing core** — see `STATE.md` §3
+  (plans/quotas/metering over `organizations.plan` + `ai_actions` usage;
+  admin-assigned, no payment processor; quota denial → 403 + audit row).
+
