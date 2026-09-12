@@ -80,6 +80,35 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LOGIN_THROTTLE_WINDOW_S"),
     )
 
+    # --- Deployment hardening (S8.5, §19) ------------------------------------
+    # Comma-separated allowed CORS origins (e.g. "https://app.example.com").
+    # Empty (the default) = locked down: no Access-Control-Allow-Origin is
+    # ever emitted, so only same-origin callers can read responses.
+    cors_origins: str = Field(
+        default="",
+        validation_alias=AliasChoices("QA_COPILOT_CORS_ORIGINS", "CORS_ORIGINS"),
+    )
+    # Request rate limiting (per IP + per authenticated user, Redis-backed,
+    # 429 + Retry-After). Off by default — local-first dev loops and the
+    # test suite must not trip their own limiter; ``docker-compose.prod.yml``
+    # turns it on (the bible S8.5 exit criterion is enforced there + in tests).
+    rate_limit_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("QA_COPILOT_RATE_LIMIT_ENABLED", "RATE_LIMIT_ENABLED"),
+    )
+    rate_limit_max_requests: int = Field(
+        default=120,
+        ge=1,
+        validation_alias=AliasChoices(
+            "QA_COPILOT_RATE_LIMIT_MAX_REQUESTS", "RATE_LIMIT_MAX_REQUESTS"
+        ),
+    )
+    rate_limit_window_s: int = Field(
+        default=60,
+        ge=1,
+        validation_alias=AliasChoices("QA_COPILOT_RATE_LIMIT_WINDOW_S", "RATE_LIMIT_WINDOW_S"),
+    )
+
     # --- Jobs (S0.9, §31.2: 202 + SSE) ---
     # StubAgent progress-tick delay in seconds (dev pacing; tests use ~0.01).
     job_tick_delay_s: float = Field(

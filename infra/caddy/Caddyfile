@@ -1,0 +1,50 @@
+# AI QA Copilot — Caddy TLS reverse proxy (build bible §19 S8.5).
+#
+# LOCAL-FIRST (default): `tls internal` makes Caddy's private CA sign the
+# certificate — no public DNS, no ACME. Browsers flag the self-signed cert
+# until the internal root is imported (one-time, per machine):
+#   curl https://<host>:443/off
+# (or `caddy trust` on the host) — after that the site is fully local TLS.
+#
+# PUBLIC DOMAIN: point the site at your domain and Caddy fetches a real
+# Let's Encrypt certificate automatically — delete the `tls internal` line:
+#
+#   qa.example.com {
+#       log {
+#           output stdout
+#           format json
+#       }
+#       encode gzip
+#       reverse_proxy api:8000 {
+#           header_up X-Forwarded-For {remote_host}
+#       }
+#   }
+
+:80 {
+	redir https://{host}/ {uri} permanent
+}
+
+:443 {
+	tls internal
+
+	# Structured JSON access logs (same posture as the API's app logs, §31.5).
+	log {
+		output stdout
+		format json
+	}
+
+	encode gzip
+
+	reverse_proxy api:8000 {
+		header_up X-Forwarded-For {remote_host}
+	}
+
+	# Defense in depth: the API sets these on every response too (S8.5
+	# SecurityHeadersMiddleware) — Caddy enforces them on anything it
+	# answers itself (redirects, 404s, WebSocket upgrades).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+	}
+}

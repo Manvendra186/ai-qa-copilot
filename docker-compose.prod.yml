@@ -1,0 +1,154 @@
+# AI QA Copilot — production stack (build bible §19 S8.5).
+#
+#   cp .env.example .env        # then set the REQUIRED values below
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# REQUIRED in the environment / .env:
+#   AUTH_TOKEN_SECRET  — JWT HS256 signing secret, 16+ chars (fail-loud:
+#                        compose refuses to start without it)
+#   POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+#
+# Security posture (the S8.5 exit criteria):
+#   - Postgres and Redis are on the internal network ONLY — no `ports:`,
+#     so nothing database-shaped is reachable from outside the host
+#   - Caddy is the single public entrypoint (TLS, 80/443)
+#   - the `migrate` one-shot runs `alembic upgrade head` before the API
+#     accepts traffic (service_completed_successfully)
+#   - rate limiting is ON (per IP + per verified user, Redis-backed,
+#     429 + Retry-After; /health + docs exempt)
+#   - the API image runs as a non-root user (apps/api/Dockerfile)
+
+name: ai-qa-copilot-prod
+
+services:
+  db:
+    image: pgvector/pgvector:pg16  # Postgres 16 + pgvector (dev compose parity)
+    container_name: qa-copilot-prod-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-qa_copilot}
+    volumes:
+      - qa_copilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qa} -d ${POSTGRES_DB:-qa_copilot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    # NOTE: deliberately NO `ports:` — the API and the host-only backup
+    # scripts (scripts/backup.sh) are the only things that need it.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1g
+
+  redis:
+    image: redis:7
+    container_name: qa-copilot-prod-redis
+    command: ["redis-server", "--appendonly", "yes"]  # rate-limit counters survive restarts
+    volumes:
+      - qa_copilot_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    # NOTE: deliberately NO `ports:` — internal network only.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+
+  # One-shot schema migration (S8.5): reuses the API image (alembic is
+  # installed there on purpose) and runs before the API starts.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: qa-copilot-prod-migrate
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-qa_copilot}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: qa-copilot-prod-api
+    environment:
+      # Fail loud: compose aborts if the secret is missing (S8.5).
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?AUTH_TOKEN_SECRET must be set (16+ chars)}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-qa_copilot}
+      REDIS_URL: redis://redis:6379/0
+      QA_COPILOT_ENV: production
+      # S8.5: rate limiting ON in production (per IP + per user).
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-120}
+      RATE_LIMIT_WINDOW_S: ${RATE_LIMIT_WINDOW_S:-60}
+      # CORS stays locked-down (no origins) unless the deployment sets one.
+      QA_COPILOT_CORS_ORIGINS: ${QA_COPILOT_CORS_ORIGINS:-}
+      # LLM is optional at boot (the app falls back to stub agents).
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    # NOTE: deliberately NO `ports:` — Caddy is the only public front door.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+        reservations:
+          memory: 512m
+
+  caddy:
+    image: caddy:2
+    container_name: qa-copilot-prod-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+volumes:
+  qa_copilot_pgdata:
+  qa_copilot_redisdata:
+  caddy_data:
+  caddy_config:

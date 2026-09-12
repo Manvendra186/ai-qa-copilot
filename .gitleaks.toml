@@ -1,0 +1,19 @@
+# AI QA Copilot — gitleaks configuration (build bible §19 S8.5: secret
+# scanning, fail-closed in CI).
+#
+# The DEFAULT rule set stays fully active — this file only allows known,
+# intentional non-secrets. If you add a file that legitimately contains
+# sample credentials, add its path here (and keep real secrets OUT of the
+# repo: environment variables only, §17).
+
+title = "ai-qa-copilot gitleaks"
+
+[allowlist]
+description = "Known non-secret files (samples, tests, dev compose)"
+paths = [
+  '''\.env\.example$''',
+  '''docker-compose\.yml$''',            # dev stack credentials (qa/qa, local only)
+  '''tests/.*''',                        # test-only fixtures (SECRET, tokens, emails)
+  '''scripts/.*''',                      # shell scripts reference env vars, never literals
+  '''agent-memory/.*''',                 # session notes
+]

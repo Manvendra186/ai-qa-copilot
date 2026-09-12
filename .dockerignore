@@ -1,0 +1,28 @@
+# AI QA Copilot — docker build context exclusions (build bible §19 S8.5).
+# Keep the image small and secret-free: VCS state, caches, local data and
+# the dev .env must never enter a build layer.
+
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.hypothesis
+.env
+.env.*
+!.env.example
+agent-memory
+backups
+data
+*.sqlite
+*.sqlite3
+tests
+.vscode
+.idea
+docker-compose.yml
+docker-compose.prod.yml
+infra/caddy
+scripts

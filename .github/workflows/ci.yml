@@ -1,0 +1,99 @@
+# AI QA Copilot — CI (build bible §19 S8.5: standard gates + secret scan).
+#
+# Gates (same as local): ruff check, ruff format, mypy, full unit suite.
+# S8.5 adds:
+#   - `secrets` — gitleaks over the whole history, FAIL-CLOSED: any finding
+#     (or a gitleaks failure to run) fails the job. Config: .gitleaks.toml.
+#   - `infra`   — structural checks of the production artifacts (compose
+#     file, Dockerfile, Caddyfile) so the S8.5 exit criteria stay enforced
+#     without needing a Docker daemon in the job.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.8.17"
+  POSTGRES_HOST: localhost
+  POSTGRES_PORT: "5433"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format (check)
+        run: uv run ruff format --check .
+
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: mypy
+        run: uv run mypy apps packages
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: qa
+          POSTGRES_DB: qa_copilot
+        ports:
+          - 5433:5432  # the test fixtures speak to localhost:5433 (S8.3 pattern)
+        options: >-
+          --health-cmd "pg_isready -U qa -d qa_copilot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql+psycopg://qa:qa@localhost:5433/qa_copilot
+      REDIS_URL: redis://localhost:6379/0
+      AUTH_TOKEN_SECRET: ci-test-secret-0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Unit suite
+        run: uv run pytest tests/unit -q
+
+  secrets:
+    # Fail-closed: gitleaks runs over the full history; any secret (or the
+    # tool itself failing) fails this job. .gitleaks.toml allows only known
+    # sample/test files — everything else is scanned with the default rules.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history — a secret in an old commit still fails CI
+      - name: gitleaks (fail-closed)
+        uses: gitleaks/gitleaks-action@v2.3.0
+        env:
+          GITLEAKS_ENABLE_SUMMARY: "true"

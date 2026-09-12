@@ -28,6 +28,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from qa_copilot_ai import (
     AutomationAgent,
     FilePromptStore,
@@ -43,7 +44,7 @@ from qa_copilot_repository import security_audit as repo_security_audit
 from sqlalchemy import Engine
 from starlette.responses import JSONResponse
 
-from qa_copilot_api import jobs, routes, throttle
+from qa_copilot_api import jobs, routes, security, throttle
 from qa_copilot_api.config import Settings, get_settings
 from qa_copilot_api.db import make_app_engine
 from qa_copilot_api.logging_config import configure_logging
@@ -77,6 +78,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await runner.shutdown()
+        limiter = getattr(app.state, "rate_limiter", None)
+        if limiter is not None:  # S8.5: release the Redis pool on shutdown
+            limiter.close()
 
 
 def _build_jobs_agent(settings: Settings, engine: Engine) -> jobs.JobAgent:
@@ -262,6 +266,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_failures=settings.login_throttle_max_failures,
         window_s=settings.login_throttle_window_s,
     )
+
+    # S8.5 (build bible §19): request rate limiting (per IP + per verified
+    # user, Redis fixed-window, 429 + Retry-After). Same lazy/fail-open
+    # posture as the login throttler above — the API boots without Redis.
+    app.state.rate_limiter = security.RateLimiter(
+        settings.redis_url or "redis://localhost:6379/0",
+        max_requests=settings.rate_limit_max_requests,
+        window_s=settings.rate_limit_window_s,
+    )
+
+    # S8.5 middleware stack. ``add_middleware`` inserts at the front, so the
+    # *last* call is the outermost layer — the effective order is:
+    #   RequestID -> CORS -> RateLimit -> SecurityHeaders -> routes
+    # RequestID outermost: every downstream layer (and every log line via
+    # ``RequestIDFilter``) sees the id. CORS before the limiter so preflights
+    # never burn quota. SecurityHeaders innermost so the four headers ride on
+    # every response the inner layers produce — including the 429 body, the
+    # 401 from auth, and the 409 from the S8.4 quota gate.
+    if settings.rate_limit_enabled:
+        app.add_middleware(security.RateLimitMiddleware, api=app)
+    cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    # Locked-down by default: no origins configured → no middleware → the
+    # browser only ever sees same-origin responses (fail-closed CORS).
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        )
+    app.add_middleware(security.SecurityHeadersMiddleware)
+    app.add_middleware(security.RequestIDMiddleware)
 
     # S0.9: job subsystem (in-process, Phase 0 — see ``qa_copilot_api.jobs``).
     # Created here (not only in the lifespan) so ``app.state`` is complete

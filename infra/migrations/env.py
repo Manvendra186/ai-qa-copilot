@@ -27,8 +27,12 @@ config = context.config
 config.set_main_option("sqlalchemy.url", db.get_database_url())
 
 # Interpret the config file for Python logging.
+# ``disable_existing_loggers=False`` is essential: the default (True) would
+# flip ``disabled=True`` on every logger that already exists in the host
+# process — when alembic runs in-process (tests, tooling) that silently
+# kills the application's loggers for the rest of the run.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # "add your model's MetaData object here" for autogenerate support.
 target_metadata = models.Base.metadata
