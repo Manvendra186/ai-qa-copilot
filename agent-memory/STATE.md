@@ -10,13 +10,55 @@
   user-approved 2026-09-08: **pilot scope §24**, **SSO/OAuth deferred to
   Enterprise §24**, **billing = admin-assigned plans + real quota metering, no
   payment processor**) · **S8.1 ✓ auth hardening** · **S8.2 ✓ teams** · **S8.3 ✓ RBAC+audit** ·
-  **S8.4 ✓ billing** · S8.5–S8.6 planned (deployment → pilot E2E)
-- **next:** **S8.5 — deployment hardening** (prod compose, security
-  middleware, rate limiting, JSON logs, backup/restore round-trip —
-  details in §3)
+  **S8.4 ✓ billing** · **S8.5 ✓ deployment hardening** · S8.6 planned
+  (pilot E2E + baseline)
+- **next:** **S8.6 — Pilot E2E + baseline report** (two-user pilot
+  scenario, full pipeline, quota denial + plan bump, audit-trail export,
+  live driver + `reports/commercialization_v1.json` — details in §3)
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-12 · S8.5 deployment hardening — complete + gated.** Prod
+  deployment posture + the full S8.5 security surface (details:
+  SESSION_LOG 2026-09-12) · `docker-compose.prod.yml` — `db`/`redis`/`api`
+  publish **no** ports, `caddy` is the only 80/443 entrypoint (TLS
+  reverse proxy, `infra/caddy/Caddyfile`) · `AUTH_TOKEN_SECRET` required —
+  compose fails loudly · `migrate` (alembic head) must succeed **before**
+  `api` starts · `api`: non-root, healthcheck on `/health`, restart
+  policy, resource limits · `apps/api/Dockerfile` + `.dockerignore` ·
+  `apps/api/src/qa_copilot_api/security.py` — middleware outer→inner:
+  `RequestIDMiddleware` (echoes provided `X-Request-ID`, generates one
+  when absent, sets `request_id_var` for the request) → `CORSMiddleware`
+  (registered **only when** `cors_origins` is non-empty — fail-closed) →
+  `RateLimitMiddleware` → `SecurityHeadersMiddleware` (CSP/HSTS/
+  X-Content-Type-Options/Referrer-Policy on success, error, and 429
+  responses) · rate limiting: Redis fixed window (100 req/60 s default),
+  IP bucket fallback, user bucket **only from verified JWT `sub`**,
+  `/health`/`/docs`/`/redoc`/`/openapi.json` exempt, **fail-open** when
+  Redis is down, blocked → **429 + `Retry-After`** + structured
+  `rate_limited` body · JSON log correlation: `RequestIDFilter` stamps
+  `request_id_var` onto every in-request record → top-level `request_id`
+  in the JSON line (`logging_config.py`) · `scripts/backup.sh` (pg_dump
+  custom + artifacts → `qa-copilot-backup-<UTC>.tar.gz` + MANIFEST;
+  CRLF-safe .env loader) + `scripts/restore.sh` (extract → `pg_restore
+  --clean --if-exists --single-transaction` → artifacts) · `.gitleaks.toml`
+  + `.github/workflows/ci.yml` gitleaks job (fail-closed §31.4) ·
+  **root-cause fix found during validation:** `infra/migrations/env.py`
+  `fileConfig(...)` defaulted to `disable_existing_loggers=True` → any
+  in-process alembic run (all DB tests) silently set `disabled=True` on
+  every existing app logger for the rest of the process; now
+  `disable_existing_loggers=False` · tests **31**: `test_s85_security.py`
+  **24** (headers on success/404/429 · request-id echo+generate · JSON
+  line correlation · CORS allow/deny/preflight + fail-closed default ·
+  rate-limit buckets/IP-fallback/verified-sub/exemptions/fail-open/
+  429+Retry-After — live-Redis tests skip honestly) · `test_s85_infra.py`
+  **6** (structural: compose posture, Dockerfile, Caddyfile,
+  .dockerignore, gitleaks+CI, backup/restore scripts) · `test_s85_backup.py`
+  **1** — **live round-trip**: seed → `backup.sh` (real script inside the
+  pgvector image) → TRUNCATE + artifact deleted → `restore.sh` → rows +
+  artifact byte-identical · gates green (ruff check+format 220 files ·
+  mypy strict 123 files · **full unit suite 1021 passed, 0 failed** ·
+  `bash -n` both scripts) · `3acc90b`.
 - **2026-09-12 · S8.4 billing core — complete + gated.** Code-defined plan
   catalog (`free`/`pro`/`enterprise`: concurrent_jobs, runs/month,
   tokens/month) over the existing `organizations.plan` column — unknown/
@@ -283,23 +325,32 @@ reads, owner-only `PATCH /organizations/{id}` plan assignment
 (`ORG_PLAN_UPDATED`), 16 S8.4 tests, **990 passed** · details: SESSION_LOG
 2026-09-12.
 
-**S8.5 — deployment hardening** (bible §19):
-- `docker-compose.prod.yml` — API non-root + healthcheck + resource limits
-  + restart policy (DB/Redis services unchanged)
-- reverse-proxy TLS snippet (Caddy) in `infra/`
-- security middleware on the API: CORS locked to the web origin, security
-  headers (CSP/HSTS/X-Content-Type-Options/Referrer-Policy), request-id,
-  per-user + per-IP rate limiting (Redis, **429 + `Retry-After`**)
-- structured JSON logs with request-id correlation (extend the existing
-  logging config)
-- secrets via env/secret-manager only; gitleaks fail-closed (bible §31.4)
-- backup/restore: `scripts/backup.sh` (pg_dump + artifacts dir, gzip) +
-  `scripts/restore.sh` with a restore round-trip test
-- **Exit:** `docker compose -f docker-compose.prod.yml up` boots with
-  `/health` green · header + CORS + rate-limit tests green (429 +
-  `Retry-After`) · restore round-trip test recovers a snapshot · no secrets
-  in any committed file (gitleaks) · gates green (ruff check+format,
-  mypy strict, full pytest).
+**S8.5 is complete + gated** (`3acc90b`, 2026-09-12) — prod compose (db/
+redis/api publish no ports, Caddy-only 80/443, `AUTH_TOKEN_SECRET` fail
+loud, migrate-before-api, non-root + healthcheck + resource limits) ·
+security middleware (request-id echo/generate + JSON log correlation,
+fail-closed CORS, security headers on success/error/429, Redis fixed-
+window rate limiting: IP fallback + verified-JWT `sub` user buckets,
+exempt paths, fail-open, 429 + `Retry-After`) · `backup.sh`/`restore.sh`
+(pg_dump custom + tar bundle + single-transaction `pg_restore` +
+artifacts) · Dockerfile + `.dockerignore` + gitleaks CI job · alembic
+`env.py` no longer disables host loggers (root cause of a logging test
+that passed alone but failed after any DB test) · 31 S8.5 tests (24
+security incl. live-Redis, 6 infra-structural, 1 **live backup/restore
+round-trip** running the real scripts in the pgvector image) · gates
+green (ruff check+format, mypy strict 123, **1021 passed**) · details:
+SESSION_LOG 2026-09-12.
+
+**S8.6 — Pilot E2E + baseline report** (bible §19):
+- live pilot scenario — two users (org owner + member) on one org, shared
+  project · full pipeline as the member (requirement → test cases →
+  automation → run → failure → diagnosis → Jira link, the S7.5 loop) ·
+  quota denial + plan bump (S8.4) · audit-trail export (S8.3)
+- live driver committed (evidence pair, S6.5/S7.5 pattern) + baseline
+  `reports/commercialization_v1.json`
+- **Exit:** live E2E green (all legs, both roles) · baseline report
+  committed (single tracked report, `.gitignore` exception per S6.5) ·
+  all red-team checks pass · gates green (ruff + mypy strict + pytest).
 
 ## 4. Environment facts (verified 2026-08-26)
 

@@ -2818,3 +2818,101 @@
   `STATE.md` §3 (prod compose + Caddy TLS + security middleware +
   Redis rate limiting + JSON logs + backup/restore round-trip).
 
+## 2026-09-12 — S8.5 deployment hardening — complete + gated
+
+- **Goal:** bible §19 S8.5 — deployment hardening: production compose
+  posture, Caddy TLS reverse proxy, security middleware (CORS, headers,
+  request-id, per-user/per-IP rate limiting), structured JSON logs with
+  request-id correlation, gitleaks fail-closed (§31.4), and a
+  backup/restore pair with a live round-trip test.
+- **Did:**
+  - `docker-compose.prod.yml` — `db`/`redis`/`api` publish **no** ports
+    (internal network only) · `caddy` is the **only** public 80/443
+    entrypoint (`infra/caddy/Caddyfile` — TLS-terminating reverse proxy in
+    front of `api:8000`) · `AUTH_TOKEN_SECRET` required — compose fails
+    loudly if unset · `migrate` (alembic head) must succeed **before**
+    `api` starts (`condition: service_success`) · `api`: non-root,
+    healthcheck on `/health`, `restart: unless-stopped`, CPU/memory
+    limits.
+  - `apps/api/Dockerfile` (non-root runtime, uv-managed venv) +
+    `.dockerignore` (venv, node_modules, secrets, test artifacts).
+  - `apps/api/src/qa_copilot_api/security.py` (new) — middleware
+    outer→inner: `RequestIDMiddleware` → `CORSMiddleware` →
+    `RateLimitMiddleware` → `SecurityHeadersMiddleware`: request-id
+    provided `X-Request-ID` is **echoed**, otherwise generated; set into
+    `request_id_var` for the request · CORS `CORSMiddleware` registered
+    **only when** `cors_origins` is non-empty (empty = no CORS headers —
+    fail-closed) · security headers (CSP/HSTS/X-Content-Type-Options/
+    Referrer-Policy) on success, error, and 429 responses · rate
+    limiting: Redis fixed window (100 req/60 s default), IP bucket
+    fallback (`X-Forwarded-For` first hop → `request.client.host`), user
+    bucket **only from a verified JWT `sub`**, `/health`/`/docs`/`/redoc`/
+    `/openapi.json` exempt, **fail-open** when Redis is down, blocked →
+    **429 + `Retry-After`** + structured `rate_limited` body.
+  - `logging_config.py` — `request_id_var` (ContextVar) +
+    `RequestIDFilter` (stamps the in-request id onto every record) +
+    `JsonFormatter` promotes it to a top-level `request_id` JSON field.
+  - `scripts/backup.sh` — pg_dump `--format=custom` + optional artifacts
+    tree → `qa-copilot-backup-<UTC>.tar.gz` (db.dump + artifacts.tgz +
+    MANIFEST); CRLF-safe `.env` loader (dev `.env` has Windows line
+    endings — a naive `source` poisons values with `\r`); caller env wins
+    over `.env` · `scripts/restore.sh` — extract → `pg_restore --clean
+    --if-exists --single-transaction --no-owner --no-privileges` (all or
+    nothing) → artifacts into `ARTIFACTS_DIR`.
+  - `.gitleaks.toml` + `.github/workflows/ci.yml` — gitleaks job,
+    fail-closed on findings (§31.4).
+  - **Root-cause fix found while validating** (the only production-code
+    bug this session): `infra/migrations/env.py` called
+    `fileConfig(config.config_file_name)` with the default
+    `disable_existing_loggers=True` — when alembic runs **in-process**
+    (every DB test does), it silently set `disabled=True` on **every
+    already-existing logger** (the whole `qa_copilot_api` tree) for the
+    rest of the process. Symptom: `test_json_log_line_carries_request_id`
+    passed alone but failed after any DB test file (32/42 test_auth tests
+    reproduced it). Fixed with `fileConfig(...,
+    disable_existing_loggers=False)`; the S8.5 test also resets `disabled`
+    defensively (order-independent).
+
+
+  - **Tests — 31 new:**
+    - `tests/unit/test_s85_security.py` **24** — headers on success/404/429
+      · request-id echo + generate · JSON line carries top-level
+      `request_id` · CORS allowed/denied-silent/preflight/fail-closed
+      default · rate limiting: IP bucket sees the forwarded client ·
+      verified-JWT `sub` user bucket (404 route, no DB) · unverified
+      credentials fall back to the IP bucket · exempt paths · fail-open
+      when Redis is down · blocked → 429 + `Retry-After` + `rate_limited`
+      body · live-Redis tests use unique bucket keys and skip honestly
+      when Redis is absent.
+    - `tests/unit/test_s85_infra.py` **6** — structural posture checks:
+      compose (no published ports on db/redis/api, caddy-only 80/443,
+      AUTH_TOKEN_SECRET required, migrate-before-api, healthcheck/limits),
+      Dockerfile (non-root, healthcheck), Caddyfile, `.dockerignore`,
+      gitleaks config + CI job, backup/restore script contracts.
+    - `tests/unit/test_s85_backup.py` **1** — **live round-trip**: scratch
+      DB (alembic head) + probe table (2 rows) + 1 artifact → `backup.sh`
+      (real script, executed inside the pgvector image — the host bash is
+      a broken WSL shim) → TRUNCATE + artifact deleted → `restore.sh` →
+      rows and artifact back, byte-identical · skips honestly when
+      Postgres 5433 / Docker are unavailable.
+- **Fixed (validation reds → green):** (1) shell scripts written with
+  CRLF endings — bash chokes (`line 18: $'\r': command not found`);
+  converted both to LF (repo Python stays CRLF per codebase convention —
+  ruff `line-ending=auto` accepts both) · (2) `fileConfig`
+  logger-disabling (above) · (3) test-harness details: `app.app.state.
+  rate_limiter` access, preflight-only `access-control-allow-headers`
+  assertion, limiter injection via app state, unique live-Redis bucket
+  keys, `RateDecision.retry_after_s`.
+- **Verified:** `ruff check .` + `ruff format --check .` clean (220
+  files) · mypy strict clean (123 files) · **full unit suite 1021 passed,
+  0 failed** (428 s) · `bash -n` clean on both scripts (via Docker bash) ·
+  live backup/restore round-trip green.
+- **Commit:** `step S8.5: deployment hardening (prod compose + Caddy-only
+  TLS entrypoint, security middleware: request-id/JSON correlation,
+  security headers, fail-closed CORS, Redis fixed-window rate limiting
+  with JWT sub buckets, backup/restore scripts, Dockerfile + gitleaks CI;
+  31 S8.5 tests incl. live backup round-trip)` (`3acc90b`; 16 files).
+- **Next session start:** **S8.6 — Pilot E2E + baseline report** — see
+  `STATE.md` §3 (two-user pilot scenario, full pipeline, quota denial +
+  plan bump, audit export, live driver + baseline
+  `reports/commercialization_v1.json`).
