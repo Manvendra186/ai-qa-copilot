@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from qa_copilot_ai import (
     AutomationAgent,
     FilePromptStore,
@@ -36,7 +36,12 @@ from qa_copilot_ai import (
     RequirementAgent,
     TestDesignAgent,
 )
+from qa_copilot_domain.enums import AuditAction, AuditOutcome
+from qa_copilot_repository import billing as repo_billing
+from qa_copilot_repository import db as repo_db
+from qa_copilot_repository import security_audit as repo_security_audit
 from sqlalchemy import Engine
+from starlette.responses import JSONResponse
 
 from qa_copilot_api import jobs, routes, throttle
 from qa_copilot_api.config import Settings, get_settings
@@ -201,6 +206,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.engine = make_app_engine(settings.database_url)
+
+    # S8.4 (build bible §19 S8.4): a job dispatch that hits the org's plan
+    # quota is a 409 ``plan_limit`` — not a 5xx, not a created-then-failed
+    # job. The gate (``jobs.JobRunner.start``) already removed the job row
+    # and published the terminal ``job.rejected`` event; here we render the
+    # structured body and record the S8.3 audit row (``org.quota.denied``)
+    # with the actor + client IP. The audit write is best-effort — a
+    # database failure must never mask the client-facing 409.
+    @app.exception_handler(repo_billing.PlanLimitExceeded)
+    async def _plan_limit_handler(
+        request: Request, exc: repo_billing.PlanLimitExceeded
+    ) -> JSONResponse:
+        forwarded = request.headers.get("x-forwarded-for")
+        ip = (
+            forwarded.split(",")[0].strip()
+            if forwarded
+            else (request.client.host if request.client else "unknown")
+        )
+        try:
+            with repo_db.session_scope(app.state.engine) as session:
+                repo_security_audit.record(
+                    session,
+                    actor_id=exc.actor_id,
+                    action=AuditAction.ORG_QUOTA_DENIED,
+                    target=exc.org_id,
+                    outcome=AuditOutcome.DENIED,
+                    ip=ip,
+                )
+                session.commit()
+        except Exception:  # noqa: BLE001 — the 409 contract outranks the audit row
+            logger.exception("S8.4: failed to record org.quota.denied audit row")
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "plan_limit",
+                    "plan": exc.plan,
+                    "limit": exc.limit,
+                    "used": exc.used,
+                    "allowed": exc.allowed,
+                    "org_id": exc.org_id,
+                    "project_id": exc.project_id,
+                    "job_id": exc.job_id,
+                }
+            },
+        )
 
     # S8.1: Redis-backed login throttling (per email + IP). The client is
     # constructed from the configured URL but is lazy — no connection is

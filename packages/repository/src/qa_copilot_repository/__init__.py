@@ -55,10 +55,16 @@ always wins) (:mod:`qa_copilot_repository.invites`,
  S8.3: security audit trail — the append-only ``audit_log`` table + the
  record/export core (:mod:`qa_copilot_repository.security_audit`,
  build bible §19 S8.3, §17).
+
+ S8.4: billing core — the closed plan catalog (``free``/``pro``/
+ ``enterprise``) + quota caps, the deterministic pre-flight quota gate,
+ and exact organization usage metering derived from the §10 rows
+ (:mod:`qa_copilot_repository.billing`, build bible §19 S8.4).
 """
 
 from . import (
     audit,
+    billing,
     conventions,
     db,
     generated_tests,
@@ -109,6 +115,7 @@ __all__ = [
     "TestRiskInput",
     "applied_generated_refs",
     "audit",
+    "billing",
     "build_risk_ranking",
     "changed_files_from_range",
     "compute_impact",

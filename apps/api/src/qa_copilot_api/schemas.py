@@ -793,3 +793,52 @@ class AuditEventOut(BaseModel):
     outcome: str
     ip: str | None
     at: datetime
+
+
+# --- S8.4: organization billing (plans, usage, plan assignment, §19) ---------
+
+
+class PlanOut(BaseModel):
+    """S8.4: the org's effective plan and its quota caps (build bible §19 S8.4).
+
+    ``name`` is the *resolved* plan — the stored ``organizations.plan``
+    value mapped through the catalog (``dev`` / NULL / unknown all fall
+    back to ``free`` — a stale value never unlocks premium capacity).
+    ``limits`` exposes the plan's caps so clients can show headroom:
+    ``max_projects``, ``runs_per_month``, ``tokens_per_month`` and
+    ``concurrent_jobs``. Returned by ``GET /organizations/{id}/plan`` and
+    after ``PATCH /organizations/{id}``.
+    """
+
+    name: str
+    limits: dict[str, int]
+
+
+class UsageOut(BaseModel):
+    """S8.4: the org's live usage metering (build bible §19 S8.4).
+
+    Derived from the org's actual activity — never counters — so it cannot
+    drift: ``runs`` = ``test_runs`` created in *month*, ``tokens`` = LLM
+    tokens (in + out) of ``ai_actions`` in *month*, ``active_jobs`` =
+    in-flight jobs (point-in-time), ``projects`` = org projects (point-in-time).
+    ``month`` is the ``YYYY-MM`` window the monthly counters cover.
+    """
+
+    month: str
+    runs: int
+    tokens: int
+    active_jobs: int
+    projects: int
+
+
+class UpdateOrganizationRequest(BaseModel):
+    """S8.4: ``PATCH /organizations/{id}`` — assign the org's plan (owner only).
+
+    Closed set: ``free`` / ``pro`` / ``enterprise`` (§19 S8.4 — local admins
+    can set any plan; there is no external billing). Any other value is a
+    422 (body validation). The assignment is audited as
+    ``org.plan.updated`` (S8.3); a no-op PATCH (same plan) changes nothing
+    and records no audit row.
+    """
+
+    plan: Literal["free", "pro", "enterprise"]

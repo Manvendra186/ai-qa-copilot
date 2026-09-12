@@ -117,6 +117,25 @@ S8.3: RBAC hardening + append-only audit trail (§19 S8.3, §17):
   create/accept/deny, org deletion, project deletion) records a
   success/failure/blocked row in ``audit_log`` with the client IP; rows
   outlive their actors (``actor_id`` ON DELETE SET NULL).
+
+S8.4: organization billing — plans, quotas, usage (§19 S8.4):
+
+- ``GET   /api/v1/organizations/{id}/plan``  — the org's effective plan +
+  its quota caps (any member); stored ``dev``/unknown values resolve to
+  the ``free`` default (a stale value never unlocks premium capacity)
+- ``GET   /api/v1/organizations/{id}/usage`` — live usage metering (any
+  member): runs + tokens this month (``YYYY-MM`` window), in-flight jobs,
+  project count — derived from the org's actual rows, never counters
+- ``PATCH /api/v1/organizations/{id}``       — assign a plan
+  (``{"plan": "free" | "pro" | "enterprise"}``) — org **owner** only;
+  anything else is a 422; the change is audited ``org.plan.updated``
+- Quota enforcement: every job dispatch (``JobRunner.start``) checks the
+  org's plan caps — ``concurrent_jobs`` → ``runs_per_month`` (for
+  ``run_execution``) → ``tokens_per_month`` — in that fixed order. A
+  violated cap removes the job row, publishes a terminal
+  ``job.rejected`` SSE event, and the API answers 409 with a
+  ``plan_limit`` body (``plan``/``limit``/``used``/``allowed``) and an
+  ``org.quota.denied`` audit row — no partial state, no job run.
 """
 
 from __future__ import annotations
@@ -142,6 +161,7 @@ from qa_copilot_domain.enums import (
 from qa_copilot_execution import ArtifactStore, ArtifactStoreError
 from qa_copilot_integrations import webhook as webhook_core
 from qa_copilot_knowledge import SearchHit
+from qa_copilot_repository import billing as repo_billing
 from qa_copilot_repository import db as repo_db
 from qa_copilot_repository import generated_tests as repo_generated_tests
 from qa_copilot_repository import integrations as repo_integrations
@@ -2482,6 +2502,118 @@ def export_org_audit(
         )
         for row in rows
     ]
+
+
+def _plan_out(org: models.Organization) -> schemas.PlanOut:
+    """The org's effective plan (catalog resolution) + its quota caps."""
+    spec = repo_billing.plan_for(org.plan)
+    return schemas.PlanOut(
+        name=spec.name,
+        limits={
+            "max_projects": spec.max_projects,
+            "runs_per_month": spec.runs_per_month,
+            "tokens_per_month": spec.tokens_per_month,
+            "concurrent_jobs": spec.concurrent_jobs,
+        },
+    )
+
+
+# --- S8.4: organization billing — plans, usage, plan assignment (§19) --------
+
+
+@organizations_router.get("/{organization_id}/plan", response_model=schemas.PlanOut)
+def get_org_plan(
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.MEMBER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.PlanOut:
+    """S8.4: the org's effective plan + quota caps — any member.
+
+    The stored ``organizations.plan`` value resolved through the closed
+    catalog: ``dev`` (the S0.5 seed default), NULL or any unknown value
+    resolve to ``free`` — a stale value must never unlock premium
+    capacity. Non-members → 403 (audited ``org.gate.denied``; the gate
+    precedes lookup — never a 404 leak).
+    """
+    _, organization_id = ctx
+    org = db.get(models.Organization, organization_id)
+    if org is None:  # defensive: the gate's membership check implies it
+        raise HTTPException(status_code=404, detail="organization not found")
+    return _plan_out(org)
+
+
+@organizations_router.get("/{organization_id}/usage", response_model=schemas.UsageOut)
+def get_org_usage(
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.MEMBER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.UsageOut:
+    """S8.4: the org's live usage metering — any member.
+
+    Derived from the org's actual activity (never counters, so it cannot
+    drift): ``runs``/``tokens`` count the ``month`` window (``YYYY-MM``),
+    ``active_jobs`` and ``projects`` are point-in-time. Non-members → 403
+    (audited ``org.gate.denied``).
+    """
+    _, organization_id = ctx
+    usage = repo_billing.org_usage(db, organization_id)
+    return schemas.UsageOut(
+        month=repo_billing.month_label(),
+        runs=usage.runs,
+        tokens=usage.tokens,
+        active_jobs=usage.active_jobs,
+        projects=usage.projects,
+    )
+
+
+@organizations_router.patch("/{organization_id}", response_model=schemas.PlanOut)
+def update_organization(
+    request: Request,
+    body: schemas.UpdateOrganizationRequest,
+    ctx: tuple[models.User, str] = Depends(auth.require_org_role(OrgRole.OWNER)),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> schemas.PlanOut:
+    """S8.4: assign the org's plan — org **owner** only.
+
+    Closed plan set (``free`` / ``pro`` / ``enterprise``); any other value
+    is a 422 (body validation — and RBAC runs first, so a non-owner's
+    malformed body is a 403, not a 422). A successful change is audited as
+    ``org.plan.updated`` (success row commits atomically with the plan
+    write); a no-op PATCH (same plan) changes nothing and records no
+    audit row.
+    """
+    user, organization_id = ctx
+    ip = _client_ip(request)
+    org = db.get(models.Organization, organization_id)
+    if org is None:  # defensive: the gate's membership check implies it
+        raise HTTPException(status_code=404, detail="organization not found")
+    if org.plan == body.plan:
+        return _plan_out(org)  # idempotent no-op — nothing to audit
+    org.plan = body.plan
+    _audit(
+        db,
+        AuditAction.ORG_PLAN_UPDATED,
+        actor_id=user.id,
+        target=organization_id,
+        outcome=AuditOutcome.SUCCESS,
+        ip=ip,
+        commit=False,  # folds into the plan-change commit below
+    )
+    try:
+        db.commit()
+    except IntegrityError:  # pragma: no cover — ``plan`` carries no constraint
+        db.rollback()
+        _audit(
+            db,
+            AuditAction.ORG_PLAN_UPDATED,
+            actor_id=user.id,
+            target=organization_id,
+            outcome=AuditOutcome.FAILURE,
+            ip=ip,
+        )
+        raise HTTPException(
+            status_code=409, detail="could not update the organization plan"
+        ) from None
+    db.refresh(org)
+    return _plan_out(org)
 
 
 @organizations_router.delete("/{organization_id}", status_code=204)

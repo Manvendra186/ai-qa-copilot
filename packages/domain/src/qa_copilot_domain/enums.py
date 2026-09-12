@@ -270,6 +270,8 @@ class AuditAction(StrEnum):
     ORG_INVITE_CREATE = "org.invite.create"
     ORG_INVITE_ACCEPT = "org.invite.accept"
     ORG_INVITE_DENIED = "org.invite.denied"
+    ORG_PLAN_UPDATED = "org.plan.updated"
+    ORG_QUOTA_DENIED = "org.quota.denied"
     ORG_DELETE = "org.delete"
     ORG_DELETE_REAUTH_FAILURE = "org.delete.reauth_failure"
     PROJECT_DELETE = "project.delete"

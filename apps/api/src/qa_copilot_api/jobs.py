@@ -99,6 +99,7 @@ from qa_copilot_repository import (
     scan_repository,
     strongest_impact_kind,
 )
+from qa_copilot_repository import billing as repo_billing
 from qa_copilot_repository import (
     db as repo_db,
 )
@@ -145,7 +146,9 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 #: Event names that end a job's stream (client closes on any of them).
-TERMINAL_EVENTS: frozenset[str] = frozenset({"job.completed", "job.failed", "job.cancelled"})
+TERMINAL_EVENTS: frozenset[str] = frozenset(
+    {"job.completed", "job.failed", "job.cancelled", "job.rejected"}
+)
 #: Job row statuses that mean "no more events are coming".
 TERMINAL_STATUSES: frozenset[JobStatus] = frozenset(
     {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
@@ -1508,15 +1511,85 @@ class JobRunner:
         """Schedule *job_id* with *agent*; returns ``False`` when already running.
 
         A duplicate start while the job is in flight is a no-op (idempotent).
-        Raises ``RuntimeError`` if no event loop is available (programming error).
+        Raises ``RuntimeError`` if no event loop is available (programming
+        error). S8.4 (build bible §19 S8.4): raises
+        :class:`qa_copilot_repository.billing.PlanLimitExceeded` when the
+        org's plan quota is exhausted — the job row is removed and the
+        terminal ``job.rejected`` event is published, so no partial state
+        remains and in-flight SSE clients learn of the rejection.
         """
         job_input = job_input or {}
         with self._lock:
             existing = self._active.get(job_id)
             if existing is not None and not existing.done():
                 return False
+            self._enforce_plan_limit(job_id, user_id)  # S8.4 quota gate
             self._active[job_id] = self._schedule(job_id, agent, user_id, job_input)
         return True
+
+    def _enforce_plan_limit(self, job_id: str, actor_id: str | None) -> None:
+        """S8.4: the single pre-flight quota gate every dispatch funnels through.
+
+        ``start`` is the only way a job gets scheduled, so every flow — AI
+        endpoints, webhook-triggered jobs alike — is quota-checked here and
+        none can bypass billing. On a violated cap the job row is deleted
+        (the client never saw it accepted), a terminal ``job.rejected``
+        event is published for in-flight SSE clients, and
+        :class:`qa_copilot_repository.billing.PlanLimitExceeded` is raised
+        — the API's exception handler renders the 409 ``plan_limit``
+        response and records the ``org.quota.denied`` audit row (S8.3).
+        Jobs without an org (projectless dev jobs) pass untouched.
+        """
+        org_id = ""
+        project_id = ""
+        spec = repo_billing.plan_for(None)
+        exc: repo_billing.PlanLimitExceeded | None = None
+        with repo_db.session_scope(self._engine) as session:
+            job = session.get(models.Job, job_id)
+            if job is None or job.project_id is None:
+                return
+            project = session.get(models.Project, job.project_id)
+            if project is None or project.organization_id is None:
+                return
+            org = session.get(models.Organization, project.organization_id)
+            if org is None:
+                return
+            spec = repo_billing.plan_for(org.plan)
+            check = repo_billing.check_quota(
+                session,
+                project.organization_id,
+                job_type=job.type,
+                exclude_job_id=job_id,
+            )
+            if check.limit is None:
+                return
+            org_id = project.organization_id
+            project_id = job.project_id
+            exc = repo_billing.PlanLimitExceeded(
+                org_id=org_id,
+                project_id=project_id,
+                job_id=job_id,
+                limit=check.limit,
+                plan=spec.name,
+                used=check.used,
+                allowed=check.allowed,
+                actor_id=actor_id,
+            )
+            session.delete(job)
+            session.commit()
+        assert exc is not None  # set on the only path that reaches here
+        self._bus.publish(
+            "job.rejected",
+            _payload(
+                job_id,
+                project_id,
+                plan=exc.plan,
+                limit=exc.limit,
+                used=exc.used,
+                allowed=exc.allowed,
+            ),
+        )
+        raise exc
 
     async def shutdown(self) -> None:
         """Cancel in-flight jobs and wait for the ones on this loop to unwind."""
