@@ -2736,3 +2736,85 @@
   (plans/quotas/metering over `organizations.plan` + `ai_actions` usage;
   admin-assigned, no payment processor; quota denial → 403 + audit row).
 
+## 2026-09-12 — S8.4 billing core — complete + gated
+
+- **Goal:** bible §19 S8.4 — billing core (local-first): code-defined plan
+  catalog (free/pro/enterprise) over the existing `organizations.plan`
+  column, live usage metering, dispatch-time quota enforcement with a
+  deterministic audited rejection, and the plan/usage API surface. Admin-
+  assigned plans, **no payment processor** (S8.0 stance).
+- **Did:**
+  - `packages/domain` — `AuditAction` += `ORG_QUOTA_DENIED` +
+    `ORG_PLAN_UPDATED` (closed vocabulary extended).
+  - `packages/repository` — new core `billing.py`: plan catalog
+    `PLANS` (`free`: concurrent_jobs=1, runs_per_month=25,
+    tokens_per_month=100_000 · `pro`: 5/250/2M · `enterprise`: 25/2500/
+    20M) + `resolve_plan(name)` — unknown/`dev`/`NULL` → `free` (the
+    default, never an error) · live metering over real tables — in-flight
+    jobs from `jobs` (pending+running across the org's projects),
+    runs from `test_runs`, tokens from `sum(ai_actions.tokens_in+out)`;
+    per-month window via `month_start`/`month_label` · `QuotaCheck`
+    (limit/used/allowed; `limit=None` = within budget) · `check_quota(
+    session, org_id, *, job_type, exclude_job_id)` — evaluation order:
+    concurrent_jobs → runs_per_month (run_execution only) →
+    tokens_per_month · `PlanLimitExceeded` domain exception (org, plan,
+    limit, used, allowed) · re-exported from `qa_copilot_repository`.
+  - No migration — S8.4 reuses `organizations.plan` (added S8.0) + the
+    existing usage tables; dev DB (5433) already at head.
+  - `apps/api` — `JobRunner.start()`/`_run()` now carry `user_id` +
+    `job_input` and enforce quota **before** `create_ai_session` (the
+    session is the AI-work anchor; a denied dispatch must not create
+    one): on `PlanLimitExceeded` → `db.rollback()` (also removes the
+    route-created job row) → `job.rejected` SSE event +
+    `ORG_QUOTA_DENIED` audit row (actor, org target, outcome `denied`,
+    client IP) → re-raise · `POST /requirements/analyze` catches the
+    rejection → **409** + structured `plan_limit` body (code/plan/limit/
+    used/allowed/org_id/project_id/job_id) — never a mid-run crash ·
+    `GET /organizations/{id}/plan` (member+; unknown org 403 never 404)
+    → plan + per-limit used/allowed · `GET /organizations/{id}/usage`
+    (member+) → month label + in-flight jobs + runs this month + tokens
+    this month (exact live numbers) · `PATCH /organizations/{id}` —
+    **owner-only** plan assignment (body `{"plan": ...}`; unknown plan
+    422 with the valid names) → `ORG_PLAN_UPDATED` audit row; non-owner →
+    403 + `ORG_GATE_DENIED` row; member+ may read.
+  - `tests/unit/test_s84_billing.py` — **16 tests**, rewritten to the
+    working S8.3 fixture pattern (Docker Postgres 5433): scratch DB
+    `qa_copilot_s84_test` (drop/create per test) + Alembic `head` applied
+    per test + app from explicit `Settings` (test JWT secret) +
+    deterministic `uuid5` users/org/project + tokens issued with the same
+    test secret + `StubAgent` updated to the real `JobAgent` contract ·
+    coverage: plan catalog + `free` fallback (`dev`/unknown/None) ·
+    usage endpoint exact numbers · RBAC matrix (member reads plan+usage ·
+    viewer 403 · outsider 403 — never 404) · owner plan update → visible
+    on the plan endpoint + `ORG_PLAN_UPDATED` row (actor=owner, target=
+    org) · non-owner plan update → 403 + gate-denied row, plan unchanged ·
+    allowed dispatch → job **completes** (waits) + exactly one
+    `ai_sessions` row · denied dispatch ×3 (concurrent_jobs via a seeded
+    running job · runs_per_month via seeded `test_runs` ·
+    tokens_per_month via seeded `ai_sessions`+`ai_actions`) → 409 +
+    `plan_limit` body (correct limit/used/allowed per case) + **no new**
+    `ai_sessions` rows + the rejected job row is gone (count back to
+    baseline) + exactly one `ORG_QUOTA_DENIED` row (actor alice, target
+    org, outcome denied, IP captured).
+- **Fixed (5 red → green):** (1) audit-row comparisons failed because
+  raw-SQL reads of Postgres UUID columns (`actor_id`, `target`) return
+  `UUID` objects, not `str` — `_audit_rows` now normalizes them · (2)
+  the tokens test asserted `count(ai_sessions) == 0` after a rejection,
+  but its own metering seed legitimately creates a session row — the
+  invariant is "no *new* sessions": `_assert_plan_limit_body` takes a
+  `sessions_before` baseline. The dispatch flow itself was already
+  correct (quota → rollback → 409, zero session rows) — no product-code
+  change needed for the red tests.
+- **Verified:** `ruff check .` + `ruff format --check .` clean (216
+  files) · mypy strict clean (122 files) · **full unit suite 990 passed,
+  0 failed** (382.9 s) · `test_s84_billing.py` 16/16 (re-run after
+  formatting) · regression spot-checks green: S8.2/S8.3/auth/jobs (96) +
+  runs/generated-tests/regression/execution (89).
+- **Commit:** `step S8.4: billing core (plan catalog + live metering +
+  dispatch quota enforcement → 409 plan_limit + org plan/usage API +
+  audit events; 16 S8.4 tests)` (8 files: `billing.py` new + package
+  exports + enums + jobs/main/routes/schemas + test file).
+- **Next session start:** **S8.5 — deployment hardening** — see
+  `STATE.md` §3 (prod compose + Caddy TLS + security middleware +
+  Redis rate limiting + JSON logs + backup/restore round-trip).
+

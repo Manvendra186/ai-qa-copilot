@@ -10,13 +10,43 @@
   user-approved 2026-09-08: **pilot scope §24**, **SSO/OAuth deferred to
   Enterprise §24**, **billing = admin-assigned plans + real quota metering, no
   payment processor**) · **S8.1 ✓ auth hardening** · **S8.2 ✓ teams** · **S8.3 ✓ RBAC+audit** ·
-  S8.4–S8.6 planned (billing → deployment → pilot E2E)
-- **next:** **S8.4 — billing core** (plans/quotas/metering over
-  `organizations.plan` + `ai_actions` usage; admin-assigned, no payment
-  processor — details in §3)
+  **S8.4 ✓ billing** · S8.5–S8.6 planned (deployment → pilot E2E)
+- **next:** **S8.5 — deployment hardening** (prod compose, security
+  middleware, rate limiting, JSON logs, backup/restore round-trip —
+  details in §3)
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-12 · S8.4 billing core — complete + gated.** Code-defined plan
+  catalog (`free`/`pro`/`enterprise`: concurrent_jobs, runs/month,
+  tokens/month) over the existing `organizations.plan` column — unknown/
+  `dev`/NULL resolve to `free` (default) · live metering from real tables
+  (in-flight jobs from `jobs`, runs from `test_runs`, tokens from
+  `ai_actions`; per-month window via `month_start`/`month_label`) ·
+  `check_quota(session, org_id, *, job_type, exclude_job_id)` →
+  `QuotaCheck` (limit/used/allowed), evaluation order: concurrent_jobs →
+  runs_per_month (run_execution only) → tokens_per_month · `PlanLimitExceeded`
+  domain exception · enforcement in `JobRunner._run()` **before**
+  `create_ai_session` (denied dispatch rolls the job row back → zero
+  `ai_sessions` rows, never a mid-run crash) · `POST /requirements/analyze`
+  maps the rejection to **409** + structured `plan_limit` body (plan/limit/
+  used/allowed/org/project/job id) + `ORG_QUOTA_DENIED` audit row (actor +
+  client IP, outcome `denied`) · `GET /organizations/{id}/plan` +
+  `GET /organizations/{id}/usage` (member+; cross-org/outsider → 403 never
+  404) · `PATCH /organizations/{id}` owner-only plan assignment
+  (`ORG_PLAN_UPDATED` audited; non-owner → 403 + gate-denied row) · new
+  core `qa_copilot_repository.billing` (no new migration — reuses
+  `organizations.plan` + usage tables) · tests:
+  `test_s84_billing.py` **16** (S8.3-style fixture: scratch DB
+  `qa_copilot_s84_test` + Alembic head per test + deterministic UUIDs +
+  StubAgent matching the real `JobAgent` contract): plan catalog + free
+  fallback · usage endpoint exact numbers · RBAC matrix (member reads ·
+  viewer 403 · outsider 403) · owner plan update + audit · non-owner 403 +
+  gate row · allowed dispatch → job completes + exactly one `ai_sessions`
+  row · denied dispatch ×3 (concurrent_jobs / runs_per_month /
+  tokens_per_month) → 409 + `plan_limit` body + no new sessions + single
+  quota-denied audit row · gates green (ruff check+format 216 files, mypy
+  strict 122 files, **990 passed**). Details: SESSION_LOG 2026-09-12.
 - **2026-09-11 · S8.3 RBAC hardening + audit trail — complete + gated.**
   Owner-gated org deletion: `DELETE /organizations/{id}` 204 — cascades the
   org's projects/memberships/invites and revokes **every former member's**
@@ -242,14 +272,34 @@ tests + `test_s82_teams.py` repaired to the re-auth contract
 (new head; dev DB 5433 migrated) · gates green (ruff check+format,
 mypy strict 165 files, **974 passed**). Details: SESSION_LOG 2026-09-11.
 
-**S8.4 — billing core:**
-- plans/quotas/metering over `organizations.plan` + `ai_actions` usage
-  (admin-assigned plans; **no payment processor** → S8.0 stance)
-- quota enforcement on the job routes (requirement/design/automation) →
-  the red-team "quota denial" audit event
-- plan-change events (add to `AuditAction` when building)
-- **Exit:** quota denial → 403 + audit row (never a mid-run crash);
-  plan change visible in the audit export; gates green.
+**S8.4 is complete + gated** (2026-09-12) — billing core: code-defined
+plan catalog over `organizations.plan` (`free`/`pro`/`enterprise`;
+unknown/`dev`/NULL → `free`), live metering from real tables
+(`jobs`/`test_runs`/`ai_actions`), `check_quota` + `QuotaCheck`,
+`PlanLimitExceeded` enforced in `JobRunner` **before** `create_ai_session`
+(denied dispatch = job rolled back + **409** `plan_limit` body +
+`ORG_QUOTA_DENIED` audit row, never a mid-run crash), member+ plan/usage
+reads, owner-only `PATCH /organizations/{id}` plan assignment
+(`ORG_PLAN_UPDATED`), 16 S8.4 tests, **990 passed** · details: SESSION_LOG
+2026-09-12.
+
+**S8.5 — deployment hardening** (bible §19):
+- `docker-compose.prod.yml` — API non-root + healthcheck + resource limits
+  + restart policy (DB/Redis services unchanged)
+- reverse-proxy TLS snippet (Caddy) in `infra/`
+- security middleware on the API: CORS locked to the web origin, security
+  headers (CSP/HSTS/X-Content-Type-Options/Referrer-Policy), request-id,
+  per-user + per-IP rate limiting (Redis, **429 + `Retry-After`**)
+- structured JSON logs with request-id correlation (extend the existing
+  logging config)
+- secrets via env/secret-manager only; gitleaks fail-closed (bible §31.4)
+- backup/restore: `scripts/backup.sh` (pg_dump + artifacts dir, gzip) +
+  `scripts/restore.sh` with a restore round-trip test
+- **Exit:** `docker compose -f docker-compose.prod.yml up` boots with
+  `/health` green · header + CORS + rate-limit tests green (429 +
+  `Retry-After`) · restore round-trip test recovers a snapshot · no secrets
+  in any committed file (gitleaks) · gates green (ruff check+format,
+  mypy strict, full pytest).
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -446,3 +496,20 @@ mypy strict 165 files, **974 passed**). Details: SESSION_LOG 2026-09-11.
 - S8.3: **audit rows outlive actors** → `audit_log.actor_id` is ON
   DELETE SET NULL; never add a CASCADE from `users`/`organizations` to
   `audit_log`.
+- S8.4: **quota denial is 409, not 403** — the build bible (§19 S8.4)
+  specifies quota exceeded → **409** `plan_limit`; the old STATE.md §3
+  draft said 403 — the bible is canonical. RBAC denials stay 403.
+- S8.4: **denial happens before any AI session** — `JobRunner._run()`
+  calls `check_quota` before `create_ai_session`; on
+  `PlanLimitExceeded` it `db.rollback()`s (which also removes the
+  route-created job row). A rejected dispatch leaves **zero**
+  `ai_sessions` rows and the job count is back to baseline — tests must
+  assert both.
+- S8.4: **metering seeds ARE usage** — a test that saturates
+  `tokens_per_month` by seeding `ai_sessions`/`ai_actions` legitimately
+  creates session rows; assert "no *new* sessions" (baseline before
+  dispatch), never "zero sessions".
+- S8.4: **raw-SQL reads of Postgres UUID columns return `UUID` objects** —
+  comparing them to `str` fixture ids fails (`UUID('...') == '...'` is
+  False); normalize (`str()`) UUID-valued columns in test helpers
+  (e.g. `_audit_rows` for `actor_id`/`target`).
