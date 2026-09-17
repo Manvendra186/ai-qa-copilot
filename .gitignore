@@ -26,6 +26,8 @@ reports/*
 !reports/regression_v1.json
 # S7.5 baseline report — tracked for drift tracking (bible §19 S7.5, §31.6/§31.7)
 !reports/integrations_v1.json
+# S8.6 baseline report — tracked for drift tracking (bible §19 S8.6, §31.6/§31.7)
+!reports/commercialization_v1.json
 
 # OS / IDE
 .DS_Store

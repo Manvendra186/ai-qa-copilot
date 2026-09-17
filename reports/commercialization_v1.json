@@ -1,0 +1,721 @@
+{
+  "schema_version": "commercialization-v1/1",
+  "step": "S8.6",
+  "title": "Live commercialization pilot: auth + org/project + analyze + Jira link + quotas + audit",
+  "generated_at": "2026-09-17T16:54:05.892406+00:00",
+  "scope": {
+    "run_id": "20260917-165338",
+    "owner_email": "s86.owner.20260917-165338@pilot.local",
+    "member_email": "s86.member.20260917-165338@pilot.local",
+    "org_name": "S8.6 Pilot 20260917-165338",
+    "project_name": "S8.6 Pilot Project 20260917-165338",
+    "org_id": "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+    "project_id": "0d058ede-4fcb-4dc3-aa15-84ec0f3c44ab",
+    "failure_id": "fb036951-7529-49ec-a0ea-282375cf55e6",
+    "fake_jira_base": "http://127.0.0.1:8346",
+    "api_base": "http://127.0.0.1:8000/api/v1",
+    "plan_catalog": {
+      "free": {
+        "name": "free",
+        "max_projects": 1,
+        "runs_per_month": 25,
+        "tokens_per_month": 100000,
+        "concurrent_jobs": 1
+      },
+      "pro": {
+        "name": "pro",
+        "max_projects": 10,
+        "runs_per_month": 500,
+        "tokens_per_month": 2000000,
+        "concurrent_jobs": 5
+      },
+      "enterprise": "unlimited caps"
+    }
+  },
+  "auth": {
+    "owner_orgs_after_register": 1,
+    "member_orgs_after_add": 2,
+    "org_id": "eea07bee-7eaf-49fc-ab02-72ca4f9a486c"
+  },
+  "pipeline": {
+    "note": "member analyze leg; see checks"
+  },
+  "jira_leg": {
+    "member_denied": true,
+    "job_id": "6e8bdfb7-f657-4bbe-a558-d7643b569dde",
+    "issue_key": "QA-1"
+  },
+  "quota_legs": {
+    "concurrent_denied": true,
+    "runs_denied": true,
+    "tokens_denied": true,
+    "baseline_ai_actions": 1,
+    "after_ai_actions": 2
+  },
+  "plan_leg": {
+    "free_limits": {
+      "max_projects": 1,
+      "runs_per_month": 25,
+      "tokens_per_month": 100000,
+      "concurrent_jobs": 1
+    },
+    "member_denied": true,
+    "pro_limits": {
+      "max_projects": 10,
+      "runs_per_month": 500,
+      "tokens_per_month": 2000000,
+      "concurrent_jobs": 5
+    },
+    "enterprise_limits": {
+      "max_projects": 1000000000,
+      "runs_per_month": 1000000000,
+      "tokens_per_month": 1000000000,
+      "concurrent_jobs": 1000000000
+    },
+    "usage": {
+      "month": "2026-09",
+      "runs": 26,
+      "tokens": 100928,
+      "active_jobs": 0,
+      "projects": 1
+    }
+  },
+  "audit_leg": {
+    "audit_count": 8,
+    "by_action": {
+      "org.gate.denied": 2,
+      "org.plan.updated": 2,
+      "org.quota.denied": 3,
+      "org.membership.add": 1
+    }
+  },
+  "checks": [
+    {
+      "name": "register s86.owner.20260917-165338@pilot.local",
+      "expected": 201,
+      "actual": 201,
+      "passed": true
+    },
+    {
+      "name": "register s86.owner.20260917-165338@pilot.local -> user + owned org",
+      "expected": "user.email + organization.id",
+      "actual": [
+        "s86.owner.20260917-165338@pilot.local",
+        true
+      ],
+      "passed": true
+    },
+    {
+      "name": "register s86.member.20260917-165338@pilot.local",
+      "expected": 201,
+      "actual": 201,
+      "passed": true
+    },
+    {
+      "name": "register s86.member.20260917-165338@pilot.local -> user + owned org",
+      "expected": "user.email + organization.id",
+      "actual": [
+        "s86.member.20260917-165338@pilot.local",
+        true
+      ],
+      "passed": true
+    },
+    {
+      "name": "duplicate register (same email)",
+      "expected": 409,
+      "actual": 409,
+      "passed": true
+    },
+    {
+      "name": "login with wrong password",
+      "expected": 401,
+      "actual": 401,
+      "passed": true
+    },
+    {
+      "name": "login s86.owner.20260917-165338@pilot.local",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "login s86.owner.20260917-165338@pilot.local -> token + organizations",
+      "expected": "token + 1 organization",
+      "actual": [
+        true,
+        1
+      ],
+      "passed": true
+    },
+    {
+      "name": "login s86.member.20260917-165338@pilot.local",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "login s86.member.20260917-165338@pilot.local -> token + organizations",
+      "expected": "token + 1 organization",
+      "actual": [
+        true,
+        1
+      ],
+      "passed": true
+    },
+    {
+      "name": "me (owner)",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "me (owner) -> user + organizations",
+      "expected": "user.email + organizations list",
+      "actual": [
+        "s86.owner.20260917-165338@pilot.local",
+        true
+      ],
+      "passed": true
+    },
+    {
+      "name": "me (member (own org))",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "me (member (own org)) -> user + organizations",
+      "expected": "user.email + organizations list",
+      "actual": [
+        "s86.member.20260917-165338@pilot.local",
+        true
+      ],
+      "passed": true
+    },
+    {
+      "name": "member starts with only their own org",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "owner adds member",
+      "expected": 201,
+      "actual": 201,
+      "passed": true
+    },
+    {
+      "name": "owner adds member -> member row",
+      "expected": [
+        "s86.member.20260917-165338@pilot.local",
+        "member"
+      ],
+      "actual": [
+        "s86.member.20260917-165338@pilot.local",
+        "member"
+      ],
+      "passed": true
+    },
+    {
+      "name": "me (member (after add))",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "me (member (after add)) -> user + organizations",
+      "expected": "user.email + organizations list",
+      "actual": [
+        "s86.member.20260917-165338@pilot.local",
+        true
+      ],
+      "passed": true
+    },
+    {
+      "name": "member now sees the pilot org as member",
+      "expected": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "member"
+      ],
+      "actual": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "member"
+      ],
+      "passed": true
+    },
+    {
+      "name": "member reads roster",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "roster has owner + member",
+      "expected": [
+        "member",
+        "owner"
+      ],
+      "actual": [
+        "member",
+        "owner"
+      ],
+      "passed": true
+    },
+    {
+      "name": "analyze dispatch (member)",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "analyze dispatch -> job",
+      "expected": "job_id + pending status",
+      "actual": [
+        "f357e055",
+        "pending"
+      ],
+      "passed": true
+    },
+    {
+      "name": "member pipeline reaches terminal",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    },
+    {
+      "name": "member pipeline -> output_ref (artifact)",
+      "expected": "output_ref present",
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "SSE stream replays to terminal (job.completed)",
+      "expected": "job.completed in stream",
+      "actual": [
+        "stage.started",
+        "progress",
+        "progress",
+        "stage.completed",
+        "job.completed"
+      ],
+      "passed": true
+    },
+    {
+      "name": "jira link as member",
+      "expected": 403,
+      "actual": 403,
+      "passed": true
+    },
+    {
+      "name": "jira link as owner",
+      "expected": 202,
+      "actual": 202,
+      "passed": true
+    },
+    {
+      "name": "jira link -> job",
+      "expected": "job_id present",
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "jira job completes",
+      "expected": "completed",
+      "actual": "completed",
+      "passed": true
+    },
+    {
+      "name": "SSE stream carries the jira.issue event",
+      "expected": "jira.issue with issue.key",
+      "actual": [
+        "progress",
+        "progress",
+        "progress",
+        "jira.issue"
+      ],
+      "passed": true
+    },
+    {
+      "name": "jira.issue key == QA-1 (FakeJira)",
+      "expected": "QA-1",
+      "actual": "QA-1",
+      "passed": true
+    },
+    {
+      "name": "failure.jira_issue_key persisted",
+      "expected": "QA-1",
+      "actual": "QA-1",
+      "passed": true
+    },
+    {
+      "name": "FakeJira stored the issue",
+      "expected": "QA-1 in fake state",
+      "actual": [
+        "QA-1"
+      ],
+      "passed": true
+    },
+    {
+      "name": "issue body carries the diagnosis + project key",
+      "expected": "description + project=QA",
+      "actual": [
+        true,
+        "QA"
+      ],
+      "passed": true
+    },
+    {
+      "name": "analyze dispatch (member (concurrent cap))",
+      "expected": 409,
+      "actual": 409,
+      "passed": true
+    },
+    {
+      "name": "409 detail.code (concurrent)",
+      "expected": "plan_limit",
+      "actual": "plan_limit",
+      "passed": true
+    },
+    {
+      "name": "409 detail.plan (concurrent)",
+      "expected": "free",
+      "actual": "free",
+      "passed": true
+    },
+    {
+      "name": "409 detail.limit (concurrent)",
+      "expected": "concurrent_jobs",
+      "actual": "concurrent_jobs",
+      "passed": true
+    },
+    {
+      "name": "409 detail.used (concurrent)",
+      "expected": ">= 1",
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "409 detail.allowed (concurrent)",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "409 detail.org/project (concurrent)",
+      "expected": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "0d058ede-4fcb-4dc3-aa15-84ec0f3c44ab"
+      ],
+      "actual": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "0d058ede-4fcb-4dc3-aa15-84ec0f3c44ab"
+      ],
+      "passed": true
+    },
+    {
+      "name": "409 detail.job_id (concurrent)",
+      "expected": "job_id present (denied job was registered)",
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "denied job was not persisted (no 202 job row)",
+      "expected": 404,
+      "actual": 404,
+      "passed": true
+    },
+    {
+      "name": "runs dispatch (member, runs cap)",
+      "expected": 409,
+      "actual": 409,
+      "passed": true
+    },
+    {
+      "name": "409 detail.code (runs)",
+      "expected": "plan_limit",
+      "actual": "plan_limit",
+      "passed": true
+    },
+    {
+      "name": "409 detail.plan (runs)",
+      "expected": "free",
+      "actual": "free",
+      "passed": true
+    },
+    {
+      "name": "409 detail.limit (runs)",
+      "expected": "runs_per_month",
+      "actual": "runs_per_month",
+      "passed": true
+    },
+    {
+      "name": "409 detail.used (runs)",
+      "expected": ">= 25",
+      "actual": 26,
+      "passed": true
+    },
+    {
+      "name": "409 detail.allowed (runs)",
+      "expected": 25,
+      "actual": 25,
+      "passed": true
+    },
+    {
+      "name": "409 detail.org/project (runs)",
+      "expected": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "0d058ede-4fcb-4dc3-aa15-84ec0f3c44ab"
+      ],
+      "actual": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "0d058ede-4fcb-4dc3-aa15-84ec0f3c44ab"
+      ],
+      "passed": true
+    },
+    {
+      "name": "409 detail.job_id (runs)",
+      "expected": "job_id present (denied job was registered)",
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "denied run job was deleted at the gate",
+      "expected": 404,
+      "actual": 404,
+      "passed": true
+    },
+    {
+      "name": "analyze dispatch (member (token cap))",
+      "expected": 409,
+      "actual": 409,
+      "passed": true
+    },
+    {
+      "name": "409 detail.code (tokens)",
+      "expected": "plan_limit",
+      "actual": "plan_limit",
+      "passed": true
+    },
+    {
+      "name": "409 detail.plan (tokens)",
+      "expected": "free",
+      "actual": "free",
+      "passed": true
+    },
+    {
+      "name": "409 detail.limit (tokens)",
+      "expected": "tokens_per_month",
+      "actual": "tokens_per_month",
+      "passed": true
+    },
+    {
+      "name": "409 detail.used (tokens)",
+      "expected": ">= 100000",
+      "actual": 100928,
+      "passed": true
+    },
+    {
+      "name": "409 detail.allowed (tokens)",
+      "expected": 100000,
+      "actual": 100000,
+      "passed": true
+    },
+    {
+      "name": "409 detail.org/project (tokens)",
+      "expected": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "0d058ede-4fcb-4dc3-aa15-84ec0f3c44ab"
+      ],
+      "actual": [
+        "eea07bee-7eaf-49fc-ab02-72ca4f9a486c",
+        "0d058ede-4fcb-4dc3-aa15-84ec0f3c44ab"
+      ],
+      "passed": true
+    },
+    {
+      "name": "409 detail.job_id (tokens)",
+      "expected": "job_id present (denied job was registered)",
+      "actual": true,
+      "passed": true
+    },
+    {
+      "name": "denied token job was deleted at the gate",
+      "expected": 404,
+      "actual": 404,
+      "passed": true
+    },
+    {
+      "name": "rejected dispatches added no ai_actions (only the token seed did)",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "member reads plan (free)",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "free plan caps are the locked S8.4 caps",
+      "expected": {
+        "max_projects": 1,
+        "concurrent_jobs": 1,
+        "runs_per_month": 25,
+        "tokens_per_month": 100000
+      },
+      "actual": {
+        "max_projects": 1,
+        "runs_per_month": 25,
+        "tokens_per_month": 100000,
+        "concurrent_jobs": 1
+      },
+      "passed": true
+    },
+    {
+      "name": "member changes plan (denied)",
+      "expected": 403,
+      "actual": 403,
+      "passed": true
+    },
+    {
+      "name": "owner bumps free -> pro",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "pro plan caps",
+      "expected": {
+        "max_projects": 10,
+        "concurrent_jobs": 5,
+        "runs_per_month": 500,
+        "tokens_per_month": 2000000
+      },
+      "actual": {
+        "max_projects": 10,
+        "runs_per_month": 500,
+        "tokens_per_month": 2000000,
+        "concurrent_jobs": 5
+      },
+      "passed": true
+    },
+    {
+      "name": "owner bumps pro -> enterprise",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "enterprise plan caps (unlimited)",
+      "expected": "all caps large",
+      "actual": {
+        "concurrent_jobs": 1000000000,
+        "runs_per_month": 1000000000,
+        "tokens_per_month": 1000000000
+      },
+      "passed": true
+    },
+    {
+      "name": "member re-reads plan (enterprise)",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "plan is enterprise after bumps",
+      "expected": "enterprise",
+      "actual": "enterprise",
+      "passed": true
+    },
+    {
+      "name": "member reads usage",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "usage month is the current month",
+      "expected": "2026-09",
+      "actual": "2026-09",
+      "passed": true
+    },
+    {
+      "name": "usage counts the seeded runs + tokens",
+      "expected": "runs >= 25, tokens >= 100000, projects == 1",
+      "actual": [
+        26,
+        100928,
+        1
+      ],
+      "passed": true
+    },
+    {
+      "name": "member reads audit (denied)",
+      "expected": 403,
+      "actual": 403,
+      "passed": true
+    },
+    {
+      "name": "owner reads audit",
+      "expected": 200,
+      "actual": 200,
+      "passed": true
+    },
+    {
+      "name": "audit: 3 org.quota.denied rows (S8.4 denials)",
+      "expected": 3,
+      "actual": 3,
+      "passed": true
+    },
+    {
+      "name": "audit: 2 org.plan.updated rows (free->pro, pro->enterprise)",
+      "expected": 2,
+      "actual": 2,
+      "passed": true
+    },
+    {
+      "name": "audit: 1 org.membership.add row",
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "name": "audit: >= 2 org.gate.denied rows (plan PATCH, audit GET)",
+      "expected": ">= 2",
+      "actual": 2,
+      "passed": true
+    },
+    {
+      "name": "quota.denied rows carry outcome=denied",
+      "expected": "denied",
+      "actual": [
+        "denied"
+      ],
+      "passed": true
+    },
+    {
+      "name": "plan.updated rows carry outcome=success",
+      "expected": "success",
+      "actual": [
+        "success"
+      ],
+      "passed": true
+    },
+    {
+      "name": "audit rows are newest-first",
+      "expected": "non-increasing timestamps",
+      "actual": [
+        "2026-09-17T16:54:05.873174Z",
+        "2026-09-17T16:54:05.835840Z"
+      ],
+      "passed": true
+    }
+  ],
+  "summary": {
+    "total": 85,
+    "passed": 85,
+    "failed": 0,
+    "status": "pass"
+  }
+}
