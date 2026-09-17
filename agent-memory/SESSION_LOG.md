@@ -2916,3 +2916,52 @@
   `STATE.md` §3 (two-user pilot scenario, full pipeline, quota denial +
   plan bump, audit export, live driver + baseline
   `reports/commercialization_v1.json`).
+
+## 2026-09-17 — S8.6 Pilot E2E + baseline report (live commercialization pilot)
+
+- **Goal:** complete `scripts/_s86_live.py` — the S8.6 live two-user
+  commercialization pilot (auth + org/project + analyze pipeline + owner-only
+  Jira linking + S8.4 plan quotas + S8.3 audit trail) — drive it to GREEN and
+  emit `reports/commercialization_v1.json`.
+- **Did:**
+  - Quota-denial legs now assert the full locked S8.4 wire contract: `409` +
+    `detail.code == plan_limit` + `detail.plan/limit/used/allowed` +
+    `detail.job_id` (the denied job WAS registered before the gate rejected it)
+    + a follow-up `GET /jobs/{job_id}` → **404** (the gate deleted the row — no
+    partial state).
+  - Replaced the loose "no `ai_actions` changed" check with a precise one: the
+    only `ai_action` added across all three quota legs is the intentional token
+    seed (`delta == 1`) — the rejected dispatches add zero metering rows.
+  - **Root-cause fix (the Jira 404):** `_seed_world` built
+    `Failure(test_result_id=result.id)` **before** `result` was flushed. `id`
+    is a flush-time Python default (`_new_id`), so `result.id` was `None` → the
+    failure's `test_result_id` was stored NULL → `get_failure_in_project`
+    (failure → test_result → run → project) resolved nothing → `404`. Fixed by
+    `session.add(result); session.flush()` **before** creating the failure
+    (the S7.5 seed pattern); the failure now resolves to the pilot project.
+  - **Wire-shape fixes (driver bugs, not API bugs):** the plan field is `name`
+    (not `plan`) — `PlanOut.name`; the `jira.issue` SSE payload is **flat**
+    (`action`/`key`/`url`/`project_key`) so read `payload["key"]`, not
+    `payload["issue"]["key"]`; `_fake_jira_state.issues` is keyed by the issue
+    key (`{"QA-1": fields}`) with the raw Jira `fields` as the value (no nested
+    `key`), so the FakeJira assertions read the dict's keys.
+- **Verified:** `py_compile` clean · live pilot **85 checks, 0 failed** (EXIT
+  0) · `reports/commercialization_v1.json` valid JSON — `schema_version
+  commercialization-v1/1`, `step S8.6`, full `scope` (owner/member/org/project/
+  failure ids + plan catalog) + `auth`/`pipeline`/`jira_leg`/`quota_legs`/
+  `plan_leg`/`audit_leg` sections, all checks `passed: true`. Coverage:
+  register/login/me/duplicate/wrong-pw · owner-adds-member + roster · analyze
+  pipeline (202 job → terminal `completed` → `output_ref` + SSE to
+  `job.completed`) · member-denied / owner Jira link → `QA-1` at FakeJira,
+  `failure.jira_issue_key` persisted, issue body has diagnosis + `project=QA`
+  · concurrent/runs/tokens caps each hit the exact `409 plan_limit` contract
+  with `job_id` + the denied job 404-deleted · plan read (free/pro/enterprise
+  caps), member-deny + owner-bump free→pro→enterprise, re-read enterprise ·
+  usage (month + seeded runs/tokens/projects) · audit (3 `org.quota.denied`,
+  2 `org.plan.updated`, 1 `org.membership.add`, ≥2 `org.gate.denied`,
+  outcomes + newest-first ordering).
+- **Cleanup:** removed throwaway diagnostic `scripts/_s86_probe2.py` (not a
+  deliverable).
+- **Next session start:** Phase 8 (Commercialization) is now **complete**
+  (S8.0–S8.6 all ✓). See `STATE.md` §1 — SSO/OAuth + a payment processor are
+  the §24 Enterprise follow-ups, not V1 scope.

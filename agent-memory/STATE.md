@@ -6,18 +6,34 @@
 ## 1. Current position
 
 - **Phase:** 0–7 **complete** (S0.1–S7.5 ✓ — one line each in §2) ·
-  **Phase 8 — Commercialization: IN PROGRESS** — S8.0 ✓ step table (bible §19;
+  **Phase 8 — Commercialization: COMPLETE** — S8.0 ✓ step table (bible §19;
   user-approved 2026-09-08: **pilot scope §24**, **SSO/OAuth deferred to
   Enterprise §24**, **billing = admin-assigned plans + real quota metering, no
   payment processor**) · **S8.1 ✓ auth hardening** · **S8.2 ✓ teams** · **S8.3 ✓ RBAC+audit** ·
-  **S8.4 ✓ billing** · **S8.5 ✓ deployment hardening** · S8.6 planned
-  (pilot E2E + baseline)
-- **next:** **S8.6 — Pilot E2E + baseline report** (two-user pilot
-  scenario, full pipeline, quota denial + plan bump, audit-trail export,
-  live driver + `reports/commercialization_v1.json` — details in §3)
+  **S8.4 ✓ billing** · **S8.5 ✓ deployment hardening** · **S8.6 ✓ pilot E2E + baseline** (GREEN, 85/85 checks)
+- **next:** **Build plan complete — Phases 0–8 all ✓ (S0.1–S8.6).** No
+  further V1 steps are pending. Remaining work is the deferred §24
+  **Enterprise** scope (SSO/OAuth + a real payment processor) and any
+  post-pilot hardening. See §3 for the deferred-enterprise notes.
 
 ## 2. Just completed (one line per step — full detail: SESSION_LOG.md)
 
+- **2026-09-17 · S8.6 pilot E2E + baseline report — complete + GREEN.** Live
+  two-user commercialization pilot (`scripts/_s86_live.py`): auth
+  (register/login/me/duplicate/wrong-pw) + owner-adds-member + roster +
+  analyze pipeline (202 job → terminal + `output_ref` + SSE to
+  `job.completed`) + owner-only Jira link (`QA-1` at FakeJira,
+  `failure.jira_issue_key` persisted) + all three S8.4 quota caps
+  (concurrent/runs/tokens) hitting the exact `409 plan_limit` contract
+  (`detail.job_id` present + the denied job 404-deleted + `ai_actions` delta
+  == 1 = the token seed only) + plan read/bump (free→pro→enterprise caps) +
+  usage + audit (3 `org.quota.denied`, 2 `org.plan.updated`, 1
+  `org.membership.add`, ≥2 `org.gate.denied`). **85 checks, 0 failed**;
+  baseline `reports/commercialization_v1.json` written. **Key fixes:**
+  `_seed_world` now flushes `TestResult` before linking the `Failure`
+  (flush-time `_new_id` default left `test_result_id` NULL → Jira 404); plan
+  field is `name` not `plan`; `jira.issue` SSE payload is flat
+  (`payload["key"]`); FakeJira state is keyed by the issue key.
 - **2026-09-12 · S8.5 deployment hardening — complete + gated.** Prod
   deployment posture + the full S8.5 security surface (details:
   SESSION_LOG 2026-09-12) · `docker-compose.prod.yml` — `db`/`redis`/`api`
