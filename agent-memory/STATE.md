@@ -300,73 +300,35 @@
 
 ## 3. NEXT STEP (start here)
 
-**S8.2 is complete + gated** (`7a0e154`, 2026-09-09) — org membership CRUD,
-one-time code invites (hash-only, 7-day TTL, non-leaking errors), org-baseline
-project access with explicit-row override (details in §2 + SESSION_LOG 2026-09-09).
+**S8.6 is complete + GREEN** (`4325677`, 2026-09-17) — live two-user
+commercialization pilot (`scripts/_s86_live.py`): auth
+(register/login/me/duplicate/wrong-pw) + owner-adds-member + roster +
+analyze pipeline (202 job → terminal + `output_ref` + SSE to
+`job.completed`) + owner-only Jira link (`QA-1` at FakeJira,
+`failure.jira_issue_key` persisted) + all three S8.4 quota caps
+(concurrent/runs/tokens) hitting the exact `409 plan_limit` contract
+(denied job 404-deleted; `ai_actions` delta == 1 = the token seed only) +
+plan read/bump (free→pro→enterprise) + usage + audit export
+(3 `org.quota.denied`, 2 `org.plan.updated`, 1 `org.membership.add`, ≥2
+`org.gate.denied`) — **85 checks, 0 failed** · baseline
+`reports/commercialization_v1.json` committed (schema
+`commercialization-v1/1`, all checks `passed: true`) · details:
+SESSION_LOG 2026-09-17 + §2 2026-09-17 entry.
 
-**S8.3 is complete + gated** (`2ff56bf`, 2026-09-11) — owner-gated
-org deletion (`DELETE /organizations/{id}` 204; cascades the org's
-projects/memberships/invites; revokes every former member's refresh
-tokens; member/outsider/probed-unknown → 403 never 404) with
-`current_password` re-auth (RBAC checked before body validation: member+
-no body → 403, owner + no body → 422, wrong password →
-401 + `org.delete.reauth_failure` row) · account self-delete
-(`DELETE /auth/account` 204; purges PII, cascades memberships/tokens,
-nulls `ai_sessions.user_id`; `auth.account.delete` row) · **append-only
-`audit_log`** (`actor_id` nullable → login failures have no actor;
-`action` = closed `AuditAction` vocabulary; `target`; `outcome` success/
-failure/denied; `ip`; `at`; `actor_id` ON DELETE SET NULL → rows outlive
-BOTH org and actor deletion; no update/delete path anywhere) · core
-`qa_copilot_repository.security_audit` (`record` flush-only;
-`list_for_target` newest-first; `DEFAULT_LIMIT=200`; core never commits →
-API owns the transaction, S7.3 pattern) · events: login/register/
-refresh/change-password success+failure, org gate-denied, membership
-add/update/remove/leave, invite create/accept/denied, org delete
-(+reauth failure), project delete · owner-only export
-`GET /organizations/{id}/audit` (newest-first, capped 200) · 7 S8.3
-tests + `test_s82_teams.py` repaired to the re-auth contract
-(`client.request("DELETE", ...)` → httpx's `.delete()` takes no
-`json`) + `EXPECTED_TABLES` += `audit_log` · migration `b7e4d9c2a815`
-(new head; dev DB 5433 migrated) · gates green (ruff check+format,
-mypy strict 165 files, **974 passed**). Details: SESSION_LOG 2026-09-11.
+**Build plan complete — Phases 0–8 all ✓ (S0.1–S8.6); no V1 steps remain.**
+S8.2–S8.5 details live in §2 + SESSION_LOG 2026-09-09/11/12 (teams,
+RBAC+audit, billing, deployment hardening).
 
-**S8.4 is complete + gated** (2026-09-12) — billing core: code-defined
-plan catalog over `organizations.plan` (`free`/`pro`/`enterprise`;
-unknown/`dev`/NULL → `free`), live metering from real tables
-(`jobs`/`test_runs`/`ai_actions`), `check_quota` + `QuotaCheck`,
-`PlanLimitExceeded` enforced in `JobRunner` **before** `create_ai_session`
-(denied dispatch = job rolled back + **409** `plan_limit` body +
-`ORG_QUOTA_DENIED` audit row, never a mid-run crash), member+ plan/usage
-reads, owner-only `PATCH /organizations/{id}` plan assignment
-(`ORG_PLAN_UPDATED`), 16 S8.4 tests, **990 passed** · details: SESSION_LOG
-2026-09-12.
-
-**S8.5 is complete + gated** (`3acc90b`, 2026-09-12) — prod compose (db/
-redis/api publish no ports, Caddy-only 80/443, `AUTH_TOKEN_SECRET` fail
-loud, migrate-before-api, non-root + healthcheck + resource limits) ·
-security middleware (request-id echo/generate + JSON log correlation,
-fail-closed CORS, security headers on success/error/429, Redis fixed-
-window rate limiting: IP fallback + verified-JWT `sub` user buckets,
-exempt paths, fail-open, 429 + `Retry-After`) · `backup.sh`/`restore.sh`
-(pg_dump custom + tar bundle + single-transaction `pg_restore` +
-artifacts) · Dockerfile + `.dockerignore` + gitleaks CI job · alembic
-`env.py` no longer disables host loggers (root cause of a logging test
-that passed alone but failed after any DB test) · 31 S8.5 tests (24
-security incl. live-Redis, 6 infra-structural, 1 **live backup/restore
-round-trip** running the real scripts in the pgvector image) · gates
-green (ruff check+format, mypy strict 123, **1021 passed**) · details:
-SESSION_LOG 2026-09-12.
-
-**S8.6 — Pilot E2E + baseline report** (bible §19):
-- live pilot scenario — two users (org owner + member) on one org, shared
-  project · full pipeline as the member (requirement → test cases →
-  automation → run → failure → diagnosis → Jira link, the S7.5 loop) ·
-  quota denial + plan bump (S8.4) · audit-trail export (S8.3)
-- live driver committed (evidence pair, S6.5/S7.5 pattern) + baseline
-  `reports/commercialization_v1.json`
-- **Exit:** live E2E green (all legs, both roles) · baseline report
-  committed (single tracked report, `.gitignore` exception per S6.5) ·
-  all red-team checks pass · gates green (ruff + mypy strict + pytest).
+**Remaining work = the deferred §24 Enterprise scope + post-pilot
+hardening (not V1; user-driven):**
+- **SSO/OAuth** — deferred to Enterprise (bible §24; S8.0 stance).
+- **Real payment processor** — S8.4 billing is admin-assigned plans + real
+  quota metering; self-serve checkout/subscription billing is Enterprise.
+- Post-pilot hardening candidates: multi-worker SSE (bus is in-process
+  pub/sub — S0.9 note "multi-worker → Redis") · prod load/perf pass ·
+  re-run the tracked baseline reports (`reports/{regression,
+  integrations,commercialization}_v1.json`) after any prompt/model/
+  regression-core change and diff the reports (§6 convention).
 
 ## 4. Environment facts (verified 2026-08-26)
 
@@ -462,8 +424,17 @@ SESSION_LOG 2026-09-12.
   redaction) · CLI `uv run python -m qa_copilot_integrations.{github,jira} <sub>`
   (github: `repo|pr-files|golden` · jira: `map|golden`) · S7.1 config API
   `apps/api/src/qa_copilot_api/{routes,schemas}.py` (`.../integrations`) ·
-  **S7.4 Jira = core only** — API/persistence deferred 2026-09-06 (see §2 2026-09-06
-  entry + §3
+  **S7.4 Jira — both halves shipped:** core (S7.4) + API/persistence
+  (S7.4-API `a7ba016`: `POST /projects/{id}/failures/{failure_id}/jira` +
+  `failures.jira_issue_key`, migration `d5a1b9c7e3f2`)
+- Phase 8 (S8.1–S8.6): `apps/api/src/qa_copilot_api/{throttle,security}.py`
+  (S8.1 login throttle / S8.5 middleware) · `qa_copilot_repository/{membership,
+  invites,security_audit,billing}.py` (S8.2/S8.3/S8.4 cores) ·
+  `docker-compose.prod.yml` + `infra/caddy/Caddyfile` + `apps/api/Dockerfile`
+  (S8.5) · `scripts/backup.sh`/`restore.sh` (S8.5) · **S8.6 pilot evidence:**
+  `scripts/_s86_live.py` (85 checks) + baseline
+  `reports/commercialization_v1.json` (tracked; re-run after any
+  auth/quota/audit/pipeline change and diff the report)
 
 ## 7. Open questions / gotchas
 
@@ -580,3 +551,11 @@ SESSION_LOG 2026-09-12.
   comparing them to `str` fixture ids fails (`UUID('...') == '...'` is
   False); normalize (`str()`) UUID-valued columns in test helpers
   (e.g. `_audit_rows` for `actor_id`/`target`).
+- S8.6: **seed ordering** — flush the `TestResult` *before* linking the
+  `Failure`: `id` is a flush-time `_new_id` default, so an unflushed row
+  stores `test_result_id` NULL → `get_failure_in_project` resolves nothing
+  → 404 (the S7.5 seed pattern).
+- S8.6: **wire shapes** — the org plan field is `name` (not `plan`;
+  `PlanOut.name`) · the `jira.issue` SSE payload is **flat**
+  (`payload["key"]`, not `payload["issue"]["key"]`) · FakeJira state is
+  keyed by the issue key — assert on the dict's keys, not a nested `key`.
